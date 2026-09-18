@@ -2846,7 +2846,7 @@
         "enableTimeout": false,
         "filterSelfPaths": true,
         "invertRudder": false,
-        "laylineAngle": 40,
+        "laylineAngle": 45,
         "laylineEnable": true,
         "paths": {
           "appWindAngle": {

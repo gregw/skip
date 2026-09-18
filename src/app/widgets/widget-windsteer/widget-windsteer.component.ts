@@ -185,7 +185,7 @@ export class WidgetWindComponent implements OnDestroy {
     windSectorEnable: true,
     windSectorWindowSeconds: DEFAULT_WIND_SECTOR_WINDOW_SECONDS,
     laylineEnable: true,
-    laylineAngle: 40,
+    laylineAngle: 45,
     waypointEnable: true,
     courseOverGroundEnable: true,
     driftEnable: true,
