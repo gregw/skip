@@ -40,8 +40,12 @@ describe('WidgetWindTrendsGraphComponent', () => {
   const canvasMock = { registerCanvas: vi.fn(), releaseCanvas: vi.fn(), unregisterCanvas: vi.fn() };
   const breakpointMock = { observe: vi.fn().mockReturnValue(of({ matches: false, breakpoints: {} })) };
 
-  const setup = async (timeScale = 'Last 30 Minutes', paths: IPathArray = cloneDefaultPaths()): Promise<void> => {
-    runtimeMock.options.mockReturnValue({ timeScale, color: 'contrast', paths });
+  const setup = async (
+    timeScale = 'Last 30 Minutes',
+    paths: IPathArray = cloneDefaultPaths(),
+    windReference: 'true' | 'apparent' = 'true'
+  ): Promise<void> => {
+    runtimeMock.options.mockReturnValue({ timeScale, color: 'contrast', windReference, paths });
 
     await TestBed.configureTestingModule({
       imports: [WidgetWindTrendsGraphComponent],
@@ -419,18 +423,22 @@ describe('WidgetWindTrendsGraphComponent', () => {
   const APPARENT_ANGLE = 'self.environment.wind.angleApparent';
   const APPARENT_SPEED = 'self.environment.wind.speedApparent';
 
-  // The reference is the direction slot's stored path; the speed path follows from it.
   const withDirection = (path: string): IPathArray => {
     const paths = cloneDefaultPaths() as Record<string, { path: string }>;
     paths['trueWindDirection'].path = path;
     return paths as unknown as IPathArray;
   };
 
+  const apparent = (paths: IPathArray = cloneDefaultPaths()) =>
+    setup('Last 30 Minutes', paths, 'apparent');
+
   const streamParams = () => historyMock.getBackfillThenLive.mock.calls.map(c => c[0]);
 
-  it('offers Apparent alongside True and Magnetic in the direction reference options', () => {
-    const dir = (WidgetWindTrendsGraphComponent.DEFAULT_CONFIG.paths as IPathArray)['trueWindDirection'];
-    expect(dir.pathOptions?.map(o => o.path)).toContain(APPARENT_ANGLE);
+  it('defaults to true wind and keeps the direction reference options to north references', () => {
+    const cfg = WidgetWindTrendsGraphComponent.DEFAULT_CONFIG;
+    expect(cfg.windReference).toBe('true');
+    const dir = (cfg.paths as IPathArray)['trueWindDirection'];
+    expect(dir.pathOptions?.map(o => o.label)).toEqual(['True', 'Magnetic']);
   });
 
   it('streams the true pair with the direction angle domain by default', async () => {
@@ -444,8 +452,8 @@ describe('WidgetWindTrendsGraphComponent', () => {
     expect(params[0].angleDomainOverride).toBe('direction');
   });
 
-  it('streams the apparent pair with the signed angle domain when the reference is apparent', async () => {
-    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+  it('streams the apparent pair with the signed angle domain when apparent wind is selected', async () => {
+    await apparent();
 
     const params = streamParams();
     expect(params.map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
@@ -461,17 +469,17 @@ describe('WidgetWindTrendsGraphComponent', () => {
     ]);
   });
 
-  it('swaps the stored canonical speed path to match an apparent reference', async () => {
-    const paths = withDirection(APPARENT_ANGLE) as Record<string, { path: string }>;
+  it('swaps the stored canonical speed path when apparent wind is selected', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
     expect(paths['trueWindSpeed'].path).toBe('self.environment.wind.speedTrue');
 
-    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+    await apparent(paths as unknown as IPathArray);
 
     expect(streamParams().map(p => p.path)).toContain(APPARENT_SPEED);
     expect(streamParams().map(p => p.path)).not.toContain('self.environment.wind.speedTrue');
   });
 
-  it('swaps a stored apparent speed path back when the reference is a compass direction', async () => {
+  it('swaps a stored apparent speed path back when true wind is selected', async () => {
     const paths = cloneDefaultPaths() as Record<string, { path: string }>;
     paths['trueWindSpeed'].path = APPARENT_SPEED;
 
@@ -480,21 +488,21 @@ describe('WidgetWindTrendsGraphComponent', () => {
     expect(streamParams().map(p => p.path)).toContain('self.environment.wind.speedTrue');
   });
 
-  it('leaves a deliberately authored speed path alone under an apparent reference', async () => {
-    const paths = withDirection(APPARENT_ANGLE) as Record<string, { path: string }>;
+  it('leaves a deliberately authored speed path alone under apparent wind', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
     paths['trueWindSpeed'].path = 'self.navigation.speedOverGround';
 
-    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+    await apparent(paths as unknown as IPathArray);
 
     expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, 'self.navigation.speedOverGround']);
   });
 
-  it('rebuilds both streams when the reference changes after the initial render', async () => {
+  it('rebuilds both streams when the wind selection changes after the initial render', async () => {
     await setup('Last 30 Minutes');
     historyMock.getBackfillThenLive.mockClear();
 
     runtimeMock.options.mockReturnValue({
-      timeScale: 'Last 30 Minutes', color: 'contrast', paths: withDirection(APPARENT_ANGLE)
+      timeScale: 'Last 30 Minutes', color: 'contrast', windReference: 'apparent', paths: cloneDefaultPaths()
     });
     // options() is a plain mock, not a signal; drive the rebuild effect through a tracked input.
     fixture.componentRef.setInput('theme', new Proxy({}, { get: () => '#111111' }) as unknown as ITheme);
@@ -505,11 +513,11 @@ describe('WidgetWindTrendsGraphComponent', () => {
     expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
   });
 
-  it('leaves the speed series off when the speed slot is cleared under an apparent reference', async () => {
-    const paths = withDirection(APPARENT_ANGLE) as Record<string, { path: string }>;
+  it('leaves the speed series off when the speed slot is cleared under apparent wind', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
     paths['trueWindSpeed'].path = '';
 
-    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+    await apparent(paths as unknown as IPathArray);
 
     expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE]);
   });
@@ -523,7 +531,7 @@ describe('WidgetWindTrendsGraphComponent', () => {
     }).chart.options.scales.x;
 
   it('labels apparent angles with a port or starboard side', async () => {
-    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+    await apparent();
 
     expect(label(-40)).toBe('40P');
     expect(label(20)).toBe('20S');
@@ -531,17 +539,23 @@ describe('WidgetWindTrendsGraphComponent', () => {
   });
 
   it('labels dead astern the same from either side', async () => {
-    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+    await apparent();
 
     expect(label(180)).toBe('180');
     expect(label(-180)).toBe('180');
   });
 
   it('wraps an unwrapped apparent angle before labelling it', async () => {
-    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+    await apparent();
 
     // unwrapAngles can carry the series past +-180; 200 is 160 degrees to port.
     expect(label(200)).toBe('160P');
+  });
+
+  it('ignores the stored north reference when apparent wind is selected', async () => {
+    await apparent(withDirection('self.environment.wind.directionMagnetic'));
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
   });
 
   it('keeps compass labels under a true or magnetic reference', async () => {
@@ -552,7 +566,7 @@ describe('WidgetWindTrendsGraphComponent', () => {
   });
 
   it('starts the apparent direction axis at the full +-180 range', async () => {
-    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+    await apparent();
 
     expect(dirScale().min).toBe(-180);
     expect(dirScale().max).toBe(180);

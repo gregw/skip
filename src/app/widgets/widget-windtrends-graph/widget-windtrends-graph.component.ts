@@ -63,6 +63,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
   public static readonly DEFAULT_CONFIG: IWidgetSvcConfig = {
     filterSelfPaths: true,
     color: 'contrast',
+    windReference: 'true',
     timeScale: 'Last 30 Minutes',
     updateInterval: 1000,
     // TWD is STRUCTURAL: fixed to degrees (showConvertUnitTo:false) because the widget's angle-wrap and
@@ -77,8 +78,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
         description: 'Wind Angle',
         pathOptions: [
           { label: 'True', path: 'self.environment.wind.directionTrue' },
-          { label: 'Magnetic', path: 'self.environment.wind.directionMagnetic' },
-          { label: 'Apparent', path: 'self.environment.wind.angleApparent' }
+          { label: 'Magnetic', path: 'self.environment.wind.directionMagnetic' }
         ],
         path: 'self.environment.wind.directionTrue',
         source: 'default',
@@ -801,15 +801,25 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     return paths[slot];
   }
 
-  /** Whether the configured direction path is apparent wind angle rather than a compass direction. */
+  /** Whether the widget graphs apparent wind rather than true wind. */
   private isApparentReference(cfg: IWidgetSvcConfig | undefined): boolean {
-    return this.windPathSlot(cfg, 'trueWindDirection')?.path === APPARENT_ANGLE_PATH;
+    return cfg?.windReference === 'apparent';
   }
 
   /**
-   * Speed path for the selected reference. The speed slot has no UI control, so nothing would move it
-   * off speedTrue when the reference changes; swap the two canonical paths to follow the reference. A
-   * path set to anything else was authored deliberately (config import, MCP) and is left alone.
+   * Direction path for the selected wind. Apparent wind is measured from the bow, so it has one path
+   * and the slot's north reference does not apply; true wind uses whichever reference the slot holds.
+   */
+  private resolveDirectionPath(cfg: IWidgetSvcConfig | undefined): string | null {
+    const stored = this.windPathSlot(cfg, 'trueWindDirection')?.path;
+    if (!stored) return null;
+    return this.isApparentReference(cfg) ? APPARENT_ANGLE_PATH : stored;
+  }
+
+  /**
+   * Speed path for the selected wind. The speed slot has no UI control, so nothing would move it off
+   * speedTrue when the setting changes; swap the two canonical paths to follow it. A path set to
+   * anything else was authored deliberately (config import, MCP) and is left alone.
    */
   private resolveSpeedPath(cfg: IWidgetSvcConfig | undefined): string | null {
     const stored = this.windPathSlot(cfg, 'trueWindSpeed')?.path;
@@ -824,7 +834,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
   private computeRebuildSignature(cfg: IWidgetSvcConfig): string {
     const dir = this.windPathSlot(cfg, 'trueWindDirection');
     const spd = this.windPathSlot(cfg, 'trueWindSpeed');
-    return [cfg.timeScale, dir?.path, dir?.source, this.resolveSpeedPath(cfg), spd?.source, this.speedMeasure()].join('|');
+    return [cfg.timeScale, this.resolveDirectionPath(cfg), dir?.source, this.resolveSpeedPath(cfg), spd?.source, this.speedMeasure()].join('|');
   }
 
   /**
@@ -861,7 +871,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     // user can clear one slot; gating per series keeps the other one rendering rather than tearing
     // down the whole graph. Source falls back to the SK default when the slot leaves it unset.
     const dir = this.windPathSlot(cfg, 'trueWindDirection');
-    const dirPath = dir?.path;
+    const dirPath = this.resolveDirectionPath(cfg);
     const spd = this.windPathSlot(cfg, 'trueWindSpeed');
     const spdPath = this.resolveSpeedPath(cfg);
     this.dirSeriesActive = !!dirPath;

@@ -388,6 +388,10 @@ export interface IWidgetSvcConfig {
   courseOverGroundEnable?: boolean;
   /** Used by wind Widget: enable/disable current UI feature */
   driftEnable?: boolean;
+  /** Used by Wind Trends widget: which wind the graph shows. 'true' pairs the direction slot's
+   *  chosen north reference with true wind speed; 'apparent' graphs the bow-relative apparent angle
+   *  against apparent wind speed, and the north reference does not apply. */
+  windReference?: 'true' | 'apparent';
   /** Used by wind Widget: enable/disable Apparent Wind Speed UI feature */
   awsEnable?: boolean;
   /** Used by wind Widget: enable/disable True Wind Speed UI feature */

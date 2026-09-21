@@ -27,7 +27,7 @@ Most widgets that use numeric paths support history, including Horizon, Battery 
 #### Wind Trends Widget
 - **Supported:** Yes, seeded with history data.
 - **Requirements:** Time span of `5 minutes` or `30 minutes`.
-- **Paths:** The Reference setting selects true, magnetic or apparent wind; your provider must capture the pair you select.
+- **Paths:** The Wind setting selects true or apparent wind; your provider must capture the pair you select.
 
 #### Numeric Widget's Mini Graph
 - **Supported:** No. Mini graphs use very short time windows (12 seconds) and skip history seeding.

@@ -3222,10 +3222,6 @@
               {
                 "label": "Magnetic",
                 "path": "self.environment.wind.directionMagnetic"
-              },
-              {
-                "label": "Apparent",
-                "path": "self.environment.wind.angleApparent"
               }
             ],
             "pathRequired": false,
@@ -3248,7 +3244,8 @@
           }
         },
         "timeScale": "Last 30 Minutes",
-        "updateInterval": 1000
+        "updateInterval": 1000,
+        "windReference": "true"
       },
       "defaultHeight": 8,
       "defaultWidth": 10,
@@ -3273,10 +3270,6 @@
             {
               "label": "Magnetic",
               "path": "self.environment.wind.directionMagnetic"
-            },
-            {
-              "label": "Apparent",
-              "path": "self.environment.wind.angleApparent"
             }
           ],
           "pathRequired": false,
