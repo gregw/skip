@@ -22,6 +22,13 @@ registerChartComponents();
 /** Rolling-window period (in the widget's time-scale units) the trend backfill/live streams span. */
 const WINDTRENDS_PERIOD = 30;
 
+/** Apparent-wind paths. The direction slot's stored path is the wind reference, so the speed path is
+ *  derived from it: the speed slot is not user-configurable and nothing else would update it.
+ *  DEFAULT_CONFIG repeats these literals because the MCP schema reader rejects non-literals there. */
+const APPARENT_ANGLE_PATH = 'self.environment.wind.angleApparent';
+const APPARENT_SPEED_PATH = 'self.environment.wind.speedApparent';
+const TRUE_SPEED_PATH = 'self.environment.wind.speedTrue';
+
 interface IChartColors {
   valueLine: string | null,
   valueFill: string | null,
@@ -67,10 +74,11 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     // wind widgets. showPathSkUnitsFilter:false hides the unit-filter on both slots.
     paths: {
       trueWindDirection: {
-        description: 'Wind Direction',
+        description: 'Wind Angle',
         pathOptions: [
           { label: 'True', path: 'self.environment.wind.directionTrue' },
-          { label: 'Magnetic', path: 'self.environment.wind.directionMagnetic' }
+          { label: 'Magnetic', path: 'self.environment.wind.directionMagnetic' },
+          { label: 'Apparent', path: 'self.environment.wind.angleApparent' }
         ],
         path: 'self.environment.wind.directionTrue',
         source: 'default',
@@ -83,7 +91,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
         showConvertUnitTo: false
       },
       trueWindSpeed: {
-        description: 'True Wind Speed',
+        description: 'Wind Speed',
         path: 'self.environment.wind.speedTrue',
         source: 'default',
         pathType: 'number',
@@ -102,9 +110,9 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
   private readonly dataService = inject(DataService);
   private readonly responsive = inject(BreakpointObserver);
   protected isPhonePortrait: Signal<BreakpointState>;
-  /** Configured wind-speed path (record-form slot), or null when the slot is cleared. */
+  /** Wind-speed path for the selected reference, or null when the speed slot is cleared. */
   private readonly speedPath = computed<string | null>(() =>
-    this.windPathSlot(this.runtime?.options(), 'trueWindSpeed')?.path ?? null);
+    this.resolveSpeedPath(this.runtime?.options()));
   /**
    * Server-resolved display measure for the wind-speed series. resolvePathMeasure() reads a non-signal
    * meta cache, so it is folded through the path's meta subject to re-emit when the server's
@@ -793,11 +801,30 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     return paths[slot];
   }
 
+  /** Whether the configured direction path is apparent wind angle rather than a compass direction. */
+  private isApparentReference(cfg: IWidgetSvcConfig | undefined): boolean {
+    return this.windPathSlot(cfg, 'trueWindDirection')?.path === APPARENT_ANGLE_PATH;
+  }
+
+  /**
+   * Speed path for the selected reference. The speed slot has no UI control, so nothing would move it
+   * off speedTrue when the reference changes; swap the two canonical paths to follow the reference. A
+   * path set to anything else was authored deliberately (config import, MCP) and is left alone.
+   */
+  private resolveSpeedPath(cfg: IWidgetSvcConfig | undefined): string | null {
+    const stored = this.windPathSlot(cfg, 'trueWindSpeed')?.path;
+    if (!stored) return null;
+    const apparent = this.isApparentReference(cfg);
+    if (apparent && stored === TRUE_SPEED_PATH) return APPARENT_SPEED_PATH;
+    if (!apparent && stored === APPARENT_SPEED_PATH) return TRUE_SPEED_PATH;
+    return stored;
+  }
+
   /** Signature over the inputs that require a full stream/dataset rebuild (time scale + both series). */
   private computeRebuildSignature(cfg: IWidgetSvcConfig): string {
     const dir = this.windPathSlot(cfg, 'trueWindDirection');
     const spd = this.windPathSlot(cfg, 'trueWindSpeed');
-    return [cfg.timeScale, dir?.path, dir?.source, spd?.path, spd?.source, this.speedMeasure()].join('|');
+    return [cfg.timeScale, dir?.path, dir?.source, this.resolveSpeedPath(cfg), spd?.source, this.speedMeasure()].join('|');
   }
 
   /**
@@ -836,7 +863,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     const dir = this.windPathSlot(cfg, 'trueWindDirection');
     const dirPath = dir?.path;
     const spd = this.windPathSlot(cfg, 'trueWindSpeed');
-    const spdPath = spd?.path;
+    const spdPath = this.resolveSpeedPath(cfg);
     this.dirSeriesActive = !!dirPath;
     this.spdSeriesActive = !!spdPath;
     // Resolve the server's display measure for the speed path once per build; a late/changed
@@ -844,8 +871,14 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     this.speedMeasureKey = spdPath ? this.unitsService.resolvePathMeasure(spdPath) : null;
 
     if (dirPath) {
-      // TWD is a direction path; the History engine auto-resolves its circular domain from the unit.
-      const twdParams: IHistoryGraphStreamParams = { ...baseParams, path: dirPath, source: dir?.source ?? 'default' };
+      // State the angle domain rather than letting the engine infer it from the path's unit: before
+      // the unit resolves, inference falls back to a linear average, which is wrong across the wrap.
+      const twdParams: IHistoryGraphStreamParams = {
+        ...baseParams,
+        path: dirPath,
+        source: dir?.source ?? 'default',
+        angleDomainOverride: this.isApparentReference(cfg) ? 'signed' : 'direction'
+      };
       this._dsDirectionSub = this.historyStream.getBackfillThenLive(twdParams).subscribe(emission => {
         if (isHistoryUnavailable(emission)) return;
         if (Array.isArray(emission)) {

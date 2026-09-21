@@ -414,4 +414,103 @@ describe('WidgetWindTrendsGraphComponent', () => {
     expect(speedCentre()).toBe(0.4);
     expect(speedCentre()).not.toBe(((scale.min as number) + (scale.max as number)) / 2);
   });
+  // --- Apparent wind reference (issue 629) ---
+
+  const APPARENT_ANGLE = 'self.environment.wind.angleApparent';
+  const APPARENT_SPEED = 'self.environment.wind.speedApparent';
+
+  // The reference is the direction slot's stored path; the speed path follows from it.
+  const withDirection = (path: string): IPathArray => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
+    paths['trueWindDirection'].path = path;
+    return paths as unknown as IPathArray;
+  };
+
+  const streamParams = () => historyMock.getBackfillThenLive.mock.calls.map(c => c[0]);
+
+  it('offers Apparent alongside True and Magnetic in the direction reference options', () => {
+    const dir = (WidgetWindTrendsGraphComponent.DEFAULT_CONFIG.paths as IPathArray)['trueWindDirection'];
+    expect(dir.pathOptions?.map(o => o.path)).toContain(APPARENT_ANGLE);
+  });
+
+  it('streams the true pair with the direction angle domain by default', async () => {
+    await setup('Last 30 Minutes');
+
+    const params = streamParams();
+    expect(params.map(p => p.path)).toEqual([
+      'self.environment.wind.directionTrue',
+      'self.environment.wind.speedTrue'
+    ]);
+    expect(params[0].angleDomainOverride).toBe('direction');
+  });
+
+  it('streams the apparent pair with the signed angle domain when the reference is apparent', async () => {
+    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+
+    const params = streamParams();
+    expect(params.map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
+    expect(params[0].angleDomainOverride).toBe('signed');
+  });
+
+  it('keeps true wind speed when the direction reference is magnetic', async () => {
+    await setup('Last 30 Minutes', withDirection('self.environment.wind.directionMagnetic'));
+
+    expect(streamParams().map(p => p.path)).toEqual([
+      'self.environment.wind.directionMagnetic',
+      'self.environment.wind.speedTrue'
+    ]);
+  });
+
+  it('swaps the stored canonical speed path to match an apparent reference', async () => {
+    const paths = withDirection(APPARENT_ANGLE) as Record<string, { path: string }>;
+    expect(paths['trueWindSpeed'].path).toBe('self.environment.wind.speedTrue');
+
+    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toContain(APPARENT_SPEED);
+    expect(streamParams().map(p => p.path)).not.toContain('self.environment.wind.speedTrue');
+  });
+
+  it('swaps a stored apparent speed path back when the reference is a compass direction', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
+    paths['trueWindSpeed'].path = APPARENT_SPEED;
+
+    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toContain('self.environment.wind.speedTrue');
+  });
+
+  it('leaves a deliberately authored speed path alone under an apparent reference', async () => {
+    const paths = withDirection(APPARENT_ANGLE) as Record<string, { path: string }>;
+    paths['trueWindSpeed'].path = 'self.navigation.speedOverGround';
+
+    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, 'self.navigation.speedOverGround']);
+  });
+
+  it('rebuilds both streams when the reference changes after the initial render', async () => {
+    await setup('Last 30 Minutes');
+    historyMock.getBackfillThenLive.mockClear();
+
+    runtimeMock.options.mockReturnValue({
+      timeScale: 'Last 30 Minutes', color: 'contrast', paths: withDirection(APPARENT_ANGLE)
+    });
+    // options() is a plain mock, not a signal; drive the rebuild effect through a tracked input.
+    fixture.componentRef.setInput('theme', new Proxy({}, { get: () => '#111111' }) as unknown as ITheme);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
+  });
+
+  it('leaves the speed series off when the speed slot is cleared under an apparent reference', async () => {
+    const paths = withDirection(APPARENT_ANGLE) as Record<string, { path: string }>;
+    paths['trueWindSpeed'].path = '';
+
+    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE]);
+  });
 });

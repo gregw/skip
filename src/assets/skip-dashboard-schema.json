@@ -3211,7 +3211,7 @@
         "paths": {
           "trueWindDirection": {
             "convertUnitTo": "deg",
-            "description": "Wind Direction",
+            "description": "Wind Angle",
             "isPathConfigurable": true,
             "path": "self.environment.wind.directionTrue",
             "pathOptions": [
@@ -3222,6 +3222,10 @@
               {
                 "label": "Magnetic",
                 "path": "self.environment.wind.directionMagnetic"
+              },
+              {
+                "label": "Apparent",
+                "path": "self.environment.wind.angleApparent"
               }
             ],
             "pathRequired": false,
@@ -3233,7 +3237,7 @@
           },
           "trueWindSpeed": {
             "convertUnitTo": "knots",
-            "description": "True Wind Speed",
+            "description": "Wind Speed",
             "isPathConfigurable": false,
             "path": "self.environment.wind.speedTrue",
             "pathRequired": false,
@@ -3257,7 +3261,7 @@
         {
           "defaultConvertUnitTo": "deg",
           "defaultPath": "self.environment.wind.directionTrue",
-          "description": "Wind Direction",
+          "description": "Wind Angle",
           "expectedSkUnit": "rad",
           "hideFromConfig": false,
           "isPathConfigurable": true,
@@ -3269,6 +3273,10 @@
             {
               "label": "Magnetic",
               "path": "self.environment.wind.directionMagnetic"
+            },
+            {
+              "label": "Apparent",
+              "path": "self.environment.wind.angleApparent"
             }
           ],
           "pathRequired": false,
@@ -3279,7 +3287,7 @@
         {
           "defaultConvertUnitTo": "knots",
           "defaultPath": "self.environment.wind.speedTrue",
-          "description": "True Wind Speed",
+          "description": "Wind Speed",
           "expectedSkUnit": "m/s",
           "hideFromConfig": false,
           "isPathConfigurable": false,
