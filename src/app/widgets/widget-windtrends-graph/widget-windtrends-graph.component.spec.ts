@@ -578,4 +578,22 @@ describe('WidgetWindTrendsGraphComponent', () => {
     expect(dirScale().min).toBe(0);
     expect(dirScale().max).toBe(360);
   });
+  const chartTitles = (): { title?: string; subtitle?: string } => {
+    const opts = (fixture.componentInstance as unknown as {
+      chart: { options: { plugins?: { title?: { text?: string }, subtitle?: { text?: string } } } };
+    }).chart.options;
+    return { title: opts.plugins?.title?.text?.trim(), subtitle: opts.plugins?.subtitle?.text?.trim() };
+  };
+
+  it('titles the axes TWD and TWS under true wind', async () => {
+    await setup('Last 30 Minutes');
+
+    expect(chartTitles()).toEqual({ title: 'TWD', subtitle: 'TWS' });
+  });
+
+  it('titles the axes AWA and AWS under apparent wind', async () => {
+    await apparent();
+
+    expect(chartTitles()).toEqual({ title: 'AWA', subtitle: 'AWS' });
+  });
 });

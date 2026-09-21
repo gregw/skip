@@ -621,7 +621,8 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
       title: {
         display: true,
         align: "end",
-        text: `TWD `,
+        // Apparent wind is an angle off the bow, not a direction, so the label changes with it.
+        text: apparent ? `AWA ` : `TWD `,
         color: this.getThemeColors().chartLabel ?? undefined,
         padding: this.isPhonePortrait().matches ? { top: 3, bottom: 0 } : { top: 3, bottom: 0 },
         font: this.isPhonePortrait().matches ? { size: 16, weight: 'normal' } : { size: 35, weight: 'normal' }
@@ -629,7 +630,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
       subtitle: {
         display: true,
         align: "start",
-         text: ` TWS`,
+        text: apparent ? ` AWS` : ` TWS`,
         color: this.getThemeColors().chartLabel ?? undefined,
         padding: this.isPhonePortrait().matches ? { top: -18, bottom: 12 } : { top: -41, bottom: 12 },
         font: this.isPhonePortrait().matches ? { size: 16 } : { size: 35 }
