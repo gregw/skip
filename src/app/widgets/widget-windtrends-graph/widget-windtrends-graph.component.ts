@@ -254,7 +254,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
         ctx.restore();
       };
 
-      drawForAxis('x', (v) => `${(((v % 360) + 360) % 360).toFixed(0)}°`);
+      drawForAxis('x', (v) => this.formatDirectionLabel(v));
       drawForAxis('xSpeed', (v) => `${v.toFixed(1)}`);
 
       // Draw xSpeed rightmost tick label shifted slightly left (custom label)
@@ -305,8 +305,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
           ctx.textAlign = 'left';
           ctx.textBaseline = 'top';
           const y = this.axisTopLabelY(xScale);
-          const wrapped = this.normalizeAngle(xmin);
-          ctx.fillText(`${wrapped.toFixed(0)}°`, px + this.EDGE_DIR_LABEL_OFFSET, y);
+          ctx.fillText(this.formatDirectionLabel(xmin), px + this.EDGE_DIR_LABEL_OFFSET, y);
           ctx.restore();
         }
       }
@@ -451,9 +450,11 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
 
     this.lineChartOptions.indexAxis = 'y';
 
-    // Provide initial x (direction) range so ticks/center line render before data arrives
-    const xDefaultMin = 0;
-    const xDefaultMax = 360;
+    // Provide initial x (direction) range so ticks/center line render before data arrives. Apparent
+    // wind spans the bow-relative +-180 instead of the compass circle.
+    const apparent = this.isApparentReference(this.runtime?.options());
+    const xDefaultMin = apparent ? -180 : 0;
+    const xDefaultMax = apparent ? 180 : 360;
     const xDefaultStep = (xDefaultMax - xDefaultMin) / 4; // 5 ticks
     // Provide an initial xSpeed range (display-unit agnostic; the dynamic scaler resizes from data)
     const xsDefaultMin = 0;
@@ -527,8 +528,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
             const scales = this.chart?.options?.scales as unknown as { x?: { min?: number } } | undefined;
             const minOpt = scales?.x?.min;
             if (typeof minOpt === 'number' && this.nearlyEqual(value as number, minOpt)) return '';
-            const wrapped = ((value % 360 + 360) % 360);
-            return `${wrapped.toFixed(0)}°`;
+            return this.formatDirectionLabel(value);
           },
           // Make the center tick bold and themed using precomputed midpoint/step
           font: (ctx) => {
@@ -992,6 +992,27 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
 
   private normalizeAngle(angle: number): number {
     return ((angle % 360) + 360) % 360;
+  }
+
+  /** Wrap to (-180, 180]: negative is to port, positive to starboard. */
+  private normalizeSignedAngle(angle: number): number {
+    const wrapped = this.normalizeAngle(angle);
+    return wrapped > 180 ? wrapped - 360 : wrapped;
+  }
+
+  /**
+   * Direction-axis label. Apparent wind is bow-relative, so it reads as a side rather than a bearing;
+   * head to wind and dead astern have no side. Every tick, the shifted edge label and the big centre
+   * label go through here, so the two references never mix formats on one axis.
+   */
+  private formatDirectionLabel(value: number): string {
+    if (!this.isApparentReference(this.runtime?.options())) {
+      return `${this.normalizeAngle(value).toFixed(0)}°`;
+    }
+    const signed = this.normalizeSignedAngle(value);
+    const magnitude = Math.abs(signed).toFixed(0);
+    if (magnitude === '0' || magnitude === '180') return magnitude;
+    return signed < 0 ? `${magnitude}P` : `${magnitude}S`;
   }
 
   // Minimal absolute angular distance in degrees [0, 180]

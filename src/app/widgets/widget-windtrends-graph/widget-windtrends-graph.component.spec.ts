@@ -513,4 +513,55 @@ describe('WidgetWindTrendsGraphComponent', () => {
 
     expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE]);
   });
+  // Tick labels, the shifted edge label and the big centre label all render through this seam.
+  const label = (v: number): string =>
+    (fixture.componentInstance as unknown as { formatDirectionLabel(v: number): string }).formatDirectionLabel(v);
+
+  const dirScale = (): { min?: number; max?: number } =>
+    (fixture.componentInstance as unknown as {
+      chart: { options: { scales: { x: { min?: number; max?: number } } } };
+    }).chart.options.scales.x;
+
+  it('labels apparent angles with a port or starboard side', async () => {
+    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+
+    expect(label(-40)).toBe('40P');
+    expect(label(20)).toBe('20S');
+    expect(label(0)).toBe('0');
+  });
+
+  it('labels dead astern the same from either side', async () => {
+    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+
+    expect(label(180)).toBe('180');
+    expect(label(-180)).toBe('180');
+  });
+
+  it('wraps an unwrapped apparent angle before labelling it', async () => {
+    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+
+    // unwrapAngles can carry the series past +-180; 200 is 160 degrees to port.
+    expect(label(200)).toBe('160P');
+  });
+
+  it('keeps compass labels under a true or magnetic reference', async () => {
+    await setup('Last 30 Minutes');
+
+    expect(label(-30)).toBe('330°');
+    expect(label(20)).toBe('20°');
+  });
+
+  it('starts the apparent direction axis at the full +-180 range', async () => {
+    await setup('Last 30 Minutes', withDirection(APPARENT_ANGLE));
+
+    expect(dirScale().min).toBe(-180);
+    expect(dirScale().max).toBe(180);
+  });
+
+  it('starts the compass direction axis at 0-360', async () => {
+    await setup('Last 30 Minutes');
+
+    expect(dirScale().min).toBe(0);
+    expect(dirScale().max).toBe(360);
+  });
 });
