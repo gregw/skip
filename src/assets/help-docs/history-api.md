@@ -71,7 +71,7 @@ For the smallest fixed window (**last 15 minutes**), collect enough samples to p
 ### Wind Trends Fixed Paths
 
 The Wind Trends widget uses two Signal K paths. The **Wind** setting selects which pair:
-- **True:** `environment.wind.speedTrue`, with `environment.wind.directionTrue` or `environment.wind.directionMagnetic` as the direction reference selects.
+- **True:** `environment.wind.speedTrue`, with `environment.wind.directionTrue` or `environment.wind.directionMagnetic`, whichever the direction reference selects.
 - **Apparent:** `environment.wind.angleApparent` and `environment.wind.speedApparent`. Apparent wind is measured from the bow, so the direction reference does not apply.
 
 To display Wind Trends history, both paths of the selected wind **must be captured by your selected History API plugin**.
