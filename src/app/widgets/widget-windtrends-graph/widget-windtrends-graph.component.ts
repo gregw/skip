@@ -222,7 +222,10 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
         const min = (scales?.[axisKey]?.min as number | undefined) ?? sAny.min;
         const max = (scales?.[axisKey]?.max as number | undefined) ?? sAny.max;
         if (typeof min !== 'number' || typeof max !== 'number' || !isFinite(min) || !isFinite(max)) return;
-        const center = (min + max) / 2;
+        // The guideline marks the running average. That is the axis midpoint on every axis except a
+        // speed axis shifted up off zero in light wind, so the cached center wins over the midpoint.
+        const cached = axisKey === 'x' ? this.xCenter : this.xCenterSpeed;
+        const center = typeof cached === 'number' && isFinite(cached) ? cached : (min + max) / 2;
         const px = scale.getPixelForValue(center);
         ctx.save();
         // Center guideline for the given axis
@@ -1060,15 +1063,16 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
       const requestedStep = (2 * halfRangeS) / 4; // = halfRangeS / 2
       // Preserve previous speed behavior (no 1.5/7.5 mantissas)
       const spStep = this.niceStepFromMantissas(requestedStep, [1, 2, 2.5, 5, 10]);
-      // Keep center exactly at lastAverage Speed
-      const spMin = sAvg - 2 * spStep;
-      const spMax = sAvg + 2 * spStep;
+      // Wind speed is never negative, so the window keeps its 4 tick intervals but starts at 0 in
+      // light wind, shifting up instead of centering on lastAverage Speed.
+      const spMin = Math.max(0, sAvg - 2 * spStep);
+      const spMax = spMin + 4 * spStep;
       const scales = this.chart.options.scales as unknown as { xSpeed: { min?: number; max?: number; ticks?: { stepSize?: number } } };
       scales.xSpeed.min = spMin;
       scales.xSpeed.max = spMax;
       scales.xSpeed.ticks = { ...(scales.xSpeed.ticks ?? {}), stepSize: spStep };
 
-      // cache for tick styling on speed axis
+      // cache for tick styling and the center guideline on the speed axis
       this.xCenterSpeed = sAvg;
       this.xStepSpeed = spStep;
     }
