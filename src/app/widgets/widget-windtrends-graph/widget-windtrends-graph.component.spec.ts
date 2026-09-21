@@ -88,6 +88,10 @@ describe('WidgetWindTrendsGraphComponent', () => {
     return probe.chart.options.scales.xSpeed;
   };
 
+  // The centre guideline and its big label are drawn at this cached value by the chart plugin.
+  const speedCentre = (): number | null =>
+    (fixture.componentInstance as unknown as { xCenterSpeed: number | null }).xCenterSpeed;
+
   beforeEach(() => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as unknown as CanvasRenderingContext2D);
     runtimeMock.options.mockReset();
@@ -392,5 +396,22 @@ describe('WidgetWindTrendsGraphComponent', () => {
     const step = scale.ticks?.stepSize as number;
     expect(scale.min).toBe(12 - 2 * step);
     expect(scale.max).toBe(12 + 2 * step);
+  });
+  it('keeps the centre guideline on the average when the speed window is shifted off zero', async () => {
+    const dir = new Subject();
+    const spd = new Subject();
+    historyMock.getBackfillThenLive
+      .mockReturnValueOnce(dir)
+      .mockReturnValueOnce(spd);
+    await setup('Last 30 Minutes');
+
+    spd.next([
+      { timestamp: 1000, data: { value: 0.4, sma: 0.4, lastAverage: 0.4, lastMinimum: 0, lastMaximum: 2 } }
+    ]);
+
+    const scale = speedScale();
+    // The guideline marks the average, which the shifted window moves away from the axis midpoint.
+    expect(speedCentre()).toBe(0.4);
+    expect(speedCentre()).not.toBe(((scale.min as number) + (scale.max as number)) / 2);
   });
 });

@@ -222,7 +222,10 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
         const min = (scales?.[axisKey]?.min as number | undefined) ?? sAny.min;
         const max = (scales?.[axisKey]?.max as number | undefined) ?? sAny.max;
         if (typeof min !== 'number' || typeof max !== 'number' || !isFinite(min) || !isFinite(max)) return;
-        const center = (min + max) / 2;
+        // The guideline marks the running average. That is the axis midpoint on every axis except a
+        // speed axis shifted up off zero in light wind, so the cached center wins over the midpoint.
+        const cached = axisKey === 'x' ? this.xCenter : this.xCenterSpeed;
+        const center = typeof cached === 'number' && isFinite(cached) ? cached : (min + max) / 2;
         const px = scale.getPixelForValue(center);
         ctx.save();
         // Center guideline for the given axis
@@ -1069,9 +1072,8 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
       scales.xSpeed.max = spMax;
       scales.xSpeed.ticks = { ...(scales.xSpeed.ticks ?? {}), stepSize: spStep };
 
-      // cache for tick styling on speed axis; the center label and guideline mark the axis midpoint,
-      // which equals lastAverage Speed unless the window was shifted off zero above
-      this.xCenterSpeed = (spMin + spMax) / 2;
+      // cache for tick styling and the center guideline on the speed axis
+      this.xCenterSpeed = sAvg;
       this.xStepSpeed = spStep;
     }
 
