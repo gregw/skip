@@ -40,8 +40,12 @@ describe('WidgetWindTrendsGraphComponent', () => {
   const canvasMock = { registerCanvas: vi.fn(), releaseCanvas: vi.fn(), unregisterCanvas: vi.fn() };
   const breakpointMock = { observe: vi.fn().mockReturnValue(of({ matches: false, breakpoints: {} })) };
 
-  const setup = async (timeScale = 'Last 30 Minutes', paths: IPathArray = cloneDefaultPaths()): Promise<void> => {
-    runtimeMock.options.mockReturnValue({ timeScale, color: 'contrast', paths });
+  const setup = async (
+    timeScale = 'Last 30 Minutes',
+    paths: IPathArray = cloneDefaultPaths(),
+    windReference: 'true' | 'apparent' = 'true'
+  ): Promise<void> => {
+    runtimeMock.options.mockReturnValue({ timeScale, color: 'contrast', windReference, paths });
 
     await TestBed.configureTestingModule({
       imports: [WidgetWindTrendsGraphComponent],
@@ -413,5 +417,183 @@ describe('WidgetWindTrendsGraphComponent', () => {
     // The guideline marks the average, which the shifted window moves away from the axis midpoint.
     expect(speedCentre()).toBe(0.4);
     expect(speedCentre()).not.toBe(((scale.min as number) + (scale.max as number)) / 2);
+  });
+  // --- Apparent wind reference (issue 629) ---
+
+  const APPARENT_ANGLE = 'self.environment.wind.angleApparent';
+  const APPARENT_SPEED = 'self.environment.wind.speedApparent';
+
+  const withDirection = (path: string): IPathArray => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
+    paths['trueWindDirection'].path = path;
+    return paths as unknown as IPathArray;
+  };
+
+  const apparent = (paths: IPathArray = cloneDefaultPaths()) =>
+    setup('Last 30 Minutes', paths, 'apparent');
+
+  const streamParams = () => historyMock.getBackfillThenLive.mock.calls.map(c => c[0]);
+
+  it('defaults to true wind and keeps the direction reference options to north references', () => {
+    const cfg = WidgetWindTrendsGraphComponent.DEFAULT_CONFIG;
+    expect(cfg.windReference).toBe('true');
+    const dir = (cfg.paths as IPathArray)['trueWindDirection'];
+    expect(dir.pathOptions?.map(o => o.label)).toEqual(['True', 'Magnetic']);
+  });
+
+  it('streams the true pair with the direction angle domain by default', async () => {
+    await setup('Last 30 Minutes');
+
+    const params = streamParams();
+    expect(params.map(p => p.path)).toEqual([
+      'self.environment.wind.directionTrue',
+      'self.environment.wind.speedTrue'
+    ]);
+    expect(params[0].angleDomainOverride).toBe('direction');
+  });
+
+  it('streams the apparent pair with the signed angle domain when apparent wind is selected', async () => {
+    await apparent();
+
+    const params = streamParams();
+    expect(params.map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
+    expect(params[0].angleDomainOverride).toBe('signed');
+  });
+
+  it('keeps true wind speed when the direction reference is magnetic', async () => {
+    await setup('Last 30 Minutes', withDirection('self.environment.wind.directionMagnetic'));
+
+    expect(streamParams().map(p => p.path)).toEqual([
+      'self.environment.wind.directionMagnetic',
+      'self.environment.wind.speedTrue'
+    ]);
+  });
+
+  it('swaps the stored canonical speed path when apparent wind is selected', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
+    expect(paths['trueWindSpeed'].path).toBe('self.environment.wind.speedTrue');
+
+    await apparent(paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toContain(APPARENT_SPEED);
+    expect(streamParams().map(p => p.path)).not.toContain('self.environment.wind.speedTrue');
+  });
+
+  it('swaps a stored apparent speed path back when true wind is selected', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
+    paths['trueWindSpeed'].path = APPARENT_SPEED;
+
+    await setup('Last 30 Minutes', paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toContain('self.environment.wind.speedTrue');
+  });
+
+  it('leaves a deliberately authored speed path alone under apparent wind', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
+    paths['trueWindSpeed'].path = 'self.navigation.speedOverGround';
+
+    await apparent(paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, 'self.navigation.speedOverGround']);
+  });
+
+  it('rebuilds both streams when the wind selection changes after the initial render', async () => {
+    await setup('Last 30 Minutes');
+    historyMock.getBackfillThenLive.mockClear();
+
+    runtimeMock.options.mockReturnValue({
+      timeScale: 'Last 30 Minutes', color: 'contrast', windReference: 'apparent', paths: cloneDefaultPaths()
+    });
+    // options() is a plain mock, not a signal; drive the rebuild effect through a tracked input.
+    fixture.componentRef.setInput('theme', new Proxy({}, { get: () => '#111111' }) as unknown as ITheme);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
+  });
+
+  it('leaves the speed series off when the speed slot is cleared under apparent wind', async () => {
+    const paths = cloneDefaultPaths() as Record<string, { path: string }>;
+    paths['trueWindSpeed'].path = '';
+
+    await apparent(paths as unknown as IPathArray);
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE]);
+  });
+  // Tick labels, the shifted edge label and the big centre label all render through this seam.
+  const label = (v: number): string =>
+    (fixture.componentInstance as unknown as { formatDirectionLabel(v: number): string }).formatDirectionLabel(v);
+
+  const dirScale = (): { min?: number; max?: number } =>
+    (fixture.componentInstance as unknown as {
+      chart: { options: { scales: { x: { min?: number; max?: number } } } };
+    }).chart.options.scales.x;
+
+  it('labels apparent angles with a port or starboard side', async () => {
+    await apparent();
+
+    expect(label(-40)).toBe('40P');
+    expect(label(20)).toBe('20S');
+    expect(label(0)).toBe('0');
+  });
+
+  it('labels dead astern the same from either side', async () => {
+    await apparent();
+
+    expect(label(180)).toBe('180');
+    expect(label(-180)).toBe('180');
+  });
+
+  it('wraps an unwrapped apparent angle before labelling it', async () => {
+    await apparent();
+
+    // unwrapAngles can carry the series past +-180; 200 is 160 degrees to port.
+    expect(label(200)).toBe('160P');
+  });
+
+  it('ignores the stored north reference when apparent wind is selected', async () => {
+    await apparent(withDirection('self.environment.wind.directionMagnetic'));
+
+    expect(streamParams().map(p => p.path)).toEqual([APPARENT_ANGLE, APPARENT_SPEED]);
+  });
+
+  it('keeps compass labels under a true or magnetic reference', async () => {
+    await setup('Last 30 Minutes');
+
+    expect(label(-30)).toBe('330°');
+    expect(label(20)).toBe('20°');
+  });
+
+  it('starts the apparent direction axis at the full +-180 range', async () => {
+    await apparent();
+
+    expect(dirScale().min).toBe(-180);
+    expect(dirScale().max).toBe(180);
+  });
+
+  it('starts the compass direction axis at 0-360', async () => {
+    await setup('Last 30 Minutes');
+
+    expect(dirScale().min).toBe(0);
+    expect(dirScale().max).toBe(360);
+  });
+  const chartTitles = (): { title?: string; subtitle?: string } => {
+    const opts = (fixture.componentInstance as unknown as {
+      chart: { options: { plugins?: { title?: { text?: string }, subtitle?: { text?: string } } } };
+    }).chart.options;
+    return { title: opts.plugins?.title?.text?.trim(), subtitle: opts.plugins?.subtitle?.text?.trim() };
+  };
+
+  it('titles the axes TWD and TWS under true wind', async () => {
+    await setup('Last 30 Minutes');
+
+    expect(chartTitles()).toEqual({ title: 'TWD', subtitle: 'TWS' });
+  });
+
+  it('titles the axes AWA and AWS under apparent wind', async () => {
+    await apparent();
+
+    expect(chartTitles()).toEqual({ title: 'AWA', subtitle: 'AWS' });
   });
 });

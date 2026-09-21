@@ -22,6 +22,13 @@ registerChartComponents();
 /** Rolling-window period (in the widget's time-scale units) the trend backfill/live streams span. */
 const WINDTRENDS_PERIOD = 30;
 
+/** Apparent-wind paths. The direction slot's stored path is the wind reference, so the speed path is
+ *  derived from it: the speed slot is not user-configurable and nothing else would update it.
+ *  DEFAULT_CONFIG repeats these literals because the MCP schema reader rejects non-literals there. */
+const APPARENT_ANGLE_PATH = 'self.environment.wind.angleApparent';
+const APPARENT_SPEED_PATH = 'self.environment.wind.speedApparent';
+const TRUE_SPEED_PATH = 'self.environment.wind.speedTrue';
+
 interface IChartColors {
   valueLine: string | null,
   valueFill: string | null,
@@ -56,6 +63,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
   public static readonly DEFAULT_CONFIG: IWidgetSvcConfig = {
     filterSelfPaths: true,
     color: 'contrast',
+    windReference: 'true',
     timeScale: 'Last 30 Minutes',
     updateInterval: 1000,
     // TWD is STRUCTURAL: fixed to degrees (showConvertUnitTo:false) because the widget's angle-wrap and
@@ -67,7 +75,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     // wind widgets. showPathSkUnitsFilter:false hides the unit-filter on both slots.
     paths: {
       trueWindDirection: {
-        description: 'Wind Direction',
+        description: 'Wind Angle',
         pathOptions: [
           { label: 'True', path: 'self.environment.wind.directionTrue' },
           { label: 'Magnetic', path: 'self.environment.wind.directionMagnetic' }
@@ -83,7 +91,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
         showConvertUnitTo: false
       },
       trueWindSpeed: {
-        description: 'True Wind Speed',
+        description: 'Wind Speed',
         path: 'self.environment.wind.speedTrue',
         source: 'default',
         pathType: 'number',
@@ -102,9 +110,9 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
   private readonly dataService = inject(DataService);
   private readonly responsive = inject(BreakpointObserver);
   protected isPhonePortrait: Signal<BreakpointState>;
-  /** Configured wind-speed path (record-form slot), or null when the slot is cleared. */
+  /** Wind-speed path for the selected reference, or null when the speed slot is cleared. */
   private readonly speedPath = computed<string | null>(() =>
-    this.windPathSlot(this.runtime?.options(), 'trueWindSpeed')?.path ?? null);
+    this.resolveSpeedPath(this.runtime?.options()));
   /**
    * Server-resolved display measure for the wind-speed series. resolvePathMeasure() reads a non-signal
    * meta cache, so it is folded through the path's meta subject to re-emit when the server's
@@ -246,7 +254,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
         ctx.restore();
       };
 
-      drawForAxis('x', (v) => `${(((v % 360) + 360) % 360).toFixed(0)}°`);
+      drawForAxis('x', (v) => this.formatDirectionLabel(v));
       drawForAxis('xSpeed', (v) => `${v.toFixed(1)}`);
 
       // Draw xSpeed rightmost tick label shifted slightly left (custom label)
@@ -297,8 +305,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
           ctx.textAlign = 'left';
           ctx.textBaseline = 'top';
           const y = this.axisTopLabelY(xScale);
-          const wrapped = this.normalizeAngle(xmin);
-          ctx.fillText(`${wrapped.toFixed(0)}°`, px + this.EDGE_DIR_LABEL_OFFSET, y);
+          ctx.fillText(this.formatDirectionLabel(xmin), px + this.EDGE_DIR_LABEL_OFFSET, y);
           ctx.restore();
         }
       }
@@ -443,9 +450,11 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
 
     this.lineChartOptions.indexAxis = 'y';
 
-    // Provide initial x (direction) range so ticks/center line render before data arrives
-    const xDefaultMin = 0;
-    const xDefaultMax = 360;
+    // Provide initial x (direction) range so ticks/center line render before data arrives. Apparent
+    // wind spans the bow-relative +-180 instead of the compass circle.
+    const apparent = this.isApparentReference(this.runtime?.options());
+    const xDefaultMin = apparent ? -180 : 0;
+    const xDefaultMax = apparent ? 180 : 360;
     const xDefaultStep = (xDefaultMax - xDefaultMin) / 4; // 5 ticks
     // Provide an initial xSpeed range (display-unit agnostic; the dynamic scaler resizes from data)
     const xsDefaultMin = 0;
@@ -519,8 +528,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
             const scales = this.chart?.options?.scales as unknown as { x?: { min?: number } } | undefined;
             const minOpt = scales?.x?.min;
             if (typeof minOpt === 'number' && this.nearlyEqual(value as number, minOpt)) return '';
-            const wrapped = ((value % 360 + 360) % 360);
-            return `${wrapped.toFixed(0)}°`;
+            return this.formatDirectionLabel(value);
           },
           // Make the center tick bold and themed using precomputed midpoint/step
           font: (ctx) => {
@@ -613,7 +621,8 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
       title: {
         display: true,
         align: "end",
-        text: `TWD `,
+        // Apparent wind is an angle off the bow, not a direction, so the label changes with it.
+        text: apparent ? `AWA ` : `TWD `,
         color: this.getThemeColors().chartLabel ?? undefined,
         padding: this.isPhonePortrait().matches ? { top: 3, bottom: 0 } : { top: 3, bottom: 0 },
         font: this.isPhonePortrait().matches ? { size: 16, weight: 'normal' } : { size: 35, weight: 'normal' }
@@ -621,7 +630,7 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
       subtitle: {
         display: true,
         align: "start",
-         text: ` TWS`,
+        text: apparent ? ` AWS` : ` TWS`,
         color: this.getThemeColors().chartLabel ?? undefined,
         padding: this.isPhonePortrait().matches ? { top: -18, bottom: 12 } : { top: -41, bottom: 12 },
         font: this.isPhonePortrait().matches ? { size: 16 } : { size: 35 }
@@ -793,11 +802,40 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     return paths[slot];
   }
 
+  /** Whether the widget graphs apparent wind rather than true wind. */
+  private isApparentReference(cfg: IWidgetSvcConfig | undefined): boolean {
+    return cfg?.windReference === 'apparent';
+  }
+
+  /**
+   * Direction path for the selected wind. Apparent wind is measured from the bow, so it has one path
+   * and the slot's north reference does not apply; true wind uses whichever reference the slot holds.
+   */
+  private resolveDirectionPath(cfg: IWidgetSvcConfig | undefined): string | null {
+    const stored = this.windPathSlot(cfg, 'trueWindDirection')?.path;
+    if (!stored) return null;
+    return this.isApparentReference(cfg) ? APPARENT_ANGLE_PATH : stored;
+  }
+
+  /**
+   * Speed path for the selected wind. The speed slot has no UI control, so nothing would move it off
+   * speedTrue when the setting changes; swap the two canonical paths to follow it. A path set to
+   * anything else was authored deliberately (config import, MCP) and is left alone.
+   */
+  private resolveSpeedPath(cfg: IWidgetSvcConfig | undefined): string | null {
+    const stored = this.windPathSlot(cfg, 'trueWindSpeed')?.path;
+    if (!stored) return null;
+    const apparent = this.isApparentReference(cfg);
+    if (apparent && stored === TRUE_SPEED_PATH) return APPARENT_SPEED_PATH;
+    if (!apparent && stored === APPARENT_SPEED_PATH) return TRUE_SPEED_PATH;
+    return stored;
+  }
+
   /** Signature over the inputs that require a full stream/dataset rebuild (time scale + both series). */
   private computeRebuildSignature(cfg: IWidgetSvcConfig): string {
     const dir = this.windPathSlot(cfg, 'trueWindDirection');
     const spd = this.windPathSlot(cfg, 'trueWindSpeed');
-    return [cfg.timeScale, dir?.path, dir?.source, spd?.path, spd?.source, this.speedMeasure()].join('|');
+    return [cfg.timeScale, this.resolveDirectionPath(cfg), dir?.source, this.resolveSpeedPath(cfg), spd?.source, this.speedMeasure()].join('|');
   }
 
   /**
@@ -834,9 +872,9 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     // user can clear one slot; gating per series keeps the other one rendering rather than tearing
     // down the whole graph. Source falls back to the SK default when the slot leaves it unset.
     const dir = this.windPathSlot(cfg, 'trueWindDirection');
-    const dirPath = dir?.path;
+    const dirPath = this.resolveDirectionPath(cfg);
     const spd = this.windPathSlot(cfg, 'trueWindSpeed');
-    const spdPath = spd?.path;
+    const spdPath = this.resolveSpeedPath(cfg);
     this.dirSeriesActive = !!dirPath;
     this.spdSeriesActive = !!spdPath;
     // Resolve the server's display measure for the speed path once per build; a late/changed
@@ -844,8 +882,14 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
     this.speedMeasureKey = spdPath ? this.unitsService.resolvePathMeasure(spdPath) : null;
 
     if (dirPath) {
-      // TWD is a direction path; the History engine auto-resolves its circular domain from the unit.
-      const twdParams: IHistoryGraphStreamParams = { ...baseParams, path: dirPath, source: dir?.source ?? 'default' };
+      // State the angle domain rather than letting the engine infer it from the path's unit: before
+      // the unit resolves, inference falls back to a linear average, which is wrong across the wrap.
+      const twdParams: IHistoryGraphStreamParams = {
+        ...baseParams,
+        path: dirPath,
+        source: dir?.source ?? 'default',
+        angleDomainOverride: this.isApparentReference(cfg) ? 'signed' : 'direction'
+      };
       this._dsDirectionSub = this.historyStream.getBackfillThenLive(twdParams).subscribe(emission => {
         if (isHistoryUnavailable(emission)) return;
         if (Array.isArray(emission)) {
@@ -959,6 +1003,27 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
 
   private normalizeAngle(angle: number): number {
     return ((angle % 360) + 360) % 360;
+  }
+
+  /** Wrap to (-180, 180]: negative is to port, positive to starboard. */
+  private normalizeSignedAngle(angle: number): number {
+    const wrapped = this.normalizeAngle(angle);
+    return wrapped > 180 ? wrapped - 360 : wrapped;
+  }
+
+  /**
+   * Direction-axis label. Apparent wind is bow-relative, so it reads as a side rather than a bearing;
+   * head to wind and dead astern have no side. Every tick, the shifted edge label and the big centre
+   * label go through here, so the two references never mix formats on one axis.
+   */
+  private formatDirectionLabel(value: number): string {
+    if (!this.isApparentReference(this.runtime?.options())) {
+      return `${this.normalizeAngle(value).toFixed(0)}°`;
+    }
+    const signed = this.normalizeSignedAngle(value);
+    const magnitude = Math.abs(signed).toFixed(0);
+    if (magnitude === '0' || magnitude === '180') return magnitude;
+    return signed < 0 ? `${magnitude}P` : `${magnitude}S`;
   }
 
   // Minimal absolute angular distance in degrees [0, 180]

@@ -246,6 +246,20 @@
                   Enable Advanced Compass Mode
                 </mat-checkbox>
               }
+              @if ((widgetConfig?.windReference !== undefined)) {
+                <mat-form-field>
+                  <mat-label>Wind</mat-label>
+                  <mat-select
+                    placeholder="Select wind..."
+                    formControlName="windReference"
+                    name="windReference"
+                    required>
+                    <mat-option value="true">True</mat-option>
+                    <mat-option value="apparent">Apparent</mat-option>
+                  </mat-select>
+                  <mat-hint>Apparent wind is measured from the bow, so the direction reference does not apply to it.</mat-hint>
+                </mat-form-field>
+              }
               @if ((widgetConfig?.laylineEnable !== undefined)) {
                 <mat-checkbox
                   class="fields"
