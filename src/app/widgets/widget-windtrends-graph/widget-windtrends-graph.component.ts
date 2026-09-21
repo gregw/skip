@@ -1060,16 +1060,18 @@ export class WidgetWindTrendsGraphComponent implements OnDestroy {
       const requestedStep = (2 * halfRangeS) / 4; // = halfRangeS / 2
       // Preserve previous speed behavior (no 1.5/7.5 mantissas)
       const spStep = this.niceStepFromMantissas(requestedStep, [1, 2, 2.5, 5, 10]);
-      // Keep center exactly at lastAverage Speed
-      const spMin = sAvg - 2 * spStep;
-      const spMax = sAvg + 2 * spStep;
+      // Wind speed is never negative, so the window keeps its 4 tick intervals but starts at 0 in
+      // light wind, shifting up instead of centering on lastAverage Speed.
+      const spMin = Math.max(0, sAvg - 2 * spStep);
+      const spMax = spMin + 4 * spStep;
       const scales = this.chart.options.scales as unknown as { xSpeed: { min?: number; max?: number; ticks?: { stepSize?: number } } };
       scales.xSpeed.min = spMin;
       scales.xSpeed.max = spMax;
       scales.xSpeed.ticks = { ...(scales.xSpeed.ticks ?? {}), stepSize: spStep };
 
-      // cache for tick styling on speed axis
-      this.xCenterSpeed = sAvg;
+      // cache for tick styling on speed axis; the center label and guideline mark the axis midpoint,
+      // which equals lastAverage Speed unless the window was shifted off zero above
+      this.xCenterSpeed = (spMin + spMax) / 2;
       this.xStepSpeed = spStep;
     }
 

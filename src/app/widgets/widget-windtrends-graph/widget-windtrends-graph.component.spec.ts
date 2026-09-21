@@ -76,6 +76,18 @@ describe('WidgetWindTrendsGraphComponent', () => {
   const speedLabel = (): string =>
     (fixture.componentInstance as unknown as { speedUnitSymbol(): string }).speedUnitSymbol();
 
+
+  // The speed-axis range is recomputed in updateChartAfterDataChange (normally behind a rAF); the
+  // private seam is called directly so the spec does not depend on frame timing.
+  const speedScale = (): { min?: number; max?: number; ticks?: { stepSize?: number } } => {
+    const probe = fixture.componentInstance as unknown as {
+      chart: { options: { scales: { xSpeed: { min?: number; max?: number; ticks?: { stepSize?: number } } } } };
+      updateChartAfterDataChange(): void;
+    };
+    probe.updateChartAfterDataChange();
+    return probe.chart.options.scales.xSpeed;
+  };
+
   beforeEach(() => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as unknown as CanvasRenderingContext2D);
     runtimeMock.options.mockReset();
@@ -344,5 +356,41 @@ describe('WidgetWindTrendsGraphComponent', () => {
       { timestamp: 2000, data: { value: 7, sma: 6, lastAverage: 6, lastMinimum: 5, lastMaximum: 7 } }
     ]);
     expect(readiness()).toBe(true);
+  });
+  it('keeps the speed axis at or above zero in light wind, shifting the window up', async () => {
+    const dir = new Subject();
+    const spd = new Subject();
+    historyMock.getBackfillThenLive
+      .mockReturnValueOnce(dir)
+      .mockReturnValueOnce(spd);
+    await setup('Last 30 Minutes');
+
+    // Average 0.4 kt with a 2 kt spread: a window centred on the average would start below zero.
+    spd.next([
+      { timestamp: 1000, data: { value: 0.4, sma: 0.4, lastAverage: 0.4, lastMinimum: 0, lastMaximum: 2 } }
+    ]);
+
+    const scale = speedScale();
+    expect(scale.min).toBe(0);
+    // The span and the 4 tick intervals survive the shift.
+    expect(scale.max).toBe((scale.ticks?.stepSize as number) * 4);
+  });
+
+  it('leaves the speed axis centred on the average when the window clears zero', async () => {
+    const dir = new Subject();
+    const spd = new Subject();
+    historyMock.getBackfillThenLive
+      .mockReturnValueOnce(dir)
+      .mockReturnValueOnce(spd);
+    await setup('Last 30 Minutes');
+
+    spd.next([
+      { timestamp: 1000, data: { value: 12, sma: 12, lastAverage: 12, lastMinimum: 10, lastMaximum: 14 } }
+    ]);
+
+    const scale = speedScale();
+    const step = scale.ticks?.stepSize as number;
+    expect(scale.min).toBe(12 - 2 * step);
+    expect(scale.max).toBe(12 + 2 * step);
   });
 });
