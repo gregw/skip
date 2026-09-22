@@ -339,7 +339,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   private displayConnectionsStatusNotification(connectionStatus: IConnectionStatus) {
     const message = connectionStatus.message;
-    const silentDuringBootstrap = this.bootstrapStatus() !== 'ready';
+    // Connection toasts are silent unless the user opts in, and always silent during bootstrap.
+    const silent = !this.settings.notificationConfig().sound.playConnectionSound || this.bootstrapStatus() !== 'ready';
     switch (connectionStatus.state) {
       case ConnectionState.Disconnected:
         this.toast.show(message, 5000, true);
@@ -354,14 +355,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       case ConnectionState.WebSocketError:
       case ConnectionState.HTTPRetrying:
       case ConnectionState.WebSocketRetrying:
-        this.toast.show(message, 3000, silentDuringBootstrap, 'warn');
+        this.toast.show(message, 3000, silent, 'warn');
         break;
       case ConnectionState.PermanentFailure:
-        this.toast.show(message, 0, silentDuringBootstrap);
+        this.toast.show(message, 0, silent);
         break;
       default:
         console.error('[AppComponent] Unknown connection state:', connectionStatus.state);
-        this.toast.show(`Unknown connection status: ${connectionStatus.state}`, 0, silentDuringBootstrap, 'error');
+        this.toast.show(`Unknown connection status: ${connectionStatus.state}`, 0, silent, 'error');
     }
   }
 

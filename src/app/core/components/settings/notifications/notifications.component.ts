@@ -41,6 +41,8 @@ export class SettingsNotificationsComponent {
   constructor() {
     this.isPhonePortrait = toSignal(this._responsive.observe(Breakpoints.HandsetPortrait), { requireSync: true });
     this.notificationConfig = cloneDeep(this.settings.getNotificationConfig());
+    // Configs written before the option existed lack the field; treat that as off.
+    this.notificationConfig.sound.playConnectionSound ??= false;
   }
 
   public saveAllSettings():void {
