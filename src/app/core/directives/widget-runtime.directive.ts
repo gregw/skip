@@ -38,6 +38,7 @@ export class WidgetRuntimeDirective {
     let merged: IWidgetSvcConfig | undefined;
     if (base && user) {
       merged = merge(cloneDeep(base), cloneDeep(user));
+      restoreFixedPaths(merged, base);
     } else if (base && !user) {
       merged = cloneDeep(base);
     } else if (!base && user) {
@@ -83,5 +84,39 @@ export class WidgetRuntimeDirective {
   public initialize(defaultCfg: IWidgetSvcConfig | undefined, savedCfg: IWidgetSvcConfig | undefined): void {
     if (defaultCfg) this.defaultConfig.set(defaultCfg);
     if (savedCfg) this._runtimeConfig.set(savedCfg);
+  }
+}
+
+/**
+ * Take every fixed path's wiring back from the widget's own defaults.
+ *
+ * A widget's saved config is a snapshot of the merged config at the moment it was placed
+ * on a dashboard, so it carries the Signal K path and value type of whatever release that
+ * was. For a path the user can edit, that snapshot is their choice and wins. For a path
+ * marked `isPathConfigurable: false` it is not a choice at all - it is the widget's
+ * wiring, frozen - and it pins the widget to that path forever: correcting a wrong path in
+ * the widget's defaults then reaches new widgets only, while every dashboard already using
+ * it stays broken with no way for the user to see why, since a fixed path is not shown in
+ * the options dialog.
+ *
+ * A path that offers `pathOptions` is excluded: those are not configurable free-form, but
+ * the stored value is still a choice the user made from the list.
+ *
+ * Only the wiring is restored. `convertUnitTo` is left as stored because a fixed path can
+ * still expose its unit for editing, and `source` because the data source stays editable on
+ * a fixed path. `showConvertUnitTo` IS restored: it is not a user setting but the widget's
+ * decision about whether the path follows the server's unit preference or keeps the
+ * widget's own unit, and a widget that gets that wrong ships a value in the wrong scale.
+ */
+function restoreFixedPaths(merged: IWidgetSvcConfig, base: IWidgetSvcConfig): void {
+  if (!merged.paths || !base.paths) return;
+  for (const [key, basePath] of Object.entries(base.paths)) {
+    if (!basePath || basePath.isPathConfigurable !== false || basePath.pathOptions) continue;
+    const mergedPath = merged.paths[key];
+    if (!mergedPath) continue;
+    mergedPath.path = basePath.path;
+    mergedPath.pathType = basePath.pathType;
+    mergedPath.enableTimeout = basePath.enableTimeout;
+    mergedPath.showConvertUnitTo = basePath.showConvertUnitTo;
   }
 }

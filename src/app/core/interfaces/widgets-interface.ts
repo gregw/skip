@@ -473,6 +473,37 @@ export interface IWidgetSvcConfig {
 
   /** Use by racetimer widget */
   timerLength?: number;
+
+  /**
+   * Used by the racer-line and racer-timer widgets.
+   * Seconds a racer widget stays in a control mode after the last button press before
+   * dropping back to its default display. The control modes exist to be used and left,
+   * and a widget silently stuck on one is a widget not showing the numbers. 0 disables
+   * the revert and the mode stays until it is changed by hand.
+   */
+  modeTimeout?: number;
+
+  /**
+   * Used by the racer-line-view widget.
+   * How far the start-line drawing may drift out of true, as a percentage of the
+   * drawing's height, before it re-fits its view. Re-fitting on every position update
+   * makes the line slide about under a boat that appears to stand still; holding the
+   * view until it has actually gone stale keeps the line still and lets the boat close
+   * on it. 0 re-fits on every update. The view is re-fitted regardless if the boat
+   * would otherwise be clipped, or if the drawing is resized or the line is edited.
+   */
+  viewSmoothing?: number;
+
+  /**
+   * Used by the racer-line-view widget.
+   * Seconds before the start during which the start-line drawing stops re-fitting its
+   * view. In the last seconds of a countdown the helm is reading the boat against the
+   * line, and a view that re-scales under them at that moment costs them the read - so
+   * inside this window the drawing holds still and re-fits only when it must, because
+   * the boat or the line would otherwise be drawn outside the frame. 0 disables the
+   * freeze and the view keeps re-fitting to the last.
+   */
+  viewFreezeSeconds?: number;
   /** The next dashboard to display when the racer-timer-widget counts to 0 and the boat is not OCS*/
   nextDashboard?: number;
   /** If true, play beeps when the racer-timer-widget counts to through the minutes, 10s and each of the last 10s. */
@@ -668,6 +699,15 @@ export interface IWidgetPath {
    *   isPathConfigurable: false // Path is hardcoded; Data Source stays editable (single-path form)
    */
   isPathConfigurable: boolean;
+
+  /**
+   * Set false to exempt this path from the widget's stale-data timeout.
+   *
+   * The timeout nulls a path that has gone quiet, which suits a reading that is fed
+   * continuously and not a value that is published once and then left alone (a start
+   * line, a configured name). Defaults to following the widget's own `enableTimeout`.
+   */
+  enableTimeout?: boolean;
   /**
    * When `true`, the slot's card is not rendered in the single-path Widget Options form (no path field,
    * no Data Source control, nothing) while the value still streams from its hardcoded `path`/`source`.

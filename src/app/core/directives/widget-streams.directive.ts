@@ -15,6 +15,7 @@ interface IPathIdentity {
   convertUnitTo?: string | null;
   source?: string | null;
   suppressBootstrapNull?: boolean;
+  enableTimeout?: boolean;
 }
 
 /** Trim a configured path to its canonical form; undefined when it is not a usable path. */
@@ -37,7 +38,8 @@ export function widgetPathSignature(pathCfg: IPathIdentity | undefined | null): 
   const normalizedPath = normalizeWidgetPath(pathCfg?.path);
   if (!pathCfg || !normalizedPath) return null;
   const src = (pathCfg.source?.trim() || 'default');
-  return [normalizedPath, pathCfg.pathType, pathCfg.convertUnitTo, src, pathCfg.suppressBootstrapNull ? '1' : '0'].join('|');
+  return [normalizedPath, pathCfg.pathType, pathCfg.convertUnitTo, src, pathCfg.suppressBootstrapNull ? '1' : '0',
+    pathCfg.enableTimeout === false ? 'nott' : ''].join('|');
 }
 
 @Directive({
@@ -94,7 +96,7 @@ export class WidgetStreamsDirective implements OnDestroy {
     };
   }
 
-  private computePathSignature(pathCfg: { path: string; pathType: string; convertUnitTo?: string; source?: string; suppressBootstrapNull?: boolean }): string {
+  private computePathSignature(pathCfg: { path: string; pathType: string; convertUnitTo?: string; source?: string; suppressBootstrapNull?: boolean; enableTimeout?: boolean }): string {
     return widgetPathSignature(pathCfg) ?? '';
   }
 
@@ -146,7 +148,7 @@ export class WidgetStreamsDirective implements OnDestroy {
   }
 
   /** Create (or reuse) base observable, assemble pipeline, and subscribe with diff-aware replacement. */
-  private buildAndSubscribe(pathName: string, next: (value: IPathUpdate) => void, cfg: IWidgetSvcConfig, pathCfg: { path: string; pathType: string; convertUnitTo?: string; showConvertUnitTo?: boolean; source?: string; suppressBootstrapNull?: boolean }, subField?: string): void {
+  private buildAndSubscribe(pathName: string, next: (value: IPathUpdate) => void, cfg: IWidgetSvcConfig, pathCfg: { path: string; pathType: string; convertUnitTo?: string; showConvertUnitTo?: boolean; source?: string; suppressBootstrapNull?: boolean; enableTimeout?: boolean }, subField?: string): void {
     const normalizedPath = this.normalizePath(pathCfg.path);
     if (!normalizedPath) {
       const existing = this.subscriptions.get(pathName);
@@ -175,7 +177,11 @@ export class WidgetStreamsDirective implements OnDestroy {
     }
     const base$ = this.streams!.get(pathName)!;
 
-    const enableTimeout = !!cfg.enableTimeout;
+    // A path may opt out of the widget's stale-data TTL. The TTL assumes a path is fed
+    // continuously and nulls it when it goes quiet, which is right for a sensor reading and
+    // wrong for state: a start line is published when it changes and then not again, so the
+    // TTL erases a perfectly good line five seconds after it arrives.
+    const enableTimeout = !!cfg.enableTimeout && pathCfg.enableTimeout !== false;
     const dataTimeout = FIXED_DATA_TIMEOUT_MS;
     const retryDelay = 5000;
     const timeoutErrorMsg = `[Widget] ${cfg.displayName} - ${dataTimeout / 1000} second data update timeout reached for `;

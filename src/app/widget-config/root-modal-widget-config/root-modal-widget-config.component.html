@@ -199,6 +199,51 @@
                   />
                 </mat-form-field>
               }
+              @if ((widgetConfig?.modeTimeout !== undefined)) {
+                <mat-form-field>
+                  <mat-label>Mode Timeout</mat-label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="300"
+                    matInput
+                    placeholder="Enter seconds..."
+                    name="modeTimeout"
+                    formControlName="modeTimeout"
+                  />
+                  <mat-hint>Seconds before a control mode reverts; 0 to stay put</mat-hint>
+                </mat-form-field>
+              }
+              @if ((widgetConfig?.viewSmoothing !== undefined)) {
+                <mat-form-field>
+                  <mat-label>View Smoothing</mat-label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    matInput
+                    placeholder="Enter percentage..."
+                    name="viewSmoothing"
+                    formControlName="viewSmoothing"
+                  />
+                  <mat-hint>% the view may drift before re-scaling</mat-hint>
+                </mat-form-field>
+              }
+              @if ((widgetConfig?.viewFreezeSeconds !== undefined)) {
+                <mat-form-field>
+                  <mat-label>Freeze View Before Start</mat-label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="300"
+                    matInput
+                    placeholder="Enter seconds..."
+                    name="viewFreezeSeconds"
+                    formControlName="viewFreezeSeconds"
+                  />
+                  <mat-hint>s before the start the view stops re-scaling</mat-hint>
+                </mat-form-field>
+              }
               @if ((widgetConfig?.showMin !== undefined)) {
                 <mat-checkbox name="showMin" formControlName="showMin">
                   Show Min recorded value

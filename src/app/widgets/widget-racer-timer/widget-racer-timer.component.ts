@@ -1,6 +1,7 @@
 import {
   AfterViewInit,
   Component,
+  computed,
   DestroyRef,
   effect,
   ElementRef,
@@ -41,6 +42,8 @@ function toTimeInputValue(date: Date): string {
 
 @Component({
   selector: 'widget-racer-timer',
+  // Any interaction anywhere in the widget restarts the idle countdown back to mode 0.
+  host: { '(click)': 'touchMode()' },
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './widget-racer-timer.component.html',
   styleUrls: ['./widget-racer-timer.component.scss'],
@@ -61,12 +64,17 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
     filterSelfPaths: true,
     paths: {
       ttsPath: { description: 'Time to the Start in seconds', path: 'self.navigation.racing.timeToStart', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 's' },
-      startTimePath: { description: 'Time of the start', path: 'self.navigation.racing.startTime', source: 'default', pathType: 'Date', pathRequired: false, isPathConfigurable: false },
+      // The start time is published once when the timer is set and not again, so the
+      // stale-data TTL would null it five seconds later. The exemption has to be
+      // unanimous: DataService's timeout cross-clears every registration on a silent
+      // path, so one widget still counting down on this path blanks it for all of them.
+      startTimePath: { description: 'Time of the start', path: 'self.navigation.racing.startTime', source: 'default', pathType: 'Date', pathRequired: false, isPathConfigurable: false, enableTimeout: false },
       dtsPath: { description: 'Distance to Start Line path, used to determine OCS', path: 'self.navigation.racing.distanceStartline', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 'm', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 'm' }
     },
     color: 'contrast',
     updateInterval: 500,
     enableTimeout: true,
+    modeTimeout: 10,
     dataTimeout: 5,
     ignoreZones: true
   };
@@ -211,12 +219,40 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
     try { if (this.canvasElement) this.canvas.unregisterCanvas(this.canvasElement); } catch { /* ignore */ }
   }
 
+  protected readonly modeTimeout = computed<number>(() =>
+    (this.runtime.options() ?? WidgetRacerTimerComponent.DEFAULT_CONFIG).modeTimeout ?? 10);
+
+  /** Pending revert to the default display, if a control mode is showing. */
+  private modeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Restart the idle countdown after a button press.
+   *
+   * The control modes are meant to be used and left, and a widget parked on one is a
+   * widget not showing its countdown - easily done on a boat, where the last press
+   * before a start is rarely followed by a deliberate press back.
+   */
+  protected touchMode(): void {
+    if (this.modeTimer) {
+      clearTimeout(this.modeTimer);
+      this.modeTimer = null;
+    }
+    const seconds = this.modeTimeout();
+    if (this.mode() === 0 || !(seconds > 0)) return;
+    this.modeTimer = setTimeout(() => {
+      this.modeTimer = null;
+      this.mode.set(0);
+      this.draw();
+    }, seconds * 1000);
+  }
+
   // Interaction methods (mapped from legacy)
   public toggleMode(): void {
     this.mode.update(v => (v + 1) % 5);
     const tts = this.ttsValue;
     if (this.mode() === 1 && this.isStartTimerRunning()) this.mode.set(2);
     if (this.mode() === 2 && tts !== 0 && !this.isStartTimerRunning()) this.mode.set(3);
+    this.touchMode();
     this.draw();
   }
 
