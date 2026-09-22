@@ -168,13 +168,25 @@ describe('AppComponent', () => {
   describe('connection status notifications', () => {
     // Exercised through the private handler directly: mapping IConnectionStatus.state to the right
     // toast is the behavior under test, and driving it through the real root ConnectionStateMachine
-    // would hinge on its retry timers and debounce. bootstrapStatus is 'ready', so
-    // silentDuringBootstrap is false.
+    // would hinge on its retry timers and debounce. bootstrapStatus is 'ready', and
+    // sound.playConnectionSound defaults to off, so the toasts are silent.
     function notify(state: ConnectionState, message = 'status message'): void {
       const app = create() as unknown as AppComponentNotifyApi;
       toast.show.mockClear();
       app.displayConnectionsStatusNotification({ state, message, timestamp: new Date() });
     }
+
+    /** Back the read with a real signal so the handler sees the opted-in value. */
+    function withConnectionSound(enabled: boolean): void {
+      const settings = TestBed.inject(SettingsService);
+      const config = signal({
+        ...settings.notificationConfig(),
+        sound: { ...settings.notificationConfig().sound, playConnectionSound: enabled }
+      });
+      vi.spyOn(settings, 'notificationConfig').mockImplementation(() => config());
+    }
+
+    afterEach(() => vi.restoreAllMocks());
 
     it('shows a transient toast when disconnected', () => {
       notify(ConnectionState.Disconnected, 'Not connected');
@@ -183,12 +195,36 @@ describe('AppComponent', () => {
 
     it('warns while retrying the connection', () => {
       notify(ConnectionState.WebSocketRetrying, 'Retrying');
-      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, false, 'warn');
+      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, true, 'warn');
     });
 
     it('shows a persistent toast on permanent failure', () => {
       notify(ConnectionState.PermanentFailure, 'Gave up');
+      expect(toast.show).toHaveBeenCalledWith('Gave up', 0, true);
+    });
+
+    it('plays a sound on the retry and permanent-failure toasts once the user opts in', () => {
+      withConnectionSound(true);
+      const app = create() as unknown as AppComponentNotifyApi;
+      toast.show.mockClear();
+
+      app.displayConnectionsStatusNotification({ state: ConnectionState.WebSocketRetrying, message: 'Retrying', timestamp: new Date() });
+      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, false, 'warn');
+
+      toast.show.mockClear();
+      app.displayConnectionsStatusNotification({ state: ConnectionState.PermanentFailure, message: 'Gave up', timestamp: new Date() });
       expect(toast.show).toHaveBeenCalledWith('Gave up', 0, false);
+    });
+
+    it('keeps the opted-in sound off while the app is still bootstrapping', () => {
+      withConnectionSound(true);
+      appNetworkInitServiceStub.bootstrapStatus$.next('starting');
+      const app = create() as unknown as AppComponentNotifyApi;
+      TestBed.tick();
+      toast.show.mockClear();
+
+      app.displayConnectionsStatusNotification({ state: ConnectionState.WebSocketRetrying, message: 'Retrying', timestamp: new Date() });
+      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, true, 'warn');
     });
 
     it('stays silent while connecting or connected', () => {
@@ -215,7 +251,7 @@ describe('AppComponent', () => {
       toast.show.mockClear();
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       app.displayConnectionsStatusNotification({ state: 'Bogus' as ConnectionState, message: 'weird', timestamp: new Date() });
-      expect(toast.show).toHaveBeenCalledWith(expect.stringContaining('Unknown connection status'), 0, false, 'error');
+      expect(toast.show).toHaveBeenCalledWith(expect.stringContaining('Unknown connection status'), 0, true, 'error');
       expect(errorSpy).toHaveBeenCalled();
       errorSpy.mockRestore();
     });

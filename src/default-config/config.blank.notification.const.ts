@@ -11,6 +11,7 @@ export const DefaultNotificationConfig = {
   },
   "sound": {
     "disableSound": false,
+    "playConnectionSound": false,
     "muteNormal": true,
     "muteNominal": true,
     "muteWarn": true,

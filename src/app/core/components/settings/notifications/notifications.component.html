@@ -7,6 +7,13 @@
         Disable audio
   </mat-slide-toggle>
   <br/><br/>
+  <mat-checkbox
+    name="playConnectionSound"
+    [(ngModel)]="notificationConfig.sound.playConnectionSound"
+    [disabled]="notificationConfig.sound.disableSound">
+    Play a sound on <b>Signal K connection problems</b>
+  </mat-checkbox>
+  <br/><br/>
   <mat-slide-toggle
     name="disableNotifications"
     [(ngModel)]="notificationConfig.disableNotifications"

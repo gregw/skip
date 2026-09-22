@@ -58,6 +58,9 @@ export interface INotificationConfig {
   },
   sound: {
     disableSound: boolean;
+    /** Play a sound with the Signal K connection-problem toasts. Absent in configs written before
+     *  the option existed, which means off. */
+    playConnectionSound?: boolean;
     muteNormal: boolean;
     muteNominal: boolean;
     muteWarn: boolean;
