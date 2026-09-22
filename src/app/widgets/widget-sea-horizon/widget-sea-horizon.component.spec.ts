@@ -23,7 +23,7 @@ interface SeaHorizonInternals {
   heelText: () => string;
   trimText: () => string;
   noData: () => boolean;
-  worldTransform: () => string;
+  boatTransform: () => string;
   pointerTransform: () => string;
   frameLayers: () => { r: number; fill: string }[];
   frameWedges: () => { a0: number; d: string; c0: string; c1: string }[];
@@ -406,32 +406,38 @@ describe('WidgetSeaHorizonComponent dial geometry', () => {
     }
   });
 
-  it('rotates the world against the boat, not the boat against the world', () => {
+  it('keeps the horizon level and heels the boat symbol against it', () => {
     const h = mount(baseConfig());
     h.emit('gaugeRollPath', 20);
-    // Heeled 20° to starboard, the horizon tips 20° the other way.
-    expect(h.component.worldTransform()).toContain('rotate(-20.00 150 150)');
+    // Heeled 20° to starboard, the symbol's starboard wing drops (clockwise in SVG).
+    expect(h.component.boatTransform()).toContain('rotate(20.00 150 150)');
     expect(h.component.pointerTransform()).toContain('rotate(20.00 150 150)');
   });
 
-  it('translates the world for trim, bow-up moving the horizon down the window', () => {
+  it('raises the boat symbol up the pitch ladder for bow-up trim', () => {
     const h = mount(baseConfig());
     h.emit('gaugePitchPath', 5);
-    expect(h.component.worldTransform()).toContain('translate(0 29.00)');
+    expect(h.component.boatTransform()).toContain('translate(0 -29.00)');
+  });
+
+  it('parks the boat symbol at the end of the pitch ladder', () => {
+    const h = mount(baseConfig());
+    h.emit('gaugePitchPath', -30);
+    expect(h.component.boatTransform()).toContain('translate(0 87.00)');
   });
 
   // The scale is only ruled to 45°; the index parks near the last mark rather than running round
-  // the dial, while the horizon itself keeps rotating truthfully.
-  it('parks the index at the end of the scale past 45° but keeps rotating the horizon', () => {
+  // the dial, while the boat symbol itself keeps rotating truthfully.
+  it('parks the index at the end of the scale past 45° but keeps rotating the boat symbol', () => {
     const h = mount(baseConfig());
     h.emit('gaugeRollPath', 80);
     expect(h.component.pointerTransform()).toContain('rotate(48.00');
-    expect(h.component.worldTransform()).toContain('rotate(-80.00');
+    expect(h.component.boatTransform()).toContain('rotate(80.00');
   });
 
   it('falls back to a level dial when there is no reading', () => {
     const h = mount(baseConfig());
-    expect(h.component.worldTransform()).toContain('rotate(0.00 150 150) translate(0 0.00)');
+    expect(h.component.boatTransform()).toContain('translate(0 0.00) rotate(0.00 150 150)');
     expect(h.component.noData()).toBe(true);
   });
 });

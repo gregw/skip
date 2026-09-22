@@ -172,13 +172,9 @@
   </g>
 
   <g [attr.transform]="dialTransform()">
-    <!-- Horizon window. The world rotates against a boat-fixed dial. -->
+    <!-- Horizon window. The world is earth-fixed: the horizon always stays level. -->
     <g [attr.clip-path]="url().window">
-      <g
-        class="world"
-        [attr.transform]="worldTransform()"
-        [style.transition]="ready() ? motionTransition() : 'none'"
-      >
+      <g class="world">
         <rect x="-340" y="-520" width="980" height="670" [attr.fill]="url().sky" />
         <rect x="-340" [attr.y]="cy" width="980" height="660" [attr.fill]="url().sea" />
         <line x1="-340" [attr.y1]="cy" x2="640" [attr.y2]="cy" class="horizon-line" />
@@ -257,14 +253,21 @@
       <path [attr.d]="pointerPath" class="pointer-face" />
     </g>
 
-    <!-- Fixed boat reference: a deck bar with a mast stub, not an aircraft -->
-    <g class="reference">
-      <line [attr.x1]="cx - 46" [attr.y1]="cy" [attr.x2]="cx - 18" [attr.y2]="cy" stroke-width="3.4" stroke-linecap="round" />
-      <line [attr.x1]="cx + 18" [attr.y1]="cy" [attr.x2]="cx + 46" [attr.y2]="cy" stroke-width="3.4" stroke-linecap="round" />
-      <line [attr.x1]="cx - 46" [attr.y1]="cy" [attr.x2]="cx - 46" [attr.y2]="cy + 8" stroke-width="3.4" />
-      <line [attr.x1]="cx + 46" [attr.y1]="cy" [attr.x2]="cx + 46" [attr.y2]="cy + 8" stroke-width="3.4" />
-      <line [attr.x1]="cx" [attr.y1]="cy - 15" [attr.x2]="cx" [attr.y2]="cy + 3" stroke-width="2.4" />
-      <circle [attr.cx]="cx" [attr.cy]="cy" r="3.2" />
+    <!-- Boat symbol: a deck bar with a mast stub, not an aircraft. It heels and trims against the
+         level horizon, so it shows how the boat sits relative to the real world. -->
+    <g [attr.clip-path]="url().window">
+      <g
+        class="reference"
+        [attr.transform]="boatTransform()"
+        [style.transition]="ready() ? motionTransition() : 'none'"
+      >
+        <line [attr.x1]="cx - 46" [attr.y1]="cy" [attr.x2]="cx - 18" [attr.y2]="cy" stroke-width="3.4" stroke-linecap="round" />
+        <line [attr.x1]="cx + 18" [attr.y1]="cy" [attr.x2]="cx + 46" [attr.y2]="cy" stroke-width="3.4" stroke-linecap="round" />
+        <line [attr.x1]="cx - 46" [attr.y1]="cy" [attr.x2]="cx - 46" [attr.y2]="cy + 8" stroke-width="3.4" />
+        <line [attr.x1]="cx + 46" [attr.y1]="cy" [attr.x2]="cx + 46" [attr.y2]="cy + 8" stroke-width="3.4" />
+        <line [attr.x1]="cx" [attr.y1]="cy - 15" [attr.x2]="cx" [attr.y2]="cy + 3" stroke-width="2.4" />
+        <circle [attr.cx]="cx" [attr.cy]="cy" r="3.2" />
+      </g>
     </g>
 
     @if (noData()) {

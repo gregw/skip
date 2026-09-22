@@ -14,7 +14,7 @@ import { WidgetStreamsDirective, widgetPathSignature, WidgetRepointTracker } fro
  * roughly ±40° and trim over ±10°, and a hull pitching 20° is in trouble rather than manoeuvring.
  * So here the ground is sea rather than earth, the pitch ladder is ruled every 2.5° and labelled
  * every 5°, the heel scale stops at 45° and carries nominal / caution / alarm bands with a red
- * limit index at a configurable angle, and the fixed reference symbol is a deck bar with a mast
+ * limit index at a configurable angle, and the boat symbol is a deck bar with a mast
  * stub rather than an aircraft.
  *
  * It wears the same Classic Steel case as Skip's other steel gauges, but draws it as SVG: bezel,
@@ -66,6 +66,8 @@ const DIAL_R = 112;
 const WIN_R = 78;
 /** Pixels per degree of pitch. Aviation ladders run ~5px/deg over ±30°; a hull needs ±15°. */
 const PITCH_PX_PER_DEG = 5.8;
+/** Largest trim the pitch ladder is ruled to. */
+const PITCH_LADDER_MAX = 15;
 /** Largest heel the scale is ruled to. */
 const HEEL_SCALE_MAX = 45;
 const BAND_R_INNER = DIAL_R - 13;
@@ -675,7 +677,7 @@ export class WidgetSeaHorizonComponent {
   private readonly rollRepoint = new WidgetRepointTracker();
 
   /**
-   * Whether the world and pointer groups animate between readings. Off until the first reading has
+   * Whether the boat symbol and pointer groups animate between readings. Off until the first reading has
    * painted, so the step from a level dial to the first real attitude is instant rather than a slow
    * sweep up from zero; off again whenever the reading is lost or re-pointed, so recovery snaps too.
    */
@@ -897,15 +899,22 @@ export class WidgetSeaHorizonComponent {
   protected readonly haloColor = computed(() => this.backgroundDesign().halo);
 
   // ---- animated transforms -------------------------------------------------
-  protected readonly worldTransform = computed(() => {
+  /**
+   * The horizon is earth-fixed and never moves: the boat symbol moves against it, so the display
+   * reads the way the boat sits in the real world. Heeled to starboard, the symbol's starboard
+   * wing drops; bow-up, it rises up the pitch ladder. Pitch is clamped to the ladder's ±15° (the
+   * symbol is clipped to the window, the trim LCD carries the exact value); heel is not clamped,
+   * so the symbol keeps rotating truthfully past the end of the rim scale.
+   */
+  protected readonly boatTransform = computed(() => {
     const roll = this.rollDeg() ?? 0;
-    const pitch = clamp(this.pitchDeg() ?? 0, -40, 40);
-    return `rotate(${(-roll).toFixed(2)} ${CX} ${CY}) translate(0 ${(pitch * PITCH_PX_PER_DEG).toFixed(2)})`;
+    const pitch = clamp(this.pitchDeg() ?? 0, -PITCH_LADDER_MAX, PITCH_LADDER_MAX);
+    return `translate(0 ${(-pitch * PITCH_PX_PER_DEG).toFixed(2)}) rotate(${roll.toFixed(2)} ${CX} ${CY})`;
   });
 
   protected readonly pointerTransform = computed(() => {
     // The scale stops at 45°, so past that the index parks just off the last mark rather than
-    // running round the dial, while the horizon itself keeps rotating truthfully.
+    // running round the dial, while the boat symbol itself keeps rotating truthfully.
     const roll = clamp(this.rollDeg() ?? 0, -HEEL_SCALE_MAX - 3, HEEL_SCALE_MAX + 3);
     return `rotate(${roll.toFixed(2)} ${CX} ${CY})`;
   });
