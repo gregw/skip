@@ -381,8 +381,8 @@ describe('SvgWindsteerComponent', () => {
 
         const { angle, cx, cy } = rotationOf(setArrowGroup());
         expect(angle).toBeCloseTo(45);
-        expect(cx).toBe(816);
-        expect(cy).toBe(952);
+        expect(cx).toBe(904);
+        expect(cy).toBe(912);
     });
 
     it('points the set arrow at set minus heading when the set is below the heading', () => {
@@ -440,20 +440,60 @@ describe('SvgWindsteerComponent', () => {
         // The arrow sits outside the rotating dial and turns in place in the corner.
         expect(component['rotatingDial']().nativeElement.contains(setArrowGroup())).toBe(false);
 
-        const DIAL_OUTER_RADIUS = 489.5;
-        const DIAL_CENTER = 500;
         // Three quarters of the 1000-unit viewBox: past it on both axes is the bottom-right corner.
         const CORNER_BOUND = 750;
-        const { cx, cy } = rotationOf(setArrowGroup());
-        const arrowBox = setArrowGroup().querySelector('path')!.getAttribute('d')!;
-        const arrowReach = Math.max(...(arrowBox.match(/-?\d+(\.\d+)?/g) ?? []).map((n) => Math.abs(parseFloat(n))));
-        expect(Math.hypot(cx - DIAL_CENTER, cy - DIAL_CENTER) - arrowReach).toBeGreaterThan(DIAL_OUTER_RADIUS);
-
         const texts = Array.from(currentLayer().querySelectorAll('text'));
         expect(texts.length).toBeGreaterThan(0);
         for (const t of texts) {
             expect(parseFloat(t.getAttribute('x')!)).toBeGreaterThan(CORNER_BOUND);
             expect(parseFloat(t.getAttribute('y')!)).toBeGreaterThan(CORNER_BOUND);
+        }
+    });
+
+    it('centres the set arrow pivot on the drift value', () => {
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 0 });
+        fixture.detectChanges();
+
+        // Roboto digits stand 0.711 em tall, so their visual centre is half that above the baseline.
+        const DIGIT_HALF_HEIGHT_EM = 0.711 / 2;
+        const value = fixture.nativeElement.querySelector('#driftValue') as SVGTextElement;
+        const fontSize = parseFloat(value.style.fontSize);
+        const { cx, cy } = rotationOf(setArrowGroup());
+        expect(parseFloat(value.getAttribute('x')!)).toBeCloseTo(cx, 0);
+        expect(parseFloat(value.getAttribute('y')!) - fontSize * DIGIT_HALF_HEIGHT_EM).toBeCloseTo(cy, 0);
+    });
+
+    it('keeps every point of the set arrow inside the viewBox and off the dial at any rotation', () => {
+        setRequiredInputs();
+        fixture.detectChanges();
+
+        // The dial's outer edge; the rudder arcs end on the same radius.
+        const DIAL_OUTER_RADIUS = 489.5;
+        const DIAL_CENTER = 500;
+        const VIEWBOX_SIZE = 1000;
+        const ROTATION_STEP_DEG = 5;
+        const { cx, cy } = rotationOf(setArrowGroup());
+        const arrow = setArrowGroup().querySelector('path')!;
+        const translate = (arrow.getAttribute('transform') ?? '').match(/translate\(([-\d.]+) ([-\d.]+)\)/);
+        expect(translate).not.toBeNull();
+        const [tx, ty] = [parseFloat(translate![1]), parseFloat(translate![2])];
+        const coords = (arrow.getAttribute('d')!.match(/-?\d+(\.\d+)?/g) ?? []).map(parseFloat);
+        expect(coords.length).toBeGreaterThan(0);
+        expect(coords.length % 2).toBe(0);
+        const points: [number, number][] = [];
+        for (let i = 0; i < coords.length; i += 2) points.push([coords[i] + tx, coords[i + 1] + ty]);
+
+        for (let deg = 0; deg < 360; deg += ROTATION_STEP_DEG) {
+            const rad = deg * Math.PI / 180;
+            for (const [px, py] of points) {
+                const x = cx + (px - cx) * Math.cos(rad) - (py - cy) * Math.sin(rad);
+                const y = cy + (px - cx) * Math.sin(rad) + (py - cy) * Math.cos(rad);
+                expect(x, `x at ${deg} deg`).toBeGreaterThan(0);
+                expect(x, `x at ${deg} deg`).toBeLessThan(VIEWBOX_SIZE);
+                expect(y, `y at ${deg} deg`).toBeGreaterThan(0);
+                expect(y, `y at ${deg} deg`).toBeLessThan(VIEWBOX_SIZE);
+                expect(Math.hypot(x - DIAL_CENTER, y - DIAL_CENTER), `dial clearance at ${deg} deg`).toBeGreaterThan(DIAL_OUTER_RADIUS);
+            }
         }
     });
 

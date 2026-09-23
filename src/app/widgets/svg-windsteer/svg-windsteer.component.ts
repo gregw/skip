@@ -108,8 +108,9 @@ export class SvgWindsteerComponent implements OnDestroy {
 
   private readonly CENTER = 500;
   private readonly RADIUS = 350;
-  // Pivot of the corner set arrow: below-left of the drift readout, clear of the dial and rudder arcs.
-  private readonly SET_ARROW_CENTER: [number, number] = [816, 952];
+  // Pivot of the corner set arrow: the visual centre of the drift value's digits, the point of the
+  // corner farthest from the dial edge and the viewBox (87.5 units). The arrow reaches 80 from it.
+  private readonly SET_ARROW_CENTER: [number, number] = [904, 912];
   protected readonly setArrowTranslate = `translate(${this.SET_ARROW_CENTER[0]} ${this.SET_ARROW_CENTER[1]})`;
   private readonly animationDuration = computed(() => effectiveAnimationDuration(this.updateInterval()));
   private readonly EPS_ANGLE = 1.0; // degrees, gate tiny animations
