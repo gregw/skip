@@ -1,15 +1,18 @@
 /*
- * #637 Wind Steer current-readout render probe. Streams one fixed boat state (heading, apparent and
- * true wind, COG/SOG, waypoint bearing, hard-over rudder, and a 0.8 kn current setting 120°) and screenshots
- * the Wind Steer widget in compass mode at a large and a small tile, in the light, dark and night
- * themes, so before/after images are directly comparable.
+ * #637 Wind Steer current-readout render probe. Streams one fixed boat state (heading 030°, apparent
+ * and true wind, COG/SOG, waypoint bearing, hard-over rudder, and a current) and screenshots the Wind
+ * Steer widget in compass mode at a large and a small tile, in the light, dark and night themes, so
+ * before/after images are directly comparable. The current defaults to 0.8 kn setting 90° right of
+ * the bow; --drift sets its speed in knots and --set-rel its set relative to the bow in degrees.
  *
  *   node shot-windsteer.mjs --public ../public --label after
+ *   node shot-windsteer.mjs --public ../public --label near-zero --drift 0.058
  *   node shot-windsteer.mjs --public /path/to/main/public --label before --out /tmp/shots
  *
  * Writes <out>/<label>-<theme>-<size>.png (default out: results/shots/windsteer). Expect the drift
- * value, its unit and the set arrow in the bottom-right corner, clear of the dial and the rudder
- * arcs, with the arrow pointing 90° right of the bow (set 120° at heading 030°).
+ * label, value and unit in the bottom-right corner, the value over a large faint set arrow pointing
+ * --set-rel degrees right of the bow, all clear of the dial and the rudder arcs. Below 0.1 m/s
+ * (~0.19 kn) the value shows and the arrow does not.
  */
 import { chromium } from 'playwright-core';
 import { mkdir } from 'node:fs/promises';
@@ -20,21 +23,36 @@ import { appConfig, windsteerWidget, buildDashboards, localStorageBundle, server
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHROME = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : d; };
+const arg = (n, d) => {
+  const i = process.argv.indexOf(`--${n}`);
+  if (i < 0) return d;
+  const v = process.argv[i + 1];
+  if (v === undefined || v.startsWith('--')) { console.error(`--${n} needs a value`); process.exit(2); }
+  return v;
+};
+// A non-numeric value would stream NaN, which the widget drops, and the shots would silently lack the readout.
+const numArg = (n, d) => {
+  const v = Number(arg(n, d));
+  if (!Number.isFinite(v)) { console.error(`--${n} must be a number`); process.exit(2); }
+  return v;
+};
 
 const publicDir = arg('public', join(HERE, '..', 'public'));
 const label = arg('label', 'windsteer');
 const outDir = arg('out', join(HERE, 'results', 'shots', 'windsteer'));
-const port = Number(arg('port', '4432'));
+const port = numArg('port', '4432');
+const driftKn = numArg('drift', '0.8');
+const setRelDeg = numArg('set-rel', '90');
 // The dashboard grid is 24x24 over the viewport, so a 24-cell tile fills it and a 6-cell tile is ~220 px.
 const VIEWPORT = { width: 900, height: 900 };
 const SIZES = { large: 24, small: 6 };
 
 const rad = (deg) => deg * Math.PI / 180;
 const KN = 1852 / 3600; // m/s per knot
+const HEADING_DEG = 30;
 // Signal K carries SI; the knots preference arrives in meta, as a server with the nautical preset sends it.
 const VALUES = {
-  'navigation.headingTrue': rad(30),
+  'navigation.headingTrue': rad(HEADING_DEG),
   'navigation.courseOverGroundTrue': rad(38),
   'navigation.speedOverGround': 5.5 * KN,
   'navigation.course.calcValues.bearingTrue': rad(75),
@@ -42,8 +60,8 @@ const VALUES = {
   'environment.wind.speedApparent': 16 * KN,
   'environment.wind.angleTrueWater': rad(52),
   'environment.wind.speedTrue': 12 * KN,
-  'environment.current.drift': 0.8 * KN,
-  'environment.current.setTrue': rad(120),
+  'environment.current.drift': driftKn * KN,
+  'environment.current.setTrue': rad(HEADING_DEG + setRelDeg),
   // Hard over to starboard: the arc reaches its end nearest the corner readout.
   'steering.rudderAngle': rad(35),
 };
