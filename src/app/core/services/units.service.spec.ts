@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { UnitsService } from './units.service';
+import { TDurationFormat, UnitsService } from './units.service';
 import { DataService } from './data.service';
 
 describe('UnitsService', () => {
@@ -401,6 +401,81 @@ describe('UnitsService', () => {
       const service = setupWithData('K', { targetUnit: 'C' });
       const path = 'self.environment.water.temperature';
       expect(service.resolvePathMeasure(path)).toBe(service.getConversionsForPath(path).base);
+    });
+
+    // --- Duration formats (#627): the server's clock-style time targets ---
+    const DURATION_TARGETS = ['HH:MM:SS', 'DD:HH:MM:SS', 'MM:SS', 'HH:MM:SS.mmm', 'MM:SS.mmm', 'duration-compact', 'duration-verbose'];
+
+    it('keeps a duration-format path in seconds and names the format separately', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        for (const target of DURATION_TARGETS) {
+          const service = setupWithData('s', { targetUnit: target });
+          const path = 'self.navigation.racing.timeToStart';
+          expect(service.resolvePathMeasure(path), target).toBe('s');
+          expect(service.resolvePathDurationFormat(path), target).toBe(target);
+        }
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('names no duration format for a numeric time target or no server preference', () => {
+      expect(setupWithData('s', { targetUnit: 'hour' }).resolvePathDurationFormat('self.navigation.racing.timeToStart')).toBeUndefined();
+      expect(setupWithData('s', undefined).resolvePathDurationFormat('self.navigation.racing.timeToStart')).toBeUndefined();
+    });
+
+    it('does not honour a duration format on a path that is not in seconds', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const service = setupWithData('m', { targetUnit: 'HH:MM:SS' });
+        expect(service.resolvePathMeasure('self.navigation.trip.log')).toBe('unitless');
+        expect(service.resolvePathDurationFormat('self.navigation.trip.log')).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  describe('formatDuration', () => {
+    const CASES: [TDurationFormat, number, string][] = [
+      ['HH:MM:SS', 0, '0:00'],
+      ['HH:MM:SS', 45, '0:45'],
+      ['HH:MM:SS', 1800, '30:00'],
+      ['HH:MM:SS', 1799.9, '29:59'],
+      ['HH:MM:SS', 3725, '1:02:05'],
+      ['HH:MM:SS', 90000, '25:00:00'],
+      ['HH:MM:SS', -1800, '-30:00'],
+      ['HH:MM:SS', -0.4, '0:00'],
+      ['MM:SS', 45, '0:45'],
+      ['MM:SS', 3725, '62:05'],
+      ['DD:HH:MM:SS', 1800, '30:00'],
+      ['DD:HH:MM:SS', 90061, '1d 1:01:01'],
+      ['DD:HH:MM:SS', -90061, '-1d 1:01:01'],
+      ['HH:MM:SS.mmm', 0.57, '0:00.570'],
+      ['HH:MM:SS.mmm', 1800.25, '30:00.250'],
+      ['HH:MM:SS.mmm', 3725.04, '1:02:05.040'],
+      ['MM:SS.mmm', 3725.5, '62:05.500'],
+      ['duration-compact', 0, '0s'],
+      ['duration-compact', 45, '45s'],
+      ['duration-compact', 1799, '29m 59s'],
+      ['duration-compact', 1800, '30m'],
+      ['duration-compact', 3600, '1h'],
+      ['duration-compact', 9045, '2h 30m'],
+      ['duration-compact', 90061, '1d 1h'],
+      ['duration-compact', -1800, '-30m'],
+      ['duration-verbose', 0, '0 seconds'],
+      ['duration-verbose', 1, '1 second'],
+      ['duration-verbose', 3601, '1 hour 1 second'],
+      ['duration-verbose', 9045, '2 hours 30 minutes 45 seconds'],
+      ['duration-verbose', 86400, '1 day'],
+      ['duration-verbose', -61, '-1 minute 1 second'],
+    ];
+
+    it.each(CASES)('formats %s %d s as %s', (format, seconds, expected) => {
+      expect(setup().formatDuration(format, seconds)).toBe(expected);
     });
   });
 });

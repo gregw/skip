@@ -277,16 +277,18 @@ export class WidgetStreamsDirective implements OnDestroy {
             // pass through as raw SI — mismatched against a widget's stored-unit scale/label (a gauge
             // needle can peg for a frame). Fall back to the widget's stored unit until a real measure
             // resolves, so the pre-meta value is converted in a unit that matches its scale and label.
-            return resolved === 'unitless' && structuralMeasure ? structuralMeasure : resolved;
+            const measure = resolved === 'unitless' && structuralMeasure ? structuralMeasure : resolved;
+            return { measure, durationFormat: this.unitsService.resolvePathDurationFormat(normalizedPath) };
           }),
-          distinctUntilChanged()
+          distinctUntilChanged((a, b) => a.measure === b.measure && a.durationFormat === b.durationFormat)
         );
         data$ = combineLatest([data$, measure$]).pipe(
-          map(([x, measure]) => ({
+          map(([x, { measure, durationFormat }]) => ({
             data: {
               value: x.data.value == null ? null : convertWith(measure, x.data.value as number),
               timestamp: x.data.timestamp,
-              measure
+              measure,
+              durationFormat
             },
             state: x.state
           } as IPathUpdate))

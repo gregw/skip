@@ -7,7 +7,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { IPathUpdate } from '../../core/services/data.service';
 import { CanvasService } from '../../core/services/canvas.service';
-import { UnitsService } from '../../core/services/units.service';
+import { TDurationFormat, UnitsService } from '../../core/services/units.service';
 import { ITheme } from '../../core/services/app-service';
 import { getColors } from '../../core/utils/themeColors.utils';
 import { States } from '../../core/interfaces/signalk-interfaces';
@@ -82,6 +82,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
 
   private dataValue: number | null = null;
   private effectiveUnit = signal<string>('');
+  private durationFormat = signal<TDurationFormat | undefined>(undefined);
   private maxValue: number | null = null;
   private minValue: number | null = null;
   private valueColor: string | undefined = undefined;
@@ -114,6 +115,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     const dataValue = newValue.data.value as number | null;
     this.dataValue = dataValue;
     this.effectiveUnit.set(newValue.data.measure ?? '');
+    this.durationFormat.set(newValue.data.durationFormat);
     const minMax = reduceMinMax(this.minValue, this.maxValue, dataValue);
     this.minValue = minMax.min;
     this.maxValue = minMax.max;
@@ -171,6 +173,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
         this.dataValue = null;
         this.pathDataState = null;
         this.effectiveUnit.set('');
+        this.durationFormat.set(undefined);
         this.lastSubscriptionSignature = sig;
 
         if (sig) {
@@ -301,7 +304,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     if (!ctx) return;
     const cfg = this.runtime.options();
     if (!cfg) return;
-    const unit = this.effectiveUnit();
+    const unit = this.labelMeasure();
     const displayName = cfg.displayName ?? 'Gauge Label';
     // Background-color halo: invisible over the empty card, carves the value out only where the
     // floored label/unit overlap it. Requires the label/unit to be composited above the value below.
@@ -430,21 +433,37 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     if (PRE_FORMATTED_MEASURES.includes(measure)) {
       return dataValue.toString();
     }
-    return this.applyDecorations(dataValue.toFixed(cfg?.numDecimal));
+    return this.formatNumber(dataValue, cfg?.numDecimal);
+  }
+
+  /** A duration-formatted value is read as a clock, not a number of seconds, so it carries no unit. */
+  private labelMeasure(): string {
+    return this.durationFormat() ? '' : this.effectiveUnit();
+  }
+
+  private formatNumber(value: number, numDecimal: number | undefined): string {
+    const format = this.durationFormat();
+    return format ? this.unitsService.formatDuration(format, value) : this.applyDecorations(value.toFixed(numDecimal));
+  }
+
+  private getMinMaxText(): string {
+    const cfg = this.runtime.options();
+    if (!cfg) return '';
+    let valueText = '';
+    if (cfg.showMin) {
+      valueText = this.minValue != null ? ` Min: ${this.formatNumber(this.minValue, cfg.numDecimal)}` : ' Min: --';
+    }
+    if (cfg.showMax) {
+      valueText += this.maxValue != null ? ` Max: ${this.formatNumber(this.maxValue, cfg.numDecimal)}` : ' Max: --';
+    }
+    return valueText.trim();
   }
 
   private drawMinMax(ctx: CanvasRenderingContext2D): void {
     const cfg = this.runtime.options();
     if (!cfg) return;
     if (!cfg.showMin && !cfg.showMax) return;
-    let valueText = '';
-    if (cfg.showMin) {
-      valueText = this.minValue != null ? ` Min: ${this.applyDecorations(this.minValue.toFixed(cfg.numDecimal))}` : ' Min: --';
-    }
-    if (cfg.showMax) {
-      valueText += this.maxValue != null ? ` Max: ${this.applyDecorations(this.maxValue.toFixed(cfg.numDecimal))}` : ' Max: --';
-    }
-    valueText = valueText.trim();
+    const valueText = this.getMinMaxText();
     const marginX = 10 * this.canvas.scaleFactor;
     const marginY = 5 * this.canvas.scaleFactor;
     this.canvas.drawText(

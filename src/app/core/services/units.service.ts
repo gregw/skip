@@ -106,9 +106,10 @@ type UnitConverter = (v: any) => any;
  * A target with no entry that is not a measure of the path's own group degrades to 'unitless': the
  * raw SI value with no label. That is how #536 surfaced — the metric presets emit `L/h` where Skip's
  * measure is `l/h`. Targets Skip genuinely has no conversion for (kW, horsepower, Wh, mAh, atm, torr,
- * Bf, fps, the duration formats, every dataSize target, and the mass and area targets outside the
+ * Bf, fps, every dataSize target, and the mass and area targets outside the
  * kilogram/pound and square-metre/square-foot pairs — gram, ounce, stone, acre, hectare and the
- * rest) belong in that fallback and are deliberately absent here. A units.service.spec case pins this table against the full built-in
+ * rest) belong in that fallback and are deliberately absent here. The duration formats are not
+ * aliases either: they resolve to seconds plus a separate format (DURATION_FORMATTERS). A units.service.spec case pins this table against the full built-in
  * preset vocabulary; extend both together.
  */
 const SERVER_TARGET_UNIT_ALIASES: Record<string, string> = {
@@ -136,6 +137,93 @@ const SERVER_TARGET_UNIT_ALIASES: Record<string, string> = {
   'L/min': 'l/min',
   'gal/h': 'g/h',
 };
+
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+const pad2 = (n: number): string => n.toString().padStart(2, '0');
+
+/**
+ * A clock rendering that starts at its largest non-zero field, so 1800 s reads `30:00`. Whole-second
+ * formats truncate toward zero; the millisecond formats round to the nearest millisecond, which
+ * truncation of a float product would miss (0.57 * 1000 is 569.99…).
+ */
+function formatClock(seconds: number, opts: { days?: boolean; hours: boolean; millis?: boolean }): string {
+  const totalMs = opts.millis ? Math.round(seconds * SECOND_MS) : Math.trunc(seconds) * SECOND_MS;
+  let rest = Math.abs(totalMs);
+  let text = totalMs < 0 ? '-' : '';
+  let daysShown = false;
+  if (opts.days && rest >= DAY_MS) {
+    text += `${Math.floor(rest / DAY_MS)}d `;
+    rest %= DAY_MS;
+    daysShown = true;
+  }
+  const h = Math.floor(rest / HOUR_MS);
+  const s = Math.floor(rest / SECOND_MS) % 60;
+  if (opts.hours && (h > 0 || daysShown)) {
+    text += `${h}:${pad2(Math.floor(rest / MINUTE_MS) % 60)}:${pad2(s)}`;
+  } else {
+    text += `${Math.floor(rest / MINUTE_MS)}:${pad2(s)}`;
+  }
+  return opts.millis ? `${text}.${(rest % SECOND_MS).toString().padStart(3, '0')}` : text;
+}
+
+const DURATION_UNITS: { ms: number; short: string; long: string }[] = [
+  { ms: DAY_MS, short: 'd', long: 'day' },
+  { ms: HOUR_MS, short: 'h', long: 'hour' },
+  { ms: MINUTE_MS, short: 'm', long: 'minute' },
+  { ms: SECOND_MS, short: 's', long: 'second' },
+];
+
+/** Splits whole seconds (truncated toward zero) into day/hour/minute/second counts, largest first. */
+function durationParts(seconds: number): { sign: string; counts: number[] } {
+  const totalMs = Math.trunc(seconds) * SECOND_MS;
+  let rest = Math.abs(totalMs);
+  const counts = DURATION_UNITS.map(unit => {
+    const count = Math.floor(rest / unit.ms);
+    rest %= unit.ms;
+    return count;
+  });
+  return { sign: totalMs < 0 ? '-' : '', counts };
+}
+
+/** The two largest units from the first non-zero one, dropping the second when it is zero: `2h 30m`. */
+function formatCompact(seconds: number): string {
+  const { sign, counts } = durationParts(seconds);
+  const first = counts.findIndex(count => count > 0);
+  if (first === -1) { return '0s'; }
+  const shown = [first, first + 1].filter(i => i < counts.length && (i === first || counts[i] > 0));
+  return sign + shown.map(i => `${counts[i]}${DURATION_UNITS[i].short}`).join(' ');
+}
+
+/** Every non-zero unit spelled out: `2 hours 30 minutes 45 seconds`. */
+function formatVerbose(seconds: number): string {
+  const { sign, counts } = durationParts(seconds);
+  const words = counts.flatMap((count, i) => count > 0 ? [`${count} ${DURATION_UNITS[i].long}${count === 1 ? '' : 's'}`] : []);
+  return words.length > 0 ? sign + words.join(' ') : '0 seconds';
+}
+
+/**
+ * Formatters for the Signal K unit-preferences duration targets (`standard-units-definitions.json`,
+ * the `s` conversions whose formula calls a client-supplied `formatDuration*` helper). They render
+ * text only: a path with one of these targets stays numeric in seconds through the data pipeline,
+ * and a widget applies the format where it draws the value (#627).
+ */
+const DURATION_FORMATTERS = {
+  'HH:MM:SS': (v: number) => formatClock(v, { hours: true }),
+  'DD:HH:MM:SS': (v: number) => formatClock(v, { days: true, hours: true }),
+  'MM:SS': (v: number) => formatClock(v, { hours: false }),
+  'HH:MM:SS.mmm': (v: number) => formatClock(v, { hours: true, millis: true }),
+  'MM:SS.mmm': (v: number) => formatClock(v, { hours: false, millis: true }),
+  'duration-compact': formatCompact,
+  'duration-verbose': formatVerbose,
+} satisfies Record<string, (seconds: number) => string>;
+
+export type TDurationFormat = keyof typeof DURATION_FORMATTERS;
+
+const isDurationFormat = (target: string): target is TDurationFormat => Object.hasOwn(DURATION_FORMATTERS, target);
 
 @Injectable()
 
@@ -820,6 +908,22 @@ export class UnitsService {
   }
 
   /**
+   * The server's duration format for a path, when its targetUnit is one and the path is in seconds.
+   * The path's measure stays 's' (resolvePathMeasure), so numeric consumers keep working in seconds;
+   * only a widget that draws the value as text applies the format, through formatDuration.
+   */
+  public resolvePathDurationFormat(path: string): TDurationFormat | undefined {
+    const targetUnit = this.data.getPathDisplayUnits(path)?.targetUnit;
+    if (!targetUnit || !isDurationFormat(targetUnit)) { return undefined; }
+    return this.resolvePathMeasure(path) === 's' ? targetUnit : undefined;
+  }
+
+  /** Renders a duration in seconds as text in the given server duration format. */
+  public formatDuration(format: TDurationFormat, seconds: number): string {
+    return DURATION_FORMATTERS[format](seconds);
+  }
+
+  /**
    * The server's preferred display measure for a path (Signal K unit-preferences plugin), used as the
    * default conversion target when present. Returns a measure only when the server's targetUnit maps
    * to a Skip measure that is valid for the path's own conversion group — so the resolved measure
@@ -842,6 +946,7 @@ export class UnitsService {
     if (inGroup(targetUnit)) { return targetUnit; }
     const aliased = SERVER_TARGET_UNIT_ALIASES[targetUnit];
     if (aliased && inGroup(aliased)) { return aliased; }
+    if (isDurationFormat(targetUnit) && inGroup('s')) { return 's'; }
     this.warnUnmappableTarget(path, targetUnit);
     return undefined;
   }

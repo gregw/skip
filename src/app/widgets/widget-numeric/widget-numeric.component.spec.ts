@@ -4,12 +4,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { WidgetNumericComponent } from './widget-numeric.component';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
-import { UnitsService } from '../../core/services/units.service';
+import { TDurationFormat, UnitsService } from '../../core/services/units.service';
 import { CanvasService } from '../../core/services/canvas.service';
 import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 
 const unitsServiceStub = {
+  // The real formatter: it reads no service state, so the widget's text is checked against it.
+  formatDuration: (format: TDurationFormat, seconds: number) => UnitsService.prototype.formatDuration(format, seconds),
   getUnitDisplaySymbol: (measure: string | null | undefined) => measure ?? '',
   // Mirrors the real rule: nothing to render for the boot placeholder, 'unitless', or a blank symbol.
   getRenderableUnitSymbol: (measure: string | null | undefined) =>
@@ -19,6 +21,8 @@ const unitsServiceStub = {
 interface NumericInternals {
   onNumericValue: (u: IPathUpdate) => void;
   getValueText: () => string;
+  getMinMaxText: () => string;
+  labelMeasure: () => string;
 }
 
 /**
@@ -51,8 +55,8 @@ describe('WidgetNumericComponent value text (crash-fix ddfb377c)', () => {
     ignoreZones: true
   });
 
-  const update = (value: unknown, measure?: string): IPathUpdate =>
-    ({ data: { value, timestamp: null, measure }, state: 'normal' });
+  const update = (value: unknown, measure?: string, durationFormat?: TDurationFormat): IPathUpdate =>
+    ({ data: { value, timestamp: null, measure, durationFormat }, state: 'normal' });
 
   beforeEach(() => {
     options = signal<IWidgetSvcConfig | undefined>(makeConfig());
@@ -99,6 +103,25 @@ describe('WidgetNumericComponent value text (crash-fix ddfb377c)', () => {
 
   it('renders the placeholder before any value arrives', () => {
     expect(internals.getValueText()).toBe('--');
+  });
+
+  it('formats a seconds value in the server duration format (#627)', () => {
+    internals.onNumericValue(update(1800, 's', 'HH:MM:SS'));
+    expect(internals.getValueText()).toBe('30:00');
+  });
+
+  it('formats min and max in the duration format too', () => {
+    options.set({ ...makeConfig(), showMin: true, showMax: true });
+    internals.onNumericValue(update(1800, 's', 'HH:MM:SS'));
+    internals.onNumericValue(update(3725, 's', 'HH:MM:SS'));
+    expect(internals.getMinMaxText()).toBe('Min: 30:00 Max: 1:02:05');
+  });
+
+  it('labels a duration-formatted value with no unit symbol, and a plain seconds value with its measure', () => {
+    internals.onNumericValue(update(1800, 's', 'HH:MM:SS'));
+    expect(internals.labelMeasure()).toBe('');
+    internals.onNumericValue(update(1800, 's'));
+    expect(internals.labelMeasure()).toBe('s');
   });
 });
 
