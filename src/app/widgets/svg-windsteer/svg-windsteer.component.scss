@@ -138,3 +138,34 @@ svg {
 .rudder-port {
   stroke: var(--skip-port-color);
 }
+
+// Polar overlay. Widths are viewBox units sized for the smallest tile (~215 px, 1 px ≈ 4.65 units):
+// the edge stays ≥ 1.5 px and the dot ≥ 6 px across. Polar and VMC modes differ by treatment
+// (bare line vs filled lobe), not only colour, so they stay apart in the single-hue night theme.
+.polar-curve,
+.vmc-curve {
+  stroke: var(--skip-purple-color);
+  stroke-width: 8;
+  stroke-linejoin: round;
+}
+
+.polar-curve {
+  fill: none;
+}
+
+.vmc-curve {
+  fill: var(--skip-purple-color);
+  fill-opacity: 0.3;
+}
+
+// The halo cuts a gap into the curve under the dot, so the dot stays apart from a same-colour line
+// (the night theme maps both to one red).
+.polar-dot-halo {
+  fill: var(--skip-widget-card-background-color);
+}
+
+.polar-dot {
+  fill: var(--skip-purple-color);
+  stroke: var(--skip-contrast-color);
+  stroke-width: 4;
+}

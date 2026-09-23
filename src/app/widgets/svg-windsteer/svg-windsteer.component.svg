@@ -558,6 +558,10 @@
           class="wind-sector-stbd"
           style="fill-opacity:0.5;stroke:none" />
      </g>
+      <!-- VMC curve: compass frame (angle = true heading), so it turns with the dial like the waypoint marker -->
+      <g id="layerVmcCurve" [style.display]="vmcCurvePath() ? 'inline' : 'none'">
+        <path class="vmc-curve" [attr.d]="vmcCurvePath() || null" />
+      </g>
       <g #wptIndicator
         [attr.display]="waypointActive() && compassModeEnabled() ? 'inline' : 'none'">
         <path
@@ -577,12 +581,21 @@
       </g>
     </g>
   </g>
+  <!-- Polar curve: wind frame; the group turns by the water TWA so the present TWA's sample is on the bow -->
+  <g #polarOverlay id="layerPolarCurve" [style.display]="polarCurvePath() ? 'inline' : 'none'">
+    <path class="polar-curve" [attr.d]="polarCurvePath() || null" />
+  </g>
   <g id="layerCrosshair"
      style="display:inline">
     <path class="crosshair"
       d="M 500,48 L 500,360 M 500,640 L 500,952" />
     <path class="crosshair"
       d="M 48,500 L 360,500 M 640,500 L 952,500" />
+  </g>
+  <!-- Overlay dot: always on the bow axis, in the fixed boat frame so it never lags a rotating parent -->
+  <g id="layerPolarDot" [style.display]="overlayDotY() !== null ? 'inline' : 'none'">
+    <circle class="polar-dot-halo" cx="500" [attr.cy]="overlayDotY()" r="23" />
+    <circle class="polar-dot" cx="500" [attr.cy]="overlayDotY()" r="16" />
   </g>
   <g id="layerRudder"
      [style.display]="rudderEnabled() ? 'inline' : 'none'">

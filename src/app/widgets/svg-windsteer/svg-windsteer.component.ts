@@ -31,6 +31,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly wptIndicator = viewChild.required<ElementRef<SVGGElement>>('wptIndicator');
   protected readonly setIndicator = viewChild.required<ElementRef<SVGGElement>>('setIndicator');
   protected readonly cogIndicator = viewChild.required<ElementRef<SVGGElement>>('cogIndicator');
+  protected readonly polarOverlay = viewChild.required<ElementRef<SVGGElement>>('polarOverlay');
 
   protected readonly compassHeading = input.required<number>();
   protected readonly compassModeEnabled = input.required<boolean>();
@@ -89,6 +90,8 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected wpt: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected cog: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected set: ISVGRotationObject = { oldValue: 0, newValue: 0 };
+  private polarRotation: ISVGRotationObject = { oldValue: 0, newValue: 0 };
+  private polarRotationInitialized = false;
   private compassInitialized = false;
   private twaInitialized = false;
   private awaInitialized = false;
@@ -103,6 +106,16 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected waypointActive = computed(() => {
     const a = this.waypointAngle();
     return this.waypointEnabled() && a != null && Number.isFinite(a);
+  });
+
+  protected readonly polarCurvePath = computed(() =>
+    this.polarOverlayMode() === 'polar' ? this.overlayPath(this.polarCurve(), false) : '');
+  protected readonly vmcCurvePath = computed(() =>
+    this.polarOverlayMode() === 'vmc' ? this.overlayPath(this.vmcCurve(), true) : '');
+  /** Y of the dot's center on the bow axis, or null when it is hidden. */
+  protected readonly overlayDotY = computed(() => {
+    const r = this.overlayDotRadius();
+    return this.polarOverlayMode() !== 'hidden' && r != null && Number.isFinite(r) ? this.CENTER - r : null;
   });
 
   //laylines - Close-Hauled lines
@@ -330,6 +343,27 @@ export class SvgWindsteerComponent implements OnDestroy {
       });
     });
 
+    // The polar curve turns with the water TWA, eased like the true-wind pointer so the two move together.
+    effect(() => {
+      const raw = this.polarCurveRotation();
+      if (!Number.isFinite(raw)) return;
+      const rotation = this.addHeading(Math.round(raw), 0);
+
+      untracked(() => {
+        const element = this.polarOverlay()?.nativeElement;
+        if (!element) return;
+        const isFirst = !this.polarRotationInitialized;
+        this.polarRotation.oldValue = isFirst ? rotation : this.polarRotation.newValue;
+        this.polarRotation.newValue = rotation;
+        this.polarRotationInitialized = true;
+        if (isFirst || this.polarRotation.oldValue === rotation) {
+          this.setRotationImmediate(element, rotation);
+        } else {
+          animateRotation(element, this.polarRotation.oldValue, rotation, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
+        }
+      });
+    });
+
     // Ensure wind sectors update on min/mid/max or layline changes, and clear when disabled
     effect(() => {
       const enabled = this.windSectorEnabled();
@@ -414,6 +448,14 @@ export class SvgWindsteerComponent implements OnDestroy {
       this.RADIUS * Math.sin(radian) + this.CENTER,
       (this.RADIUS * Math.cos(radian) * -1) + this.CENTER,
     ];
+  }
+
+  /** A `d` path through overlay points: angle clockwise from up, r from the dial center. */
+  private overlayPath(points: OverlayPoint[] | null, closed: boolean): string {
+    if (!points?.length) return '';
+    const coords = points.map(({ angle, r }) =>
+      `${(this.CENTER + r * Math.sin(angle)).toFixed(1)},${(this.CENTER - r * Math.cos(angle)).toFixed(1)}`);
+    return `M ${coords.join(' L ')}${closed ? ' Z' : ''}`;
   }
 
   private drawLayline(angleDeg: number, isPort: boolean) {
@@ -553,6 +595,7 @@ export class SvgWindsteerComponent implements OnDestroy {
       this.wptIndicator(),
       this.setIndicator(),
       this.cogIndicator(),
+      this.polarOverlay(),
     ];
     for (const ref of els) {
       const el = ref?.nativeElement;
