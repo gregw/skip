@@ -50,6 +50,7 @@
     "public/**",
     "README.md",
     "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
     "package.json"
   ],
   "scripts": {
