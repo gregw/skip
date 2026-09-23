@@ -299,16 +299,98 @@ describe('SvgWindsteerComponent', () => {
         setRequiredInputs({ driftActive: true, driftEnabled: true, compassModeEnabled: true, driftFlow: 0.3, driftUnit: 'kn' });
         fixture.detectChanges();
 
-        const text = (fixture.nativeElement.querySelector('#text11') as SVGTextElement).textContent ?? '';
-        expect(text).toContain('0.3');
-        expect(text).toContain('kn');
+        expect(fixture.nativeElement.querySelector('#driftValue').textContent).toContain('0.3');
+        expect(fixture.nativeElement.querySelector('#driftUnit').textContent).toContain('kn');
     });
 
     it('omits the drift unit label when no unit is resolved', () => {
         setRequiredInputs({ driftActive: true, driftEnabled: true, compassModeEnabled: true, driftFlow: 0.3, driftUnit: '' });
         fixture.detectChanges();
 
-        expect(fixture.nativeElement.querySelector('#layerCurrent tspan')).toBeNull();
+        expect(fixture.nativeElement.querySelector('#driftUnit')).toBeNull();
+    });
+
+    // Current readout (#637): drift and a heading-up set arrow in the bottom-right corner.
+    const rotationOf = (el: Element): { angle: number; cx: number; cy: number } => {
+        const m = (el.getAttribute('transform') ?? '').match(/rotate\(([-\d.]+) ([-\d.]+) ([-\d.]+)\)/);
+        expect(m).not.toBeNull();
+        return { angle: parseFloat(m![1]), cx: parseFloat(m![2]), cy: parseFloat(m![3]) };
+    };
+    const currentLayer = (): SVGGElement => fixture.nativeElement.querySelector('#layerCurrent') as SVGGElement;
+    const setArrowGroup = (): SVGGElement => component['setIndicator']().nativeElement;
+
+    it('shows the corner readout and points the set arrow at set minus heading (heading 000)', () => {
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 0 });
+        fixture.detectChanges();
+
+        expect(currentLayer().style.display).toBe('inline');
+        expect(setArrowGroup().style.display).toBe('inline');
+        expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(90);
+    });
+
+    it('keeps the set arrow heading-up: set 090 at heading 045 points 45 degrees right', () => {
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 45 });
+        fixture.detectChanges();
+
+        expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(45);
+    });
+
+    it('turns the set arrow when only the heading changes', () => {
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 0 });
+        fixture.detectChanges();
+
+        // Queue the animation frames, then run them at a time past the animation's end so each
+        // rotation lands on its target in one step.
+        const frames: FrameRequestCallback[] = [];
+        const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+            frames.push(cb);
+            return frames.length;
+        });
+        try {
+            fixture.componentRef.setInput('compassHeading', 45);
+            fixture.detectChanges();
+            frames.splice(0).forEach((cb) => cb(performance.now() + 60_000));
+        } finally {
+            rafSpy.mockRestore();
+        }
+
+        expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(45);
+    });
+
+    it('hides the corner readout and set arrow when drift is disabled', () => {
+        setRequiredInputs({ driftEnabled: false });
+        fixture.detectChanges();
+
+        expect(currentLayer().style.display).toBe('none');
+        expect(setArrowGroup().style.display).toBe('none');
+    });
+
+    it('hides the corner readout when the drift value is stale', () => {
+        setRequiredInputs({ driftFresh: false, setFresh: true });
+        fixture.detectChanges();
+
+        expect(currentLayer().style.display).toBe('none');
+    });
+
+    it('leaves nothing of the current readout at the dial center', () => {
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 0, driftUnit: 'kn' });
+        fixture.detectChanges();
+
+        // The arrow no longer rides the rotating dial; it turns in place in the corner.
+        expect(component['rotatingDial']().nativeElement.contains(setArrowGroup())).toBe(false);
+
+        const DIAL_OUTER_RADIUS = 489.5;
+        const { cx, cy } = rotationOf(setArrowGroup());
+        const arrowBox = setArrowGroup().querySelector('path')!.getAttribute('d')!;
+        const arrowReach = Math.max(...(arrowBox.match(/-?\d+(\.\d+)?/g) ?? []).map((n) => Math.abs(parseFloat(n))));
+        expect(Math.hypot(cx - 500, cy - 500) - arrowReach).toBeGreaterThan(DIAL_OUTER_RADIUS);
+
+        const texts = Array.from(currentLayer().querySelectorAll('text'));
+        expect(texts.length).toBeGreaterThan(0);
+        for (const t of texts) {
+            expect(parseFloat(t.getAttribute('x')!)).toBeGreaterThan(750);
+            expect(parseFloat(t.getAttribute('y')!)).toBeGreaterThan(750);
+        }
     });
 
     it('hides the COG arrow when SOG is inactive (boat at rest)', () => {

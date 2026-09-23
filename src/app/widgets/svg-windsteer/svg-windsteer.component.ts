@@ -108,6 +108,9 @@ export class SvgWindsteerComponent implements OnDestroy {
 
   private readonly CENTER = 500;
   private readonly RADIUS = 350;
+  // Pivot of the corner set arrow: below-left of the drift readout, clear of the dial and rudder arcs.
+  private readonly SET_ARROW_CENTER: [number, number] = [816, 952];
+  protected readonly setArrowTranslate = `translate(${this.SET_ARROW_CENTER[0]} ${this.SET_ARROW_CENTER[1]})`;
   private readonly animationDuration = computed(() => effectiveAnimationDuration(this.updateInterval()));
   private readonly EPS_ANGLE = 1.0; // degrees, gate tiny animations
 
@@ -129,8 +132,8 @@ export class SvgWindsteerComponent implements OnDestroy {
 
   private readonly ngZone = inject(NgZone);
 
-  private setRotationImmediate(element: SVGGElement, angle: number): void {
-    element.setAttribute('transform', `rotate(${angle} 500 500)`);
+  private setRotationImmediate(element: SVGGElement, angle: number, center: [number, number] = [this.CENTER, this.CENTER]): void {
+    element.setAttribute('transform', `rotate(${angle} ${center[0]} ${center[1]})`);
   }
 
   constructor() {
@@ -283,25 +286,28 @@ export class SvgWindsteerComponent implements OnDestroy {
       untracked(() => this.updateCloseHauledLines());
     });
 
+    // The set arrow sits outside the rotating dial, so it takes the heading itself to stay heading-up.
     effect(() => {
-      const raw = this.driftSet();
-      const driftSet = Number.isFinite(raw as number) ? Math.round(raw as number) : null;
-      if (driftSet == null) return;
+      const rawSet = this.driftSet();
+      const rawHeading = this.compassHeading();
+      if (!Number.isFinite(rawSet as number) || !Number.isFinite(rawHeading)) return;
+      const relativeSet = this.addHeading(Math.round(rawSet as number), -Math.round(rawHeading));
 
       untracked(() => {
-        if (!this.setInitialized) {
-          this.set.oldValue = driftSet;
-          this.set.newValue = driftSet;
+        const isFirstSet = !this.setInitialized;
+        if (isFirstSet) {
+          this.set.oldValue = relativeSet;
+          this.set.newValue = relativeSet;
           this.setInitialized = true;
         } else {
           this.set.oldValue = this.set.newValue;
-          this.set.newValue = driftSet;
+          this.set.newValue = relativeSet;
         }
         if (this.setIndicator()?.nativeElement) {
-          if (!this.setInitialized || this.set.oldValue === this.set.newValue) {
-            this.setRotationImmediate(this.setIndicator().nativeElement, this.set.newValue);
+          if (isFirstSet || this.set.oldValue === this.set.newValue) {
+            this.setRotationImmediate(this.setIndicator().nativeElement, this.set.newValue, this.SET_ARROW_CENTER);
           } else {
-            animateRotation(this.setIndicator().nativeElement, this.set.oldValue, this.set.newValue, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
+            animateRotation(this.setIndicator().nativeElement, this.set.oldValue, this.set.newValue, this.animationDuration(), undefined, this.animationFrameIds, this.SET_ARROW_CENTER, this.ngZone);
           }
         }
       });

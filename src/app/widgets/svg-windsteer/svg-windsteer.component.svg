@@ -22,17 +22,6 @@
          offset="1" />
     </linearGradient>
     <linearGradient
-       id="linearGradient13">
-      <stop
-        class="drift-arrow"
-        style="stop-opacity:1;"
-        offset="0.41176471" />
-      <stop
-        class="drift-arrow"
-        style="stop-opacity:0;"
-        offset="1" />
-    </linearGradient>
-    <linearGradient
        id="swatch4">
       <stop
          style="stop-color:#000000;stop-opacity:1;"
@@ -50,15 +39,6 @@
          rx="194.27342"
          ry="181.83022" />
     </clipPath>
-    <linearGradient
-       xlink:href="#linearGradient13"
-       id="linearGradient14"
-       x1="453.48047"
-       y1="583.62891"
-       x2="638.11328"
-       y2="583.62891"
-       gradientUnits="userSpaceOnUse"
-       gradientTransform="matrix(0.00723393,1.2388183,-1.0538241,0.00615367,1111.2051,-179.73465)" />
     <linearGradient
        xlink:href="#linearGradient16"
        id="linearGradient17"
@@ -595,12 +575,6 @@
           rx="17.361122"
           ry="17.361118" />
       </g>
-      <g #setIndicator
-        [style.display]="driftActive() && setFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
-        <path id="setArrow"
-          style="fill:url(#linearGradient14);stroke:none;stroke-width:1.18648"
-          d="m 563.93337,480.60403 -64.4901,-94.9673 -63.37665,95.71396 58.48691,-30.71299 0.77713,133.08346 c 0.0992,16.99331 2.52916,30.65913 5.44822,30.64209 2.91911,-0.0171 5.18926,-13.71032 5.09001,-30.70362 l -0.77782,-133.20444 z" />
-      </g>
     </g>
   </g>
   <g id="layerCrosshair"
@@ -673,15 +647,33 @@
   </g>
   <g id="layerCurrent"
      [style.display]="driftActive() && driftFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
-    <text id="text11"
-       xml:space="preserve"
-       class="contrast-text"
-       style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:66.6667px;font-family:Roboto;font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;text-anchor:middle;stroke:none"
-       x="499.78842"
-       y="523.55145"
-      >{{ (driftFlow() | number:'1.1-1') ?? '--' }}@if (driftUnit()) {<tspan
-        style="font-size:34.6667px"
-        dx="8">{{ driftUnit() }}</tspan>}</text>
+    <text
+      class="drift-label"
+      style="font-weight:bold;font-size:34.6667px;font-family:Roboto;text-anchor:middle;stroke:none"
+      x="905.25897"
+      y="873.7"
+      id="driftLabel">DRIFT</text>
+    <text
+      class="drift"
+      style="font-weight:bold;font-size:66.6667px;font-family:Roboto;text-anchor:middle;stroke:none"
+      x="903.84814"
+      y="935.5"
+      id="driftValue">{{ (driftFlow() | number:'1.1-1') ?? '--' }}</text>
+    @if (driftUnit()) {
+    <text
+      class="drift-label"
+      style="font-weight:bold;font-size:34.6667px;font-family:Roboto;text-anchor:middle;stroke:none"
+      x="904.27722"
+      y="971.7"
+      id="driftUnit">{{ driftUnit() }}</text>
+    }
+  </g>
+  <g #setIndicator
+    [style.display]="driftActive() && setFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
+    <path id="setArrow"
+      class="drift"
+      [attr.transform]="setArrowTranslate"
+      d="M 0,-28 16,-5 5,-5 5,28 -5,28 -5,-5 -16,-5 Z" />
   </g>
   <g id="layerIndicators"
     style="display:inline">
