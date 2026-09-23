@@ -24,7 +24,7 @@ describe('SvgWindsteerComponent', () => {
             sailSetupEnabled: false,
             windSectorEnabled: false,
             driftEnabled: true,
-            driftActive: true,
+            setArrowActive: true,
             waypointEnabled: true,
             driftSet: 7,
             driftFlow: 5,
@@ -279,24 +279,35 @@ describe('SvgWindsteerComponent', () => {
         expect((component as unknown as { waypointActive: () => boolean }).waypointActive()).toBe(true);
     });
 
-    it('hides the set arrow and current readout when drift is inactive', () => {
-        setRequiredInputs({ driftActive: false, driftEnabled: true, compassModeEnabled: true });
+    it('hides only the set arrow when it is not active; the readout stays', () => {
+        setRequiredInputs({ setArrowActive: false, driftEnabled: true, compassModeEnabled: true });
         fixture.detectChanges();
 
         expect(component['setIndicator']().nativeElement.style.display).toBe('none');
-        expect((fixture.nativeElement.querySelector('#layerCurrent') as SVGGElement).style.display).toBe('none');
+        expect((fixture.nativeElement.querySelector('#layerCurrent') as SVGGElement).style.display).toBe('inline');
     });
 
-    it('shows the set arrow and current readout when drift is active', () => {
-        setRequiredInputs({ driftActive: true, driftEnabled: true, compassModeEnabled: true });
+    it('shows the set arrow and current readout when the set arrow is active', () => {
+        setRequiredInputs({ setArrowActive: true, driftEnabled: true, compassModeEnabled: true });
         fixture.detectChanges();
 
         expect(component['setIndicator']().nativeElement.style.display).toBe('inline');
         expect((fixture.nativeElement.querySelector('#layerCurrent') as SVGGElement).style.display).toBe('inline');
     });
 
+    // The readout carries no speed gate (#637): a fresh value shows at any magnitude, even 0.0.
+    for (const flow of [0, 0.04]) {
+        it(`shows the drift readout for a fresh drift of ${flow}`, () => {
+            setRequiredInputs({ driftFlow: flow, driftFresh: true, setArrowActive: false });
+            fixture.detectChanges();
+
+            expect((fixture.nativeElement.querySelector('#layerCurrent') as SVGGElement).style.display).toBe('inline');
+            expect(fixture.nativeElement.querySelector('#driftValue').textContent).toContain(flow.toFixed(1));
+        });
+    }
+
     it('renders the drift value with its unit label', () => {
-        setRequiredInputs({ driftActive: true, driftEnabled: true, compassModeEnabled: true, driftFlow: 0.3, driftUnit: 'kn' });
+        setRequiredInputs({ driftEnabled: true, compassModeEnabled: true, driftFlow: 0.3, driftUnit: 'kn' });
         fixture.detectChanges();
 
         expect(fixture.nativeElement.querySelector('#driftValue').textContent).toContain('0.3');
@@ -304,7 +315,7 @@ describe('SvgWindsteerComponent', () => {
     });
 
     it('omits the drift unit label when no unit is resolved', () => {
-        setRequiredInputs({ driftActive: true, driftEnabled: true, compassModeEnabled: true, driftFlow: 0.3, driftUnit: '' });
+        setRequiredInputs({ driftEnabled: true, compassModeEnabled: true, driftFlow: 0.3, driftUnit: '' });
         fixture.detectChanges();
 
         expect(fixture.nativeElement.querySelector('#driftUnit')).toBeNull();
@@ -561,7 +572,7 @@ describe('SvgWindsteerComponent', () => {
     });
 
     it('hides the set arrow when set (direction) is stale but keeps the drift readout gate independent', () => {
-        setRequiredInputs({ driftEnabled: true, driftActive: true, compassModeEnabled: true, setFresh: false, driftFresh: true });
+        setRequiredInputs({ driftEnabled: true, setArrowActive: true, compassModeEnabled: true, setFresh: false, driftFresh: true });
         fixture.detectChanges();
         expect(component['setIndicator']().nativeElement.style.display).toBe('none');
         expect(fixture.nativeElement.querySelector('#layerCurrent').style.display).toBe('inline');

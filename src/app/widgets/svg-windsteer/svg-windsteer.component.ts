@@ -45,7 +45,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly sailSetupEnabled = input.required<boolean>();
   protected readonly windSectorEnabled = input.required<boolean>();
   protected readonly driftEnabled = input.required<boolean>();
-  protected readonly driftActive = input<boolean>(false);
+  protected readonly setArrowActive = input<boolean>(false);
   protected readonly driftSet = input<number | undefined>(undefined);
   protected readonly driftFlow = input<number | undefined>(undefined);
   protected readonly driftUnit = input<string>('');
@@ -82,8 +82,8 @@ export class SvgWindsteerComponent implements OnDestroy {
 
   protected headingValue = signal<string>("--");
   private trueWindHeading = 0;
-  // The bearing circle is meaningful only with an active waypoint. The drift/COG visibility gates
-  // (driftActive/sogActive) are physical-speed thresholds resolved by the parent and passed in.
+  // The bearing circle is meaningful only with an active waypoint. The set-arrow/COG visibility gates
+  // (setArrowActive/sogActive) are physical-speed thresholds resolved by the parent and passed in.
   protected waypointActive = computed(() => {
     const a = this.waypointAngle();
     return this.waypointEnabled() && a != null && Number.isFinite(a);

@@ -646,7 +646,7 @@
     </g>
   </g>
   <g id="layerCurrent"
-     [style.display]="driftActive() && driftFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
+     [style.display]="driftFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
     <text
       class="drift-label"
       style="font-weight:bold;font-size:34.6667px;font-family:Roboto;text-anchor:middle;stroke:none"
@@ -669,7 +669,7 @@
     }
   </g>
   <g #setIndicator
-    [style.display]="driftActive() && setFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
+    [style.display]="setArrowActive() && setFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
     <path id="setArrow"
       class="drift"
       [attr.transform]="setArrowTranslate"
