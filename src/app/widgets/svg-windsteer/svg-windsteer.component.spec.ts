@@ -335,26 +335,75 @@ describe('SvgWindsteerComponent', () => {
         expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(45);
     });
 
-    it('turns the set arrow when only the heading changes', () => {
-        setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 0 });
-        fixture.detectChanges();
-
-        // Queue the animation frames, then run them at a time past the animation's end so each
-        // rotation lands on its target in one step.
+    // Queues requestAnimationFrame callbacks so a spec can run them at a chosen time.
+    const queueFrames = (): { frames: FrameRequestCallback[]; restore: () => void } => {
         const frames: FrameRequestCallback[] = [];
         const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
             frames.push(cb);
             return frames.length;
         });
+        return { frames, restore: () => rafSpy.mockRestore() };
+    };
+    const runFrames = (frames: FrameRequestCallback[], at: number): void => {
+        frames.splice(0).forEach((cb) => cb(at));
+    };
+
+    it('turns the set arrow when only the heading changes', () => {
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 0 });
+        fixture.detectChanges();
+
+        const { frames, restore } = queueFrames();
         try {
             fixture.componentRef.setInput('compassHeading', 45);
             fixture.detectChanges();
-            frames.splice(0).forEach((cb) => cb(performance.now() + 60_000));
+
+            // The arrow animates rather than snaps: frames are queued and it has not moved yet.
+            // The dial queues frames too, so the unmoved arrow is what pins the arrow's own animation.
+            expect(frames.length).toBeGreaterThan(0);
+            expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(90);
+
+            // Past the animation's end, each rotation lands on its target in one step.
+            runFrames(frames, performance.now() + 60_000);
         } finally {
-            rafSpy.mockRestore();
+            restore();
         }
 
-        expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(45);
+        const { angle, cx, cy } = rotationOf(setArrowGroup());
+        expect(angle).toBeCloseTo(45);
+        expect(cx).toBe(816);
+        expect(cy).toBe(952);
+    });
+
+    it('points the set arrow at set minus heading when the set is below the heading', () => {
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 30, compassHeading: 300 });
+        fixture.detectChanges();
+
+        expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(90);
+    });
+
+    it('turns the set arrow the short way when the heading crosses north', () => {
+        // Set 010 at heading 350 is 20 right of the bow; at heading 030 it is 20 left (340).
+        setRequiredInputs({ driftFlow: 1.0, driftSet: 10, compassHeading: 350, updateInterval: 1000 });
+        fixture.detectChanges();
+        expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(20);
+
+        const { frames, restore } = queueFrames();
+        try {
+            fixture.componentRef.setInput('compassHeading', 30);
+            fixture.detectChanges();
+
+            // Halfway through, the short way passes the bow (0); the long way would be near 180.
+            const start = performance.now();
+            runFrames(frames, start + 500);
+            const midway = rotationOf(setArrowGroup()).angle;
+            expect(Math.abs(midway)).toBeLessThan(10);
+
+            runFrames(frames, start + 60_000);
+        } finally {
+            restore();
+        }
+
+        expect(rotationOf(setArrowGroup()).angle).toBeCloseTo(340);
     });
 
     it('hides the corner readout and set arrow when drift is disabled', () => {
@@ -365,31 +414,35 @@ describe('SvgWindsteerComponent', () => {
         expect(setArrowGroup().style.display).toBe('none');
     });
 
-    it('hides the corner readout when the drift value is stale', () => {
+    it('hides the corner readout when the drift value is stale, but the set arrow follows setFresh', () => {
         setRequiredInputs({ driftFresh: false, setFresh: true });
         fixture.detectChanges();
 
         expect(currentLayer().style.display).toBe('none');
+        expect(setArrowGroup().style.display).toBe('inline');
     });
 
     it('leaves nothing of the current readout at the dial center', () => {
         setRequiredInputs({ driftFlow: 1.0, driftSet: 90, compassHeading: 0, driftUnit: 'kn' });
         fixture.detectChanges();
 
-        // The arrow no longer rides the rotating dial; it turns in place in the corner.
+        // The arrow sits outside the rotating dial and turns in place in the corner.
         expect(component['rotatingDial']().nativeElement.contains(setArrowGroup())).toBe(false);
 
         const DIAL_OUTER_RADIUS = 489.5;
+        const DIAL_CENTER = 500;
+        // Three quarters of the 1000-unit viewBox: past it on both axes is the bottom-right corner.
+        const CORNER_BOUND = 750;
         const { cx, cy } = rotationOf(setArrowGroup());
         const arrowBox = setArrowGroup().querySelector('path')!.getAttribute('d')!;
         const arrowReach = Math.max(...(arrowBox.match(/-?\d+(\.\d+)?/g) ?? []).map((n) => Math.abs(parseFloat(n))));
-        expect(Math.hypot(cx - 500, cy - 500) - arrowReach).toBeGreaterThan(DIAL_OUTER_RADIUS);
+        expect(Math.hypot(cx - DIAL_CENTER, cy - DIAL_CENTER) - arrowReach).toBeGreaterThan(DIAL_OUTER_RADIUS);
 
         const texts = Array.from(currentLayer().querySelectorAll('text'));
         expect(texts.length).toBeGreaterThan(0);
         for (const t of texts) {
-            expect(parseFloat(t.getAttribute('x')!)).toBeGreaterThan(750);
-            expect(parseFloat(t.getAttribute('y')!)).toBeGreaterThan(750);
+            expect(parseFloat(t.getAttribute('x')!)).toBeGreaterThan(CORNER_BOUND);
+            expect(parseFloat(t.getAttribute('y')!)).toBeGreaterThan(CORNER_BOUND);
         }
     });
 
