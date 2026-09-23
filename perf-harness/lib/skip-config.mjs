@@ -122,6 +122,23 @@ export function aisRadarWidget() {
 }
 
 /**
+ * Wind Steer factory. The widget deep-merges its DEFAULT_CONFIG under this, so only the display
+ * options are pinned here; every path keeps its default Signal K path.
+ */
+export function windsteerWidget({ w = 24, h = 24, compassModeEnabled = true } = {}) {
+  const uuid = uid('windsteer');
+  return (x, y) => node(w, h, x, y, {
+    type: 'widget-wind-steer', uuid,
+    config: {
+      compassModeEnabled, windSectorEnable: false, laylineEnable: true, laylineAngle: 45,
+      waypointEnable: true, courseOverGroundEnable: true, driftEnable: true,
+      awsEnable: true, twsEnable: true, twaEnable: true, rudderEnable: true,
+      updateInterval: 500, enableTimeout: false,
+    },
+  });
+}
+
+/**
  * Switch-panel (widget-boolean-switch) factory. Mirrors the persisted config
  * shape: multiChildCtrls holds the IDynamicControl list, paths holds one
  * IWidgetPath per control keyed by a matching pathID. Each control:
@@ -192,6 +209,6 @@ export function initScriptContent(bundle) {
 }
 
 /** Full IConfig document the mock serves from applicationData/user/skip/<ver>/default. */
-export function serverConfigDocument({ dashboards, app = appConfig() }) {
-  return { app, theme: { themeName: '' }, dashboards };
+export function serverConfigDocument({ dashboards, app = appConfig(), themeName = '' }) {
+  return { app, theme: { themeName }, dashboards };
 }
