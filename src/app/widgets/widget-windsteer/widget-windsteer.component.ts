@@ -254,8 +254,6 @@ export class WidgetWindComponent implements OnDestroy {
   private readonly unitsService = inject(UnitsService);
   private readonly activePolar = inject(ActivePolarService);
 
-  // Removed local registeredPaths guard; rely on WidgetStreamsDirective diff + idempotent observe() with stable callbacks
-
   private hasHeading = false;
   private hasCOG = false;
   private hasAWA = false;
