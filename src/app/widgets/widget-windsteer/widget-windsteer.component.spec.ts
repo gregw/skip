@@ -9,7 +9,7 @@ import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetPath, IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
 import { Polar, toCanonicalPolarTable } from '../../core/utils/polar-engine.util';
-import { OverlayPoint, OverlayScale, VMC_HEADING_STEP, polarCurve, speedToRadius } from '../../core/utils/polar-overlay.util';
+import { OverlayPoint, OverlayScale, POLAR_OVERLAY_PATH_KEYS, VMC_HEADING_STEP, polarCurve, speedToRadius } from '../../core/utils/polar-overlay.util';
 import { PolarOverlayMode } from '../svg-windsteer/svg-windsteer.component';
 import hurmaPolar from '../../core/utils/polar-engine.hurma-polar.fixture.json';
 
@@ -756,6 +756,12 @@ describe('WidgetWindComponent polar overlay', () => {
       expect(paths['polarTrueWindSpeed'].sourceFromPath).toBe('trueWindSpeed');
       expect(paths['polarTrueWindAngle'].sourceFromPath).toBe('trueWindAngle');
       expect(paths['polarSpeedThroughWater'].sourceFromPath).toBeUndefined();
+    });
+
+    it('shares its SI slot keys with the options dialog: exactly the hidden polar slots of the default config', () => {
+      const paths = WidgetWindComponent.DEFAULT_CONFIG.paths as Record<string, IWidgetPath>;
+      const hiddenPolarSlots = Object.keys(paths).filter(key => key.startsWith('polar') && paths[key].hideFromConfig);
+      expect([...POLAR_OVERLAY_PATH_KEYS].sort()).toEqual(hiddenPolarSlots.sort());
     });
 
     it('with the option off, observes none of the SI slots and never starts the polar service', () => {

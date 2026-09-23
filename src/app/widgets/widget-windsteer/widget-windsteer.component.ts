@@ -8,7 +8,7 @@ import { IPathUpdate } from '../../core/services/data.service';
 import { ITheme } from '../../core/services/app-service';
 import { UnitsService } from '../../core/services/units.service';
 import { ActivePolarService } from '../../core/services/active-polar.service';
-import { OverlayPoint, OverlayScale, normalizeRadians, polarCurve, polarSpeedProfile, speedToRadius, vmcCurve, vmcDotRadius } from '../../core/utils/polar-overlay.util';
+import { OverlayPoint, OverlayScale, POLAR_OVERLAY_PATH_KEYS, normalizeRadians, polarCurve, polarSpeedProfile, speedToRadius, vmcCurve, vmcDotRadius } from '../../core/utils/polar-overlay.util';
 
 // Default rolling window (seconds) for the wind-sector history; the single
 // source of truth for both the default config and the missing-value fallback.
@@ -30,8 +30,6 @@ const SPEED_DEDUP_MS = 0.05;
 const DEG_TO_RAD = Math.PI / 180;
 // Angle dedup granularity for the SI overlay inputs: 1° expressed in radians.
 const ANGLE_DEDUP_RAD = DEG_TO_RAD;
-// The polar overlay's hidden SI slots, read only while the overlay option is on.
-const OVERLAY_PATH_KEYS = ['polarTrueWindSpeed', 'polarTrueWindAngle', 'polarSpeedThroughWater'] as const;
 
 @Component({
   selector: 'widget-wind-steer',
@@ -511,7 +509,7 @@ export class WidgetWindComponent implements OnDestroy {
   private onOverlayTws = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
-    this.markFresh('overlayTws', this.overlayTwsFresh);
+    this.markFresh('polarTrueWindSpeed', this.overlayTwsFresh);
     if (!this.hasOverlayTws || Math.abs(this.overlayTws() - raw) >= SPEED_DEDUP_MS) {
       this.overlayTws.set(raw); this.hasOverlayTws = true;
     }
@@ -519,7 +517,7 @@ export class WidgetWindComponent implements OnDestroy {
   private onOverlayTwa = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
-    this.markFresh('overlayTwa', this.overlayTwaFresh);
+    this.markFresh('polarTrueWindAngle', this.overlayTwaFresh);
     if (!this.hasOverlayTwa || radianDelta(this.overlayTwa(), raw) >= ANGLE_DEDUP_RAD) {
       this.overlayTwa.set(raw); this.hasOverlayTwa = true;
     }
@@ -527,10 +525,16 @@ export class WidgetWindComponent implements OnDestroy {
   private onOverlayStw = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
-    this.markFresh('overlayStw', this.overlayStwFresh);
+    this.markFresh('polarSpeedThroughWater', this.overlayStwFresh);
     if (!this.hasOverlayStw || Math.abs(this.overlayStw() - raw) >= SPEED_DEDUP_MS) {
       this.overlayStw.set(raw); this.hasOverlayStw = true;
     }
+  };
+  /** Each overlay slot's handler and freshness signal; the slot key is also its freshness-timer key. */
+  private readonly overlayInputs: Record<(typeof POLAR_OVERLAY_PATH_KEYS)[number], { onUpdate: (u: IPathUpdate) => void; fresh: WritableSignal<boolean> }> = {
+    polarTrueWindSpeed: { onUpdate: this.onOverlayTws, fresh: this.overlayTwsFresh },
+    polarTrueWindAngle: { onUpdate: this.onOverlayTwa, fresh: this.overlayTwaFresh },
+    polarSpeedThroughWater: { onUpdate: this.onOverlayStw, fresh: this.overlayStwFresh }
   };
   private onRudderUpdate = (u: IPathUpdate) => {
     // A non-finite or absent value hides the bar; a real 0 keeps it present but draws nothing.
@@ -635,21 +639,19 @@ export class WidgetWindComponent implements OnDestroy {
   // The overlay's SI slots are subscribed only while the option is on.
   private registerOverlayStreams(enabled: boolean) {
     if (enabled) {
-      this.stream.observe('polarTrueWindSpeed', this.onOverlayTws);
-      this.stream.observe('polarTrueWindAngle', this.onOverlayTwa);
-      this.stream.observe('polarSpeedThroughWater', this.onOverlayStw);
+      for (const key of POLAR_OVERLAY_PATH_KEYS) this.stream.observe(key, this.overlayInputs[key].onUpdate);
       this.overlayRegistered = true;
       return;
     }
     if (!this.overlayRegistered) return;
-    OVERLAY_PATH_KEYS.forEach(key => this.stream.unobserve(key));
     this.overlayRegistered = false;
     // A later re-enable must wait for fresh samples rather than draw from the old ones.
     this.hasOverlayTws = this.hasOverlayTwa = this.hasOverlayStw = false;
-    for (const [key, fresh] of [['overlayTws', this.overlayTwsFresh], ['overlayTwa', this.overlayTwaFresh], ['overlayStw', this.overlayStwFresh]] as const) {
+    for (const key of POLAR_OVERLAY_PATH_KEYS) {
+      this.stream.unobserve(key);
       clearTimeout(this.freshnessTimers.get(key));
       this.freshnessTimers.delete(key);
-      fresh.set(false);
+      this.overlayInputs[key].fresh.set(false);
     }
   }
 

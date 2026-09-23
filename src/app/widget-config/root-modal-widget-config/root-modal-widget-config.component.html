@@ -353,6 +353,14 @@
                   Invert Rudder
                 </mat-checkbox>
               }
+              @if ((widgetConfig?.polarOverlayEnable !== undefined)) {
+                <mat-checkbox name="polarOverlayEnable" formControlName="polarOverlayEnable">
+                  Polar Overlay
+                </mat-checkbox>
+                @if (polarOverlayHint(); as hint) {
+                  <div class="polar-overlay-hint options-grid-span2" role="status" aria-live="polite">{{ hint }}</div>
+                }
+              }
               @if ((widgetConfig?.minValue !== undefined) &&
                 !formMaster.get('displayScale')) {
                 <mat-form-field>

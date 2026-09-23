@@ -16,6 +16,12 @@ export interface OverlayScale { readonly peakSpeed: number; readonly peakRadius:
  */
 export type PolarSpeedProfile = readonly number[];
 
+/**
+ * Keys of the Wind Steer config slots the overlay reads (TWS m/s, water TWA rad, STW m/s). Shared
+ * with the options dialog, which checks them without loading the widget.
+ */
+export const POLAR_OVERLAY_PATH_KEYS = ['polarTrueWindSpeed', 'polarTrueWindAngle', 'polarSpeedThroughWater'] as const;
+
 /** TWA spacing of the polar curve samples (2°). */
 export const POLAR_CURVE_TWA_STEP = Math.PI / 90;
 /** Heading spacing of the VMC curve samples (2°); divides π evenly. */

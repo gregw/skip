@@ -6,6 +6,14 @@ import { WidgetConfigPanelComponent, makeConfigResultHandler } from './widget-co
 import { WidgetService } from '../../services/widget.service';
 import { DialogService } from '../../services/dialog.service';
 import type { IWidgetSvcConfig } from '../../interfaces/widgets-interface';
+import { signal } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { ActivePolarService, ActivePolarStatus } from '../../services/active-polar.service';
+import { DataService, IPathUpdate } from '../../services/data.service';
+import { IConversionPathList, UnitsService } from '../../services/units.service';
+import { AppService } from '../../services/app-service';
+import { WidgetWindComponent } from '../../../widgets/widget-windsteer/widget-windsteer.component';
+import { ensureTestIconsReady } from '../../../../test-helpers/icon-test-utils';
 
 // Controllable bus connect: reject = "no host" (fast, no 10s handshake wait); resolve = a fake client.
 const h = vi.hoisted(() => ({ connectExtension: vi.fn() }));
@@ -109,5 +117,57 @@ describe('WidgetConfigPanelComponent', () => {
     await component.ngOnInit();
 
     expect(openWidgetOptions).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The Freeboard settings panel has no widget instance; it opens the real options dialog with the
+ * widget's default config, so the polar overlay status and missing-input hint must show there too.
+ */
+describe('WidgetConfigPanelComponent polar overlay status', () => {
+  const update = (value: number | null): IPathUpdate =>
+    ({ data: { value, timestamp: value === null ? null : new Date() }, state: 'normal' } as IPathUpdate);
+
+  it('starts the polar service and names an overlay input the server has never sent', async () => {
+    h.connectExtension.mockReset();
+    h.connectExtension.mockResolvedValue({
+      close: vi.fn(),
+      call: vi.fn().mockResolvedValue({}),
+      state: { get: async () => ({}), set: vi.fn() }
+    });
+    const polar = {
+      status: signal<ActivePolarStatus>({ kind: 'ready' }),
+      message: signal<string | null>(null),
+      refreshIfFailed: vi.fn()
+    };
+    const received = new Set(['self.environment.wind.speedTrue', 'self.navigation.speedThroughWater']);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ActivatedRoute, useValue: routeWith('widget-wind-steer') },
+        {
+          provide: WidgetService,
+          useValue: {
+            getWidgetName: () => 'Wind Steer',
+            getComponentType: vi.fn(async () => WidgetWindComponent),
+            getDefaultConfig: () => structuredClone(WidgetWindComponent.DEFAULT_CONFIG)
+          }
+        },
+        { provide: ActivePolarService, useValue: polar },
+        { provide: UnitsService, useValue: { getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }), skBaseUnits: [] } },
+        { provide: AppService, useValue: { configurableThemeColors: [] } }
+      ]
+    });
+    ensureTestIconsReady();
+    vi.spyOn(TestBed.inject(DataService), 'acquirePath').mockImplementation((path: string): { data$: Observable<IPathUpdate>; release: () => void } =>
+      ({ data$: new BehaviorSubject(update(received.has(path) ? 1 : null)), release: () => undefined }));
+
+    const fixture = TestBed.createComponent(WidgetConfigPanelComponent);
+    await fixture.componentInstance.ngOnInit();
+    TestBed.tick();
+
+    expect(polar.refreshIfFailed).toHaveBeenCalled();
+    const hint = document.querySelector('.polar-overlay-hint');
+    expect(hint?.textContent?.trim()).toBe('The Signal K server has not sent environment.wind.angleTrueWater, so the overlay stays hidden.');
+    fixture.destroy();
   });
 });

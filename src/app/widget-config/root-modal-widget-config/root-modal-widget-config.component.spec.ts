@@ -6,13 +6,18 @@ import { RootModalWidgetConfigComponent } from './root-modal-widget-config.compo
 import { IConversionPathList, UnitsService } from '../../core/services/units.service';
 import { AppService } from '../../core/services/app-service';
 import { ensureTestIconsReady } from '../../../test-helpers/icon-test-utils';
-import type { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
+import type { IWidgetPath, IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { MIN_UPDATE_INTERVAL_MS } from '../../core/interfaces/widgets-interface';
 import { WidgetBooleanSwitchComponent } from '../../widgets/widget-boolean-switch/widget-boolean-switch.component';
 import { WidgetZonesStatePanelComponent } from '../../widgets/widget-zones-state-panel/widget-zones-state-panel.component';
 import { WidgetAutopilotComponent } from '../../widgets/widget-autopilot/widget-autopilot.component';
 import { WidgetSteelCompassComponent } from '../../widgets/widget-gauge-steel-compass/widget-gauge-steel-compass.component';
 import { WidgetSeaHorizonComponent } from '../../widgets/widget-sea-horizon/widget-sea-horizon.component';
+import { WidgetWindComponent } from '../../widgets/widget-windsteer/widget-windsteer.component';
+import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
+import { DataService, IPathUpdate } from '../../core/services/data.service';
+import { signal } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
 
 describe('ModalWidgetComponent', () => {
   let component: RootModalWidgetConfigComponent;
@@ -545,5 +550,167 @@ describe('ModalWidgetComponent updateInterval Display-tab placement', () => {
     expect(fixture.componentInstance.hasConfigurablePaths).toBe(false);
     expect(fixture.nativeElement.querySelector('input[name="updateInterval"]')).toBeTruthy();
     expect(fixture.nativeElement.querySelector('mat-checkbox[name="enableTimeout"]')).toBeTruthy();
+  });
+});
+
+describe('ModalWidgetComponent polar overlay status', () => {
+  const TWS = 'self.environment.wind.speedTrue';
+  const WATER_TWA = 'self.environment.wind.angleTrueWater';
+  const STW = 'self.navigation.speedThroughWater';
+
+  class FakeActivePolarService {
+    public readonly status = signal<ActivePolarStatus>({ kind: 'loading' });
+    public readonly message = signal<string | null>(null);
+    public refreshes = 0;
+    public refreshIfFailed(): void { this.refreshes += 1; }
+  }
+
+  let polar: FakeActivePolarService;
+  let streams: Map<string, BehaviorSubject<IPathUpdate>>;
+  let acquired: string[];
+  let acquiredSources: Map<string, string>;
+  let released: string[];
+
+  const update = (value: number | null, timestamp: Date | null = value === null ? null : new Date()): IPathUpdate =>
+    ({ data: { value, timestamp }, state: 'normal' } as IPathUpdate);
+  const stream = (path: string): BehaviorSubject<IPathUpdate> => {
+    let subject = streams.get(path);
+    if (!subject) {
+      subject = new BehaviorSubject<IPathUpdate>(update(null));
+      streams.set(path, subject);
+    }
+    return subject;
+  };
+
+  function open(config: IWidgetSvcConfig): ComponentFixture<RootModalWidgetConfigComponent> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        { provide: UnitsService, useValue: { getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }), skBaseUnits: [] } },
+        { provide: AppService, useValue: { configurableThemeColors: [] } },
+        { provide: MAT_DIALOG_DATA, useValue: config },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+        { provide: ActivePolarService, useValue: polar }
+      ]
+    });
+    ensureTestIconsReady();
+    vi.spyOn(TestBed.inject(DataService), 'acquirePath').mockImplementation((path: string, source: string): { data$: Observable<IPathUpdate>; release: () => void } => {
+      acquired.push(path);
+      acquiredSources.set(path, source);
+      return { data$: stream(path), release: () => released.push(path) };
+    });
+    const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
+    fixture.detectChanges();
+    return fixture;
+  }
+  const windsteer = (): IWidgetSvcConfig => ({ ...structuredClone(WidgetWindComponent.DEFAULT_CONFIG), widgetName: 'Wind Steer' } as IWidgetSvcConfig);
+  const hint = (fixture: ComponentFixture<RootModalWidgetConfigComponent>): string | null => {
+    fixture.detectChanges();
+    return (fixture.nativeElement.querySelector('.polar-overlay-hint') as HTMLElement | null)?.textContent?.trim() ?? null;
+  };
+
+  beforeEach(() => {
+    polar = new FakeActivePolarService();
+    streams = new Map();
+    acquired = [];
+    acquiredSources = new Map();
+    released = [];
+  });
+
+  it('shows the overlay option for Wind Steer and starts or retries the polar service on open', () => {
+    const fixture = open(windsteer());
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="polarOverlayEnable"]')).toBeTruthy();
+    expect(polar.refreshes).toBe(1);
+  });
+
+  it('neither starts the service nor watches the overlay paths for another widget', () => {
+    const fixture = open({ displayName: 'Numeric', updateInterval: 500, paths: {} } as IWidgetSvcConfig);
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="polarOverlayEnable"]')).toBeNull();
+    expect(polar.refreshes).toBe(0);
+    expect(acquired).toEqual([]);
+  });
+
+  it('saves the option with the rest of the config', () => {
+    const fixture = open(windsteer());
+    fixture.componentInstance.formMaster.get('polarOverlayEnable')?.setValue(true);
+    fixture.componentInstance.submitConfig();
+    const close = TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>;
+    expect((close.mock.calls[0][0] as IWidgetSvcConfig).polarOverlayEnable).toBe(true);
+  });
+
+  it('shows the service message as a hint when the polar cannot be used', () => {
+    polar.status.set({ kind: 'fetch-failed', cause: 401 });
+    polar.message.set('Sign in to read the active polar.');
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBe('Sign in to read the active polar.');
+  });
+
+  it('shows no hint while the service is still loading', () => {
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBeNull();
+  });
+
+  it('names an overlay input the server has never sent once the polar is ready', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    stream(STW).next(update(3));
+    const fixture = open(windsteer());
+    expect(acquired.sort()).toEqual([TWS, WATER_TWA, STW].sort());
+    expect(hint(fixture)).toBe('The Signal K server has not sent environment.wind.angleTrueWater, so the overlay stays hidden.');
+  });
+
+  it('watches each overlay input on the source the widget reads it from', () => {
+    const config = windsteer();
+    const paths = config.paths as Record<string, IWidgetPath>;
+    paths['trueWindSpeed'].source = 'n2k.115';
+    paths['trueWindAngle'].source = 'n2k.200';
+    open(config);
+    expect(acquiredSources.get(TWS)).toBe('n2k.115');
+    expect(acquiredSources.get(WATER_TWA)).toBe('n2k.200');
+    expect(acquiredSources.get(STW)).toBe('default');
+  });
+
+  it('watches the water TWA on the default source when the displayed TWA is the Ground path', () => {
+    const config = windsteer();
+    const paths = config.paths as Record<string, IWidgetPath>;
+    paths['trueWindSpeed'].source = 'n2k.115';
+    paths['trueWindAngle'] = { ...paths['trueWindAngle'], path: 'self.environment.wind.angleTrueGround', source: 'n2k.200' };
+    open(config);
+    expect(acquiredSources.get(WATER_TWA)).toBe('default');
+    expect(acquiredSources.get(TWS)).toBe('n2k.115');
+  });
+
+  it('names every missing input', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBe('The Signal K server has not sent environment.wind.angleTrueWater and navigation.speedThroughWater, so the overlay stays hidden.');
+  });
+
+  it('gives no message for an input that was received and has gone stale', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    stream(STW).next(update(3));
+    stream(WATER_TWA).next(update(0.7, new Date(Date.now() - 3_600_000)));
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBeNull();
+  });
+
+  it('clears the missing-input hint when the input arrives while the dialog is open', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    stream(STW).next(update(3));
+    const fixture = open(windsteer());
+    expect(hint(fixture)).not.toBeNull();
+
+    stream(WATER_TWA).next(update(0.7));
+    expect(hint(fixture)).toBeNull();
+  });
+
+  it('releases the watched paths when the dialog closes', () => {
+    const fixture = open(windsteer());
+    fixture.destroy();
+    expect(released.sort()).toEqual([TWS, WATER_TWA, STW].sort());
   });
 });
