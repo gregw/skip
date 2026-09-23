@@ -413,6 +413,8 @@ export interface IWidgetSvcConfig {
   rudderEnable?: boolean;
   /** Used by wind Widget: flip the rudder-angle bar so it grows toward the side the boat turns */
   invertRudder?: boolean;
+  /** Used by wind Widget: draw the active polar's curve (or, with a waypoint in compass mode, its VMC curve) on the dial */
+  polarOverlayEnable?: boolean;
 
   /** Used by autopilot Widget to configure autopilot settings */
   autopilot?: IAutopilotConfig,
@@ -743,6 +745,12 @@ export interface IWidgetPath {
    * first non-null datapoint.
    */
   suppressBootstrapNull?: boolean;
+  /**
+   * Optional: key of another slot in the same `paths` record whose Data Source this slot reads with,
+   * in place of its own `source`. For a hidden slot that must read the same sensor as a visible one,
+   * such as an SI copy of a displayed value.
+   */
+  sourceFromPath?: string;
   /** Used as a reference ID when path is an Array and array index is not appropriate. */
   pathID?: string | null | '';
   /**

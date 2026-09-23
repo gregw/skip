@@ -46,7 +46,7 @@ The three commands (from `perf-harness/`, after `npm install` there):
 
 ```bash
 node run.mjs --public ../public --label dev --scenarios resize-storm --repeats 2  # quick, prebuilt ../public
-node run.mjs --branch main --label main       # full 7-scenario suite against any git ref
+node run.mjs --branch main --label main       # full 8-scenario suite against any git ref
 node report.mjs --a pre-freeze-fixes --b main-freeze-fixes   # compare two labels
 ```
 

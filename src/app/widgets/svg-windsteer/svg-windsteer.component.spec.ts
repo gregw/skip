@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvgWindsteerComponent } from './svg-windsteer.component';
+import { OverlayPoint } from '../../core/utils/polar-overlay.util';
 
 describe('SvgWindsteerComponent', () => {
     let fixture: ComponentFixture<SvgWindsteerComponent>;
@@ -616,5 +617,117 @@ describe('SvgWindsteerComponent', () => {
         fixture.detectChanges();
         expect(component['setIndicator']().nativeElement.style.display).toBe('none');
         expect(fixture.nativeElement.querySelector('#layerCurrent').style.display).toBe('inline');
+    });
+
+    describe('polar overlay', () => {
+        const CURVE: OverlayPoint[] = [
+            { angle: 0, r: 0 },
+            { angle: -Math.PI / 2, r: 100 },
+            { angle: Math.PI, r: 200 },
+            { angle: Math.PI / 2, r: 100 }
+        ];
+        const polarPath = (): SVGPathElement => fixture.nativeElement.querySelector('#layerPolarCurve path');
+        const vmcPath = (): SVGPathElement => fixture.nativeElement.querySelector('#layerVmcCurve path');
+        const layer = (id: string): SVGGElement => fixture.nativeElement.querySelector(`#${id}`);
+        const dot = (): SVGCircleElement => fixture.nativeElement.querySelector('#layerPolarDot circle.polar-dot');
+
+        it('draws nothing while the overlay is hidden', () => {
+            setRequiredInputs({ polarOverlayMode: 'hidden', polarCurve: CURVE, vmcCurve: CURVE, overlayDotRadius: 150 });
+            fixture.detectChanges();
+            expect(layer('layerPolarCurve').style.display).toBe('none');
+            expect(layer('layerVmcCurve').style.display).toBe('none');
+            expect(layer('layerPolarDot').style.display).toBe('none');
+        });
+
+        it('draws the polar curve as an open line, angle clockwise from the bow', () => {
+            setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE });
+            fixture.detectChanges();
+            expect(layer('layerPolarCurve').style.display).toBe('inline');
+            expect(layer('layerVmcCurve').style.display).toBe('none');
+            expect(polarPath().getAttribute('d')).toBe('M 500.0,500.0 L 400.0,500.0 L 500.0,700.0 L 600.0,500.0');
+            expect(polarPath().getAttribute('class')).toBe('polar-curve');
+        });
+
+        it('draws the VMC curve as a filled lobe inside the rotating dial', () => {
+            setRequiredInputs({ polarOverlayMode: 'vmc', vmcCurve: CURVE, polarCurve: CURVE });
+            fixture.detectChanges();
+            expect(layer('layerVmcCurve').style.display).toBe('inline');
+            expect(layer('layerPolarCurve').style.display).toBe('none');
+            expect(vmcPath().getAttribute('class')).toBe('vmc-curve');
+            expect(vmcPath().getAttribute('d')).toBe('M 500.0,500.0 L 400.0,500.0 L 500.0,700.0 L 600.0,500.0 Z');
+            expect(component['rotatingDial']().nativeElement.contains(vmcPath())).toBe(true);
+        });
+
+        it('stacks the groups per the layer order: VMC after the wind sectors, polar after the compass, dot after the crosshair', () => {
+            setRequiredInputs();
+            fixture.detectChanges();
+            expect(layer('layerVmcCurve').previousElementSibling?.id).toBe('LayerWindShift');
+            expect(layer('layerPolarCurve').previousElementSibling?.id).toBe('layerCompass');
+            expect(layer('layerPolarDot').previousElementSibling?.id).toBe('layerCrosshair');
+        });
+
+        it('turns the polar curve group by the water TWA it is given, not by the displayed true wind', () => {
+            setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, trueWindAngle: 95, compassHeading: 15, polarCurveRotation: 45 });
+            fixture.detectChanges();
+            expect(component['polarOverlay']().nativeElement.getAttribute('transform')).toBe('rotate(45 500 500)');
+            expect(component['twaIndicator']().nativeElement.getAttribute('transform')).toBe('rotate(80 500 500)');
+        });
+
+        it('wraps a port-side (negative) water TWA into the rotation', () => {
+            setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, polarCurveRotation: -45 });
+            fixture.detectChanges();
+            expect(component['polarOverlay']().nativeElement.getAttribute('transform')).toBe('rotate(315 500 500)');
+        });
+
+        it('eases the polar curve group to a new water TWA like the true-wind pointer', () => {
+            const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+            setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, polarCurveRotation: 45 });
+            fixture.detectChanges();
+            rafSpy.mockClear();
+
+            fixture.componentRef.setInput('polarCurveRotation', 60);
+            fixture.detectChanges();
+            expect(rafSpy).toHaveBeenCalled();
+        });
+
+        it('cancels a running polar curve animation on destroy', () => {
+            vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 77);
+            const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame');
+            setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, polarCurveRotation: 45, appWindAngle: 18 });
+            fixture.detectChanges();
+            fixture.componentRef.setInput('polarCurveRotation', 90);
+            fixture.detectChanges();
+
+            cancelSpy.mockClear();
+            fixture.destroy();
+            expect(cancelSpy).toHaveBeenCalledWith(77);
+        });
+
+        it('puts the dot on the bow axis at its radius, in either mode', () => {
+            setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, overlayDotRadius: 150 });
+            fixture.detectChanges();
+            expect(layer('layerPolarDot').style.display).toBe('inline');
+            expect(dot().getAttribute('cx')).toBe('500');
+            expect(dot().getAttribute('cy')).toBe('350');
+
+            fixture.componentRef.setInput('polarOverlayMode', 'vmc');
+            fixture.componentRef.setInput('overlayDotRadius', 200);
+            fixture.detectChanges();
+            expect(dot().getAttribute('cy')).toBe('300');
+        });
+
+        it('hides the dot when it has no radius', () => {
+            setRequiredInputs({ polarOverlayMode: 'vmc', vmcCurve: CURVE, overlayDotRadius: null });
+            fixture.detectChanges();
+            expect(layer('layerPolarDot').style.display).toBe('none');
+            expect(layer('layerVmcCurve').style.display).toBe('inline');
+        });
+
+        it('keeps the dot in the fixed boat frame, outside every rotating group', () => {
+            setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, overlayDotRadius: 150 });
+            fixture.detectChanges();
+            expect(component['rotatingDial']().nativeElement.contains(dot())).toBe(false);
+            expect(component['polarOverlay']().nativeElement.contains(dot())).toBe(false);
+        });
     });
 });

@@ -1,12 +1,14 @@
 import { Component, OnDestroy, inject, ChangeDetectionStrategy, input, effect, untracked, signal, computed, WritableSignal } from '@angular/core';
 import { Subscription, interval } from 'rxjs';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
-import { SvgWindsteerComponent } from '../svg-windsteer/svg-windsteer.component';
+import { POLAR_OVERLAY_DIAL_RADIUS, POLAR_OVERLAY_PEAK_RADIUS, PolarOverlayMode, SvgWindsteerComponent } from '../svg-windsteer/svg-windsteer.component';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { IPathUpdate } from '../../core/services/data.service';
 import { ITheme } from '../../core/services/app-service';
 import { UnitsService } from '../../core/services/units.service';
+import { ActivePolarService } from '../../core/services/active-polar.service';
+import { OverlayPoint, OverlayScale, POLAR_OVERLAY_PATH_KEYS, normalizeRadians, polarCurve, polarSpeedProfile, speedToRadius, vmcCurve, vmcDotRadius } from '../../core/utils/polar-overlay.util';
 
 // Default rolling window (seconds) for the wind-sector history; the single
 // source of truth for both the default config and the missing-value fallback.
@@ -25,6 +27,9 @@ const SOG_HIDE_LIMIT_MS = 0.05;
 // Change-detection dedup granularity in SI (m/s): a speed signal only re-sets when it moves at least
 // this much, converted to the value's own display unit each update — never a fixed display-unit step.
 const SPEED_DEDUP_MS = 0.05;
+const DEG_TO_RAD = Math.PI / 180;
+// Angle dedup granularity for the SI overlay inputs: 1° expressed in radians.
+const ANGLE_DEDUP_RAD = DEG_TO_RAD;
 
 @Component({
   selector: 'widget-wind-steer',
@@ -170,6 +175,47 @@ export class WidgetWindComponent implements OnDestroy {
         pathSkUnitsFilter: 'm/s',
         convertUnitTo: 'knots'
       },
+      polarTrueWindSpeed: {
+        description: 'Polar Overlay True Wind Speed',
+        path: 'self.environment.wind.speedTrue',
+        source: 'default',
+        sourceFromPath: 'trueWindSpeed',
+        pathType: 'number',
+        isPathConfigurable: false,
+        hideFromConfig: true,
+        pathRequired: false,
+        showPathSkUnitsFilter: false,
+        pathSkUnitsFilter: 'm/s',
+        convertUnitTo: 'm/s',
+        showConvertUnitTo: false
+      },
+      polarTrueWindAngle: {
+        description: 'Polar Overlay True Wind Angle (water)',
+        path: 'self.environment.wind.angleTrueWater',
+        source: 'default',
+        sourceFromPath: 'trueWindAngle',
+        pathType: 'number',
+        isPathConfigurable: false,
+        hideFromConfig: true,
+        pathRequired: false,
+        showPathSkUnitsFilter: false,
+        pathSkUnitsFilter: 'rad',
+        convertUnitTo: 'rad',
+        showConvertUnitTo: false
+      },
+      polarSpeedThroughWater: {
+        description: 'Polar Overlay Speed Through Water',
+        path: 'self.navigation.speedThroughWater',
+        source: 'default',
+        pathType: 'number',
+        isPathConfigurable: false,
+        hideFromConfig: true,
+        pathRequired: false,
+        showPathSkUnitsFilter: false,
+        pathSkUnitsFilter: 'm/s',
+        convertUnitTo: 'm/s',
+        showConvertUnitTo: false
+      },
       rudderAngle: {
         description: 'Rudder Angle',
         path: 'self.steering.rudderAngle',
@@ -197,6 +243,7 @@ export class WidgetWindComponent implements OnDestroy {
     sailSetupEnable: false,
     rudderEnable: true,
     invertRudder: false,
+    polarOverlayEnable: false,
     updateInterval: 1000,
     enableTimeout: false,
     dataTimeout: DEFAULT_DATA_TIMEOUT_SECONDS
@@ -205,8 +252,7 @@ export class WidgetWindComponent implements OnDestroy {
   public readonly runtime = inject(WidgetRuntimeDirective); // accessed in template
   private readonly stream = inject(WidgetStreamsDirective);
   private readonly unitsService = inject(UnitsService);
-
-  // Removed local registeredPaths guard; rely on WidgetStreamsDirective diff + idempotent observe() with stable callbacks
+  private readonly activePolar = inject(ActivePolarService);
 
   private hasHeading = false;
   private hasCOG = false;
@@ -262,6 +308,78 @@ export class WidgetWindComponent implements OnDestroy {
   protected setFresh = signal(false);
   // Signed degrees, +ve = starboard (after invertRudder). null = no rudder data (bar hidden).
   protected rudderAngle = signal<number | null>(null);
+  // The bearing's own freshness gates only the overlay mode; the waypoint marker keeps its own rule.
+  private waypointFresh = signal(false);
+
+  // Polar overlay inputs, in SI from the hidden structural slots, never from the display paths.
+  private overlayRegistered = false;
+  private hasOverlayTws = false;
+  private hasOverlayTwa = false;
+  private hasOverlayStw = false;
+  private overlayTws = signal(0);          // m/s
+  private overlayTwsFresh = signal(false);
+  private overlayTwa = signal(0);          // rad, water-referenced, signed
+  private overlayTwaFresh = signal(false);
+  private overlayStw = signal(0);          // m/s
+  private overlayStwFresh = signal(false);
+
+  protected overlayMode = computed<PolarOverlayMode>(() => {
+    const cfg = this.runtime.options();
+    const bearing = this.waypointAngle();
+    return resolvePolarOverlayMode({
+      enabled: !!cfg?.polarOverlayEnable,
+      polarReady: this.activePolar.status().kind === 'ready',
+      twsFresh: this.overlayTwsFresh(),
+      twaFresh: this.overlayTwaFresh(),
+      compassMode: !!cfg?.compassModeEnabled,
+      headingFresh: this.headingFresh(),
+      waypointActive: !!cfg?.waypointEnable && bearing != null && Number.isFinite(bearing) && this.waypointFresh()
+    });
+  });
+  private overlayScale = computed<OverlayScale | null>(() => {
+    const peakSpeed = this.activePolar.peakSpeed();
+    return peakSpeed ? { peakSpeed, peakRadius: POLAR_OVERLAY_PEAK_RADIUS, dialRadius: POLAR_OVERLAY_DIAL_RADIUS } : null;
+  });
+  /** Wind-frame polar curve; its shape depends only on TWS, the performance factor and the polar. */
+  protected polarCurvePoints = computed<OverlayPoint[] | null>(() => {
+    if (this.overlayMode() !== 'polar') return null;
+    const polar = this.activePolar.polar();
+    const scale = this.overlayScale();
+    if (!polar || !scale) return null;
+    return polarCurve(polar, this.overlayTws(), this.activePolar.performanceFactor(), scale);
+  });
+  /** Polar speeds per TWA for the present TWS, reused by every VMC recompute until TWS changes. */
+  private vmcSpeedProfile = computed(() => {
+    if (this.overlayMode() !== 'vmc') return null;
+    const polar = this.activePolar.polar();
+    return polar ? polarSpeedProfile(polar, this.overlayTws(), this.activePolar.performanceFactor()) : null;
+  });
+  /** Water TWD = HDG + water TWA, rad; changes under 1° do not propagate. */
+  private overlayTwd = computed(
+    () => normalizeRadians(this.currentHeading() * DEG_TO_RAD + this.overlayTwa()),
+    { equal: (a, b) => radianDelta(a, b) < ANGLE_DEDUP_RAD }
+  );
+  /** Compass-frame VMC curve toward the waypoint. */
+  protected vmcCurvePoints = computed<OverlayPoint[] | null>(() => {
+    const profile = this.vmcSpeedProfile();
+    const scale = this.overlayScale();
+    const bearing = this.waypointAngle();
+    if (!profile || !scale || bearing == null) return null;
+    return vmcCurve(profile, this.overlayTwd(), bearing * DEG_TO_RAD, scale);
+  });
+  /** Rotation of the polar curve group: the water TWA the curve is anchored to, degrees. */
+  protected overlayTwaDeg = computed(() => this.overlayTwa() / DEG_TO_RAD);
+  /** Radius of the dot on the bow axis; null hides it. */
+  protected overlayDotRadius = computed<number | null>(() => {
+    const mode = this.overlayMode();
+    const scale = this.overlayScale();
+    if (mode === 'hidden' || !scale || !this.overlayStwFresh()) return null;
+    const stw = this.overlayStw();
+    if (mode === 'polar') return speedToRadius(stw, scale);
+    const bearing = this.waypointAngle();
+    return bearing == null ? null : vmcDotRadius(stw, this.currentHeading() * DEG_TO_RAD, bearing * DEG_TO_RAD, scale);
+  });
+
   protected historicalWindDirection: { timestamp: number; windDirection: number; }[] = [];
   protected trueWindMinHistoric = signal<number | undefined>(undefined);
   protected trueWindMidHistoric = signal<number | undefined>(undefined);
@@ -304,6 +422,7 @@ export class WidgetWindComponent implements OnDestroy {
       const cfg = this.runtime.options();
       if (!cfg) return;
       untracked(() => {
+        if (cfg.polarOverlayEnable) this.activePolar.ensureStarted();
         this.registerStreams();
         this.stopWindSectors();
         this.startWindSectors();
@@ -379,10 +498,41 @@ export class WidgetWindComponent implements OnDestroy {
       return;
     }
     const next = this.normalizeAngle(raw);
+    if (Number.isFinite(next)) this.markFresh('wpt', this.waypointFresh);
     const cur = this.waypointAngle();
     if (!this.hasWPT || cur == null || this.angleDelta(cur, next) >= this.DEG_EPSILON) {
       this.waypointAngle.set(next); this.hasWPT = true;
     }
+  };
+  private onOverlayTws = (u: IPathUpdate) => {
+    const raw = u.data.value;
+    if (raw == null || !Number.isFinite(raw)) return;
+    this.markFresh('polarTrueWindSpeed', this.overlayTwsFresh);
+    if (!this.hasOverlayTws || Math.abs(this.overlayTws() - raw) >= SPEED_DEDUP_MS) {
+      this.overlayTws.set(raw); this.hasOverlayTws = true;
+    }
+  };
+  private onOverlayTwa = (u: IPathUpdate) => {
+    const raw = u.data.value;
+    if (raw == null || !Number.isFinite(raw)) return;
+    this.markFresh('polarTrueWindAngle', this.overlayTwaFresh);
+    if (!this.hasOverlayTwa || radianDelta(this.overlayTwa(), raw) >= ANGLE_DEDUP_RAD) {
+      this.overlayTwa.set(raw); this.hasOverlayTwa = true;
+    }
+  };
+  private onOverlayStw = (u: IPathUpdate) => {
+    const raw = u.data.value;
+    if (raw == null || !Number.isFinite(raw)) return;
+    this.markFresh('polarSpeedThroughWater', this.overlayStwFresh);
+    if (!this.hasOverlayStw || Math.abs(this.overlayStw() - raw) >= SPEED_DEDUP_MS) {
+      this.overlayStw.set(raw); this.hasOverlayStw = true;
+    }
+  };
+  /** Each overlay slot's handler and freshness signal; the slot key is also its freshness-timer key. */
+  private readonly overlayInputs: Record<(typeof POLAR_OVERLAY_PATH_KEYS)[number], { onUpdate: (u: IPathUpdate) => void; fresh: WritableSignal<boolean> }> = {
+    polarTrueWindSpeed: { onUpdate: this.onOverlayTws, fresh: this.overlayTwsFresh },
+    polarTrueWindAngle: { onUpdate: this.onOverlayTwa, fresh: this.overlayTwaFresh },
+    polarSpeedThroughWater: { onUpdate: this.onOverlayStw, fresh: this.overlayStwFresh }
   };
   private onRudderUpdate = (u: IPathUpdate) => {
     // A non-finite or absent value hides the bar; a real 0 keeps it present but draws nothing.
@@ -481,6 +631,26 @@ export class WidgetWindComponent implements OnDestroy {
     this.stream.observe('trueWindSpeed', this.onTrueWindSpeed);
     this.stream.observe('trueWindAngle', this.onTrueWindAngle);
     this.stream.observe('rudderAngle', this.onRudderUpdate);
+    this.registerOverlayStreams(!!cfg.polarOverlayEnable);
+  }
+
+  // The overlay's SI slots are subscribed only while the option is on.
+  private registerOverlayStreams(enabled: boolean) {
+    if (enabled) {
+      for (const key of POLAR_OVERLAY_PATH_KEYS) this.stream.observe(key, this.overlayInputs[key].onUpdate);
+      this.overlayRegistered = true;
+      return;
+    }
+    if (!this.overlayRegistered) return;
+    this.overlayRegistered = false;
+    // A later re-enable must wait for fresh samples rather than draw from the old ones.
+    this.hasOverlayTws = this.hasOverlayTwa = this.hasOverlayStw = false;
+    for (const key of POLAR_OVERLAY_PATH_KEYS) {
+      this.stream.unobserve(key);
+      clearTimeout(this.freshnessTimers.get(key));
+      this.freshnessTimers.delete(key);
+      this.overlayInputs[key].fresh.set(false);
+    }
   }
 
   ngOnDestroy() {
@@ -597,6 +767,30 @@ export class WidgetWindComponent implements OnDestroy {
     return measure ? (this.unitsService.convertToUnit(measure, speedMs) ?? speedMs) : speedMs;
   }
 
+}
+
+export interface PolarOverlayModeInputs {
+  enabled: boolean;
+  polarReady: boolean;
+  twsFresh: boolean;
+  twaFresh: boolean;
+  compassMode: boolean;
+  headingFresh: boolean;
+  /** waypointEnable on, bearing finite and fresh. */
+  waypointActive: boolean;
+}
+
+/** The polar overlay's mode; the first matching rule wins. */
+export function resolvePolarOverlayMode(inputs: PolarOverlayModeInputs): PolarOverlayMode {
+  if (!inputs.enabled || !inputs.polarReady) return 'hidden';
+  if (!inputs.twsFresh || !inputs.twaFresh) return 'hidden';
+  if (inputs.compassMode && inputs.headingFresh && inputs.waypointActive) return 'vmc';
+  return 'polar';
+}
+
+/** Unsigned smallest difference between two angles in rad. */
+function radianDelta(a: number, b: number): number {
+  return Math.abs(normalizeRadians(b - a + Math.PI) - Math.PI);
 }
 
 function addHeadingDeg(h1: number, h2: number): number {

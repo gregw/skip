@@ -1,6 +1,14 @@
 import { Component, ElementRef, input, viewChild, signal, computed, effect, untracked, ChangeDetectionStrategy, OnDestroy, NgZone, inject } from '@angular/core';
 import { animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
 import { DecimalPipe } from '@angular/common';
+import { OverlayPoint } from '../../core/utils/polar-overlay.util';
+
+/** Polar overlay state the parent resolves: hidden, the polar curve, or the VMC curve. */
+export type PolarOverlayMode = 'hidden' | 'polar' | 'vmc';
+/** Radius, in viewBox units, the active polar's peak speed maps to: inside the COG and waypoint ring (r ≈ 325). */
+export const POLAR_OVERLAY_PEAK_RADIUS = 300;
+/** The dial radius, in viewBox units, and so the outer limit of the overlay. */
+export const POLAR_OVERLAY_DIAL_RADIUS = 350;
 
 const angle = ([a, b], [c, d], [e, f]) => (Math.atan2(f - d, e - c) - Math.atan2(b - d, a - c) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
 
@@ -23,6 +31,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly wptIndicator = viewChild.required<ElementRef<SVGGElement>>('wptIndicator');
   protected readonly setIndicator = viewChild.required<ElementRef<SVGGElement>>('setIndicator');
   protected readonly cogIndicator = viewChild.required<ElementRef<SVGGElement>>('cogIndicator');
+  protected readonly polarOverlay = viewChild.required<ElementRef<SVGGElement>>('polarOverlay');
 
   protected readonly compassHeading = input.required<number>();
   protected readonly compassModeEnabled = input.required<boolean>();
@@ -66,6 +75,14 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly trueWindSpeedFresh = input<boolean>(true);
   protected readonly driftFresh = input<boolean>(true);
   protected readonly setFresh = input<boolean>(true);
+  // Polar overlay, resolved by the parent. The polar curve is in the wind frame and its group turns
+  // by the water TWA; the VMC curve is in the compass frame inside the rotating dial; the dot is at
+  // this radius on the bow axis in the boat frame.
+  protected readonly polarOverlayMode = input<PolarOverlayMode>('hidden');
+  protected readonly polarCurve = input<OverlayPoint[] | null>(null);
+  protected readonly polarCurveRotation = input<number>(0);
+  protected readonly vmcCurve = input<OverlayPoint[] | null>(null);
+  protected readonly overlayDotRadius = input<number | null>(null);
 
   protected compass: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected twa: ISVGRotationObject = { oldValue: 0, newValue: 0 };
@@ -73,6 +90,8 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected wpt: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected cog: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected set: ISVGRotationObject = { oldValue: 0, newValue: 0 };
+  private polarRotation: ISVGRotationObject = { oldValue: 0, newValue: 0 };
+  private polarRotationInitialized = false;
   private compassInitialized = false;
   private twaInitialized = false;
   private awaInitialized = false;
@@ -87,6 +106,16 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected waypointActive = computed(() => {
     const a = this.waypointAngle();
     return this.waypointEnabled() && a != null && Number.isFinite(a);
+  });
+
+  protected readonly polarCurvePath = computed(() =>
+    this.polarOverlayMode() === 'polar' ? this.overlayPath(this.polarCurve(), false) : '');
+  protected readonly vmcCurvePath = computed(() =>
+    this.polarOverlayMode() === 'vmc' ? this.overlayPath(this.vmcCurve(), true) : '');
+  /** Y of the dot's center on the bow axis, or null when it is hidden. */
+  protected readonly overlayDotY = computed(() => {
+    const r = this.overlayDotRadius();
+    return this.polarOverlayMode() !== 'hidden' && r != null && Number.isFinite(r) ? this.CENTER - r : null;
   });
 
   //laylines - Close-Hauled lines
@@ -107,7 +136,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   private animationFrameIds = new WeakMap<SVGGElement, number>();
 
   private readonly CENTER = 500;
-  private readonly RADIUS = 350;
+  private readonly RADIUS = POLAR_OVERLAY_DIAL_RADIUS;
   // Pivot of the corner set arrow: the visual centre of the drift value's digits, the point of the
   // corner farthest from the dial edge and the viewBox (87.5 units). The arrow reaches 80 from it.
   private readonly SET_ARROW_CENTER: [number, number] = [904, 912];
@@ -314,6 +343,27 @@ export class SvgWindsteerComponent implements OnDestroy {
       });
     });
 
+    // The polar curve turns with the water TWA, eased like the true-wind pointer so the two move together.
+    effect(() => {
+      const raw = this.polarCurveRotation();
+      if (!Number.isFinite(raw)) return;
+      const rotation = this.addHeading(Math.round(raw), 0);
+
+      untracked(() => {
+        const element = this.polarOverlay()?.nativeElement;
+        if (!element) return;
+        const isFirst = !this.polarRotationInitialized;
+        this.polarRotation.oldValue = isFirst ? rotation : this.polarRotation.newValue;
+        this.polarRotation.newValue = rotation;
+        this.polarRotationInitialized = true;
+        if (isFirst || this.polarRotation.oldValue === rotation) {
+          this.setRotationImmediate(element, rotation);
+        } else {
+          animateRotation(element, this.polarRotation.oldValue, rotation, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
+        }
+      });
+    });
+
     // Ensure wind sectors update on min/mid/max or layline changes, and clear when disabled
     effect(() => {
       const enabled = this.windSectorEnabled();
@@ -398,6 +448,14 @@ export class SvgWindsteerComponent implements OnDestroy {
       this.RADIUS * Math.sin(radian) + this.CENTER,
       (this.RADIUS * Math.cos(radian) * -1) + this.CENTER,
     ];
+  }
+
+  /** A `d` path through overlay points: angle clockwise from up, r from the dial center. */
+  private overlayPath(points: OverlayPoint[] | null, closed: boolean): string {
+    if (!points?.length) return '';
+    const coords = points.map(({ angle, r }) =>
+      `${(this.CENTER + r * Math.sin(angle)).toFixed(1)},${(this.CENTER - r * Math.cos(angle)).toFixed(1)}`);
+    return `M ${coords.join(' L ')}${closed ? ' Z' : ''}`;
   }
 
   private drawLayline(angleDeg: number, isPort: boolean) {
@@ -537,6 +595,7 @@ export class SvgWindsteerComponent implements OnDestroy {
       this.wptIndicator(),
       this.setIndicator(),
       this.cogIndicator(),
+      this.polarOverlay(),
     ];
     for (const ref of els) {
       const el = ref?.nativeElement;

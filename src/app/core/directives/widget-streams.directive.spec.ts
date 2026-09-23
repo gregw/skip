@@ -778,6 +778,114 @@ describe('WidgetStreamsDirective', () => {
         expect(dataSvc.releases).toEqual([]);
     });
 
+    it('unobserve releases the base and stops delivering updates', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.off', source: null }));
+        const hits: unknown[] = [];
+        directive.observe('p', update => hits.push(update.data.value));
+        dataSvc.subjects.get('env.off|default')!.next({ data: { value: 'A', timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        directive.unobserve('p');
+        dataSvc.subjects.get('env.off|default')!.next({ data: { value: 'B', timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(hits).toEqual(['A']);
+        expect(dataSvc.releases).toEqual([{ path: 'env.off', source: 'default' }]);
+        expect(heldBaseCount(directive)).toBe(0);
+    });
+
+    it('does not resubscribe an unobserved path on a later config change', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.off', source: null }));
+        directive.observe('p', () => { });
+        directive.unobserve('p');
+
+        directive.applyStreamsConfigDiff(makeCfg({ path: 'env.off', source: 'n2k' }));
+        expect(dataSvc.calls).toEqual([{ path: 'env.off', source: 'default' }]);
+    });
+
+    it('unobserve of a path never observed is a no-op', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.none', source: null }));
+        directive.unobserve('p');
+        expect(dataSvc.calls).toEqual([]);
+        expect(dataSvc.releases).toEqual([]);
+    });
+
+    it('reads a slot with the source of the slot named by sourceFromPath when both read the same path', () => {
+        const cfg = makeMultiCfg([{ key: 'display', path: ' env.wind ' }, { key: 'hidden', path: 'env.wind' }]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['display'].source = 'n2k.115';
+        paths['hidden'].sourceFromPath = 'display';
+        directive.setStreamsConfig(cfg);
+        directive.observe('hidden', () => { });
+
+        expect(dataSvc.calls).toEqual([{ path: 'env.wind', source: 'n2k.115' }]);
+    });
+
+    it('keeps a slot\'s own source when the slot named by sourceFromPath reads another path', () => {
+        // Wind Steer showing Ground TWA from a pinned source: the hidden water-TWA slot must not ask
+        // that source for a path it may not send.
+        const cfg = makeMultiCfg([
+            { key: 'trueWindAngle', path: 'self.environment.wind.angleTrueGround' },
+            { key: 'polarTrueWindAngle', path: 'self.environment.wind.angleTrueWater' }
+        ]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['trueWindAngle'].source = 'n2k.115';
+        paths['polarTrueWindAngle'].source = 'default';
+        paths['polarTrueWindAngle'].sourceFromPath = 'trueWindAngle';
+        directive.setStreamsConfig(cfg);
+        directive.observe('polarTrueWindAngle', () => { });
+
+        expect(dataSvc.calls).toEqual([{ path: 'self.environment.wind.angleTrueWater', source: 'default' }]);
+    });
+
+    it('rebinds a slot that follows another slot when that slot\'s source changes', () => {
+        const build = (displaySource: string | null): IWidgetSvcConfig => {
+            const cfg = makeMultiCfg([{ key: 'display', path: 'env.wind' }, { key: 'hidden', path: 'env.wind' }]);
+            const paths = cfg.paths as Record<string, IWidgetPath>;
+            paths['display'].source = displaySource;
+            paths['hidden'].sourceFromPath = 'display';
+            return cfg;
+        };
+        directive.setStreamsConfig(build(null));
+        directive.observe('hidden', () => { });
+
+        directive.applyStreamsConfigDiff(build('n2k.115'));
+
+        expect(dataSvc.calls).toEqual([
+            { path: 'env.wind', source: 'default' },
+            { path: 'env.wind', source: 'n2k.115' }
+        ]);
+        expect(dataSvc.releases).toEqual([{ path: 'env.wind', source: 'default' }]);
+    });
+
+    it('drops the followed source when the followed slot is re-pointed to another path', () => {
+        const build = (displayPath: string): IWidgetSvcConfig => {
+            const cfg = makeMultiCfg([{ key: 'display', path: displayPath }, { key: 'hidden', path: 'env.wind' }]);
+            const paths = cfg.paths as Record<string, IWidgetPath>;
+            paths['display'].source = 'n2k.115';
+            paths['hidden'].sourceFromPath = 'display';
+            return cfg;
+        };
+        directive.setStreamsConfig(build('env.wind'));
+        directive.observe('hidden', () => { });
+
+        directive.applyStreamsConfigDiff(build('env.windGround'));
+
+        expect(dataSvc.calls).toEqual([
+            { path: 'env.wind', source: 'n2k.115' },
+            { path: 'env.wind', source: 'default' }
+        ]);
+    });
+
+    it('keeps a slot\'s own source when sourceFromPath names no slot', () => {
+        const cfg = makeMultiCfg([{ key: 'hidden', path: 'env.windSI' }]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['hidden'].source = 'own';
+        paths['hidden'].sourceFromPath = 'missing';
+        directive.setStreamsConfig(cfg);
+        directive.observe('hidden', () => { });
+
+        expect(dataSvc.calls).toEqual([{ path: 'env.windSI', source: 'own' }]);
+    });
+
     it('releases the base when its path key is removed from the config', () => {
         directive.setStreamsConfig(makeCfg({ key: 'p', path: 'env.keep', source: null }));
         directive.observe('p', () => { });

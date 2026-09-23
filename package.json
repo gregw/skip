@@ -50,6 +50,7 @@
     "public/**",
     "README.md",
     "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
     "package.json"
   ],
   "scripts": {
@@ -115,6 +116,7 @@
     "lodash-es": "^4.17.23",
     "ng-packagr": "^21.0.1",
     "ngx-markdown": "^21.0.1",
+    "polar-math": "1.1.1",
     "prismjs": "^1.30.0",
     "pwa-asset-generator": "^8.1.1",
     "rxjs": "^7.8.2",

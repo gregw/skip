@@ -3084,6 +3084,47 @@
             "showPathSkUnitsFilter": false,
             "source": "default"
           },
+          "polarSpeedThroughWater": {
+            "convertUnitTo": "m/s",
+            "description": "Polar Overlay Speed Through Water",
+            "hideFromConfig": true,
+            "isPathConfigurable": false,
+            "path": "self.navigation.speedThroughWater",
+            "pathRequired": false,
+            "pathSkUnitsFilter": "m/s",
+            "pathType": "number",
+            "showConvertUnitTo": false,
+            "showPathSkUnitsFilter": false,
+            "source": "default"
+          },
+          "polarTrueWindAngle": {
+            "convertUnitTo": "rad",
+            "description": "Polar Overlay True Wind Angle (water)",
+            "hideFromConfig": true,
+            "isPathConfigurable": false,
+            "path": "self.environment.wind.angleTrueWater",
+            "pathRequired": false,
+            "pathSkUnitsFilter": "rad",
+            "pathType": "number",
+            "showConvertUnitTo": false,
+            "showPathSkUnitsFilter": false,
+            "source": "default",
+            "sourceFromPath": "trueWindAngle"
+          },
+          "polarTrueWindSpeed": {
+            "convertUnitTo": "m/s",
+            "description": "Polar Overlay True Wind Speed",
+            "hideFromConfig": true,
+            "isPathConfigurable": false,
+            "path": "self.environment.wind.speedTrue",
+            "pathRequired": false,
+            "pathSkUnitsFilter": "m/s",
+            "pathType": "number",
+            "showConvertUnitTo": false,
+            "showPathSkUnitsFilter": false,
+            "source": "default",
+            "sourceFromPath": "trueWindSpeed"
+          },
           "rudderAngle": {
             "convertUnitTo": "deg",
             "description": "Rudder Angle",
@@ -3154,6 +3195,7 @@
             "source": "default"
           }
         },
+        "polarOverlayEnable": false,
         "rudderEnable": true,
         "sailSetupEnable": false,
         "supportAutomaticHistoricalSeries": false,
@@ -3327,6 +3369,45 @@
           "pathRequired": false,
           "pathType": "number",
           "slot": "drift",
+          "source": "default"
+        },
+        {
+          "defaultConvertUnitTo": "m/s",
+          "defaultPath": "self.environment.wind.speedTrue",
+          "description": "Polar Overlay True Wind Speed",
+          "expectedSkUnit": "m/s",
+          "hideFromConfig": true,
+          "isPathConfigurable": false,
+          "pathOptions": null,
+          "pathRequired": false,
+          "pathType": "number",
+          "slot": "polarTrueWindSpeed",
+          "source": "default"
+        },
+        {
+          "defaultConvertUnitTo": "rad",
+          "defaultPath": "self.environment.wind.angleTrueWater",
+          "description": "Polar Overlay True Wind Angle (water)",
+          "expectedSkUnit": "rad",
+          "hideFromConfig": true,
+          "isPathConfigurable": false,
+          "pathOptions": null,
+          "pathRequired": false,
+          "pathType": "number",
+          "slot": "polarTrueWindAngle",
+          "source": "default"
+        },
+        {
+          "defaultConvertUnitTo": "m/s",
+          "defaultPath": "self.navigation.speedThroughWater",
+          "description": "Polar Overlay Speed Through Water",
+          "expectedSkUnit": "m/s",
+          "hideFromConfig": true,
+          "isPathConfigurable": false,
+          "pathOptions": null,
+          "pathRequired": false,
+          "pathType": "number",
+          "slot": "polarSpeedThroughWater",
           "source": "default"
         },
         {

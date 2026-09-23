@@ -123,10 +123,13 @@ function historyResponse(paths, rows, stepSec) {
  * @param {object} o { publicDir, base, port }
  * Returns { origin, appUrl, setControl(c), setConfigDocument(doc), blast(n), streamCount(), stop() }.
  * control: { streaming:bool, rateHz, selfPaths:[], selfValues:{path:value|fn}, selfMeta:{path:meta},
- *            staticScene:{ownShip, targets:[]}, ais:{count, churnPerSec} }
+ *            staticScene:{ownShip, targets:[]}, ais:{count, churnPerSec},
+ *            restSelfValues:{path:value}, resources:{'<type>/<id>':body} }
+ * restSelfValues answers GET /signalk/v1/api/vessels/self/<path as segments> with a v1 leaf; resources
+ * answers GET /signalk/v2/api/resources/<type>/<id>. Anything else under those roots stays as before.
  */
 export async function startServer({ publicDir, base, port }) {
-  const control = { streaming: false, rateHz: 10, selfPaths: ['navigation.speedOverGround'], selfValues: null, selfMeta: null, ais: { count: 0, churnPerSec: 0 } };
+  const control = { streaming: false, rateHz: 10, selfPaths: ['navigation.speedOverGround'], selfValues: null, selfMeta: null, restSelfValues: null, resources: null, ais: { count: 0, churnPerSec: 0 } };
   let history = { rows: 0, stepSec: 1, paths: ['navigation.speedOverGround'] };
   let configDoc = null; // IConfig served from applicationData (set per scenario by the runner)
   let sent = 0;
@@ -173,6 +176,17 @@ export async function startServer({ publicDir, base, port }) {
     if (p.startsWith('/signalk/v2/api/history/values')) {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       return res.end(JSON.stringify(historyResponse(history.paths, history.rows, history.stepSec)));
+    }
+    const selfLeaf = p.match(/^\/signalk\/v1\/api\/vessels\/self\/(.+)$/);
+    const restPath = selfLeaf?.[1].split('/').join('.');
+    if (restPath && control.restSelfValues && restPath in control.restSelfValues) {
+      return json(res, { value: control.restSelfValues[restPath], $source: 'mock.0', timestamp: iso(Date.now()) });
+    }
+    const resource = p.match(/^\/signalk\/v2\/api\/resources\/(.+)$/)?.[1];
+    if (resource && control.resources) {
+      if (resource in control.resources) return json(res, control.resources[resource]);
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end('{}');
     }
     if (p.startsWith('/signalk/v1/api')) { // snapshot / misc — empty model
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });

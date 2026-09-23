@@ -1,7 +1,8 @@
-import { Component, OnInit, inject, signal, DestroyRef } from '@angular/core';
+import { Component, OnInit, inject, signal, computed, DestroyRef } from '@angular/core';
 import { AbstractControl, UntypedFormGroup, UntypedFormControl, FormControl, FormGroup, Validators, UntypedFormBuilder, UntypedFormArray, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { filter, take } from 'rxjs';
 
 import { MatButtonModule } from '@angular/material/button';
 import { MatDividerModule } from '@angular/material/divider';
@@ -15,6 +16,7 @@ import { GraphDisplayOptionsComponent } from '../graph-display-options/graph-dis
 import { GraphDataOptionsComponent } from '../graph-data-options/graph-data-options.component';
 import { AppService } from '../../core/services/app-service';
 import type { ElectricalTrackedDevice, IDynamicControl, IDynamicControlGroup, IWidgetPath, IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
+import { effectivePathConfig } from '../../core/directives/widget-streams.directive';
 import { MIN_UPDATE_INTERVAL_MS } from '../../core/interfaces/widgets-interface';
 import { PathsOptionsComponent } from '../paths-options/paths-options.component';
 import { IDeleteEventObj } from '../boolean-control-config/boolean-control-config.component';
@@ -26,6 +28,9 @@ import { SolarChargerSetupComponent } from '../solar-charger-setup/solar-charger
 import { ElectricalFamilySetupComponent } from '../electrical-family-setup/electrical-family-setup.component';
 import { VideoCameraSetupComponent } from '../video-camera-setup/video-camera-setup.component';
 import { MatTabsModule } from '@angular/material/tabs';
+import { ActivePolarService } from '../../core/services/active-polar.service';
+import { DataService } from '../../core/services/data.service';
+import { POLAR_OVERLAY_PATH_KEYS } from '../../core/utils/polar-overlay.util';
 
 /** Typed reactive-form control map for an array-mode {@link IWidgetPath}: one control per field. */
 type IWidgetPathControls = {
@@ -64,6 +69,26 @@ export class RootModalWidgetConfigComponent implements OnInit {
   public colors: { label: string; value: string }[] = [];
   protected readonly saveDisabled = signal(true);
 
+  private readonly activePolar = inject(ActivePolarService);
+  private readonly data = inject(DataService);
+  /** The Wind Steer polar overlay's SI input paths, and those the server has sent at least once. */
+  private polarOverlayPaths: string[] = [];
+  private readonly receivedPolarOverlayPaths = signal<ReadonlySet<string>>(new Set());
+  /**
+   * Why the polar overlay cannot draw: the service's fixed message, or once the polar is ready, the
+   * inputs never received. A stale input only hides the overlay and gets no message.
+   */
+  protected readonly polarOverlayHint = computed<string | null>(() => {
+    const message = this.activePolar.message();
+    if (message) return message;
+    if (this.activePolar.status().kind !== 'ready') return null;
+    const received = this.receivedPolarOverlayPaths();
+    const missing = this.polarOverlayPaths.filter(path => !received.has(path)).map(path => path.replace(/^self\./, ''));
+    if (!missing.length) return null;
+    const list = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}` : missing[0];
+    return `The Signal K server has not sent ${list}, so the overlay stays hidden.`;
+  });
+
   ngOnInit() {
     // Defensive guard: if dialog opened without required data, close early to avoid runtime errors.
     if (!this.widgetConfig) {
@@ -76,6 +101,7 @@ export class RootModalWidgetConfigComponent implements OnInit {
     delete formConfig.widgetName;
     this.formMaster = this.generateFormGroups(formConfig);
     this.setupWindsteerControlState();
+    if (this.widgetConfig.polarOverlayEnable !== undefined) this.watchPolarOverlay();
     this.formMaster.statusChanges
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.saveDisabled.set(this.formMaster.invalid));
@@ -119,6 +145,26 @@ export class RootModalWidgetConfigComponent implements OnInit {
     compassModeControl.valueChanges
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(value => syncWindsteerControlsEnabledState(value));
+  }
+
+  /**
+   * Starts (or retries) the active polar so the dialog can say why the overlay cannot draw before the
+   * user turns it on, and watches the overlay's inputs while the dialog is open. The first replayed
+   * value is the path's cached one, so an input that was received and has since gone stale counts.
+   */
+  private watchPolarOverlay(): void {
+    this.activePolar.refreshIfFailed();
+    const slots = POLAR_OVERLAY_PATH_KEYS
+      .map(key => effectivePathConfig(this.widgetConfig.paths, key))
+      .filter((slot): slot is IWidgetPath & { path: string } => typeof slot?.path === 'string' && slot.path !== '');
+    this.polarOverlayPaths = slots.map(slot => slot.path);
+    for (const { path, source } of slots) {
+      const { data$, release } = this.data.acquirePath(path, source?.trim() || 'default');
+      this.destroyRef.onDestroy(release);
+      data$
+        .pipe(filter(update => update.data.value != null), take(1), takeUntilDestroyed(this.destroyRef))
+        .subscribe(() => this.receivedPolarOverlayPaths.update(received => new Set(received).add(path)));
+    }
   }
 
   // Helper to ensure we only treat plain object literals as nested groups and not arrays, dates, etc.

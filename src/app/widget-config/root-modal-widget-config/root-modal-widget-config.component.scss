@@ -40,3 +40,12 @@
   min-width: 250px;
   flex-grow: 1;
 }
+
+// Why the Wind Steer polar overlay cannot draw; styled like the video setup's plugin banner.
+.polar-overlay-hint {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--skip-contrast-color);
+  background: color-mix(in srgb, var(--skip-blue-color, #4aa3ff) 16%, transparent);
+}

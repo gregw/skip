@@ -50,6 +50,7 @@ advertises server version 2.24.0 (Skip gates widget history on ≥ 2.22.1).
 | `delta-storm-30x10` / `reconnect-backlog` | Rank 2 — delta ingestion / reconnect snapshot fan-out. |
 | `ais-radar-150` | Ranks 4/5 — AIS radar full re-render loops. |
 | `gauges-16` | Rank 7 — ng-canvas-gauge animation duty cycle. |
+| `windsteer-vmc` | Wind Steer polar overlay in VMC mode (#478): curve, dot and pointers recomputing at 10 Hz. A build without the overlay ignores the option, so the delta against it is the overlay's cost. |
 | `ais-growth-churn` | Ranks 8/9 — unbounded AIS/track growth (heap slope). |
 
 ## Run
@@ -123,12 +124,15 @@ starboard rudder, and a current (knots arrive as `displayUnits` meta via
 `control.selfMeta`) — and shoots the widget in compass mode at a large (24-cell) and a
 small (6-cell) tile in the light, dark and night themes, to
 `results/shots/windsteer/<label>-<theme>-<size>.png`. Flags: `--public`, `--label`
-(default `windsteer`), `--out`, `--port`, `--drift` (current speed in knots, default 0.8)
-and `--set-rel` (set relative to the bow in degrees, default 90); there is no overlay
-option, so a before/after is two runs with different labels against two builds. The
-machine step boot-asserts only the widget count (one per page); **the arrow direction,
-legibility and clearance are a visual check**: the drift label, value and unit sit in the
-bottom-right corner with the value legible over a large faint set arrow pointing
+(default `windsteer`), `--out`, `--port`, `--drift` (current speed in knots, default 0.8),
+`--set-rel` (set relative to the bow in degrees, default 90) and `--overlay` (comma-separated
+boat states, default `none`). `polar`, `vmc` and `vmc-ahead` turn the polar overlay on and
+serve the test-server polar as the active polar; they write
+`<label>-<overlay>-<theme>-<size>.png`. A before/after is two runs with different labels
+against two builds. The machine step boot-asserts the widget count (one per page) and, for
+the overlay states, that the expected overlay groups drew; **the arrow direction, the curve
+shape, legibility and clearance are a visual check**: the drift label, value and unit sit in
+the bottom-right corner with the value legible over a large faint set arrow pointing
 `--set-rel` degrees right of the bow, all clear of the dial and the rudder arcs. Below
 0.1 m/s (`--drift 0.058` is 0.03 m/s) the value shows and the arrow does not.
 
