@@ -494,16 +494,26 @@ export interface IWidgetSvcConfig {
    */
   viewSmoothing?: number;
 
+
   /**
    * Used by the racer-line-view widget.
-   * Seconds before the start during which the start-line drawing stops re-fitting its
-   * view. In the last seconds of a countdown the helm is reading the boat against the
-   * line, and a view that re-scales under them at that moment costs them the read - so
-   * inside this window the drawing holds still and re-fits only when it must, because
-   * the boat or the line would otherwise be drawn outside the frame. 0 disables the
-   * freeze and the view keeps re-fitting to the last.
+   * Show the time to sail to the line, and the time to burn before starting for it, in
+   * the corner of the start-line drawing. Both are the plugin's own numbers; each is
+   * independently optional because a crew that steers to one of them has no use for the
+   * other taking up the frame.
    */
-  viewFreezeSeconds?: number;
+  showTimeToLine?: boolean;
+  showTimeToBurn?: boolean;
+
+  /**
+   * Used by the racer-line-view widget.
+   * Show the line's length and the heading sailed to cross it, above the line. It is
+   * the largest text on the drawing and says nothing that changes during an approach,
+   * so it is off by default and the space goes to the drawing instead. The editing
+   * screens show it regardless: there it is the reading that says what the ends you are
+   * moving have produced.
+   */
+  showLineLabel?: boolean;
   /** The next dashboard to display when the racer-timer-widget counts to 0 and the boat is not OCS*/
   nextDashboard?: number;
   /** If true, play beeps when the racer-timer-widget counts to through the minutes, 10s and each of the last 10s. */

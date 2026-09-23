@@ -11,6 +11,10 @@
   min-height: 1px;
   // Halo behind the labels so the dashed line does not show through them.
   --racer-halo: var(--skip-widget-card-background-color);
+  // The along-the-line leg. Purple against the pink of the leg across to the line:
+  // neighbouring hues, so the two still read as one measurement in two parts, but far
+  // enough apart in tone that a glance pairs each label with its own rule.
+  --racer-zone-leg: var(--skip-purple-color);
 }
 
 // The drawing takes the whole component; the host widget floats its own controls over
@@ -38,8 +42,12 @@
   stroke-dasharray: 10 8;
 }
 
+// The line's length and the heading to cross it: context, not a reading to steer by, so
+// it takes the dim tone the title and the empty state use rather than the widget's full
+// contrast colour. It is the largest text on the drawing and was shouting over the
+// numbers that do have to be read.
 .line-label {
-  fill: var(--racer-color);
+  fill: var(--racer-dim);
   stroke: var(--racer-halo);
   stroke-width: 8;
   paint-order: stroke;
@@ -89,6 +97,7 @@
 
 .line-label.undefined {
   fill: var(--racer-dim);
+  fill-opacity: 0.7;
 }
 
 .projection {
@@ -131,9 +140,18 @@
     paint-order: stroke;
   }
 
-  // The leg sailed first, a shade darker so the pair reads in order.
-  &.leading text {
-    fill: color-mix(in srgb, var(--skip-pink-color) 82%, black);
+  // The leg sailed first - along the line, into the start zone - in its own shade: a
+  // darker pink, carried by the rule, its end ticks and its label alike, so that when
+  // the two legs meet at a corner it is obvious which distance belongs to which.
+  &.leading {
+    line,
+    .dimension-ticks {
+      stroke: var(--racer-zone-leg);
+    }
+
+    text {
+      fill: var(--racer-zone-leg);
+    }
   }
 }
 
@@ -170,27 +188,117 @@
 // invisible control is one nobody presses.
 .end-target {
   cursor: pointer;
+  outline: none;
+  // Filled like every other control rather than outlined, and saturated enough to read
+  // as a button - but still a tint, because the mark it covers has to show through it.
   fill: var(--skip-contrast-color);
-  fill-opacity: 0.12;
-  stroke: var(--skip-contrast-color);
-  stroke-opacity: 0.45;
-  stroke-width: 1.5;
-  stroke-dasharray: 5 4;
+  fill-opacity: 0.45;
+  stroke: none;
 
   &.port {
     fill: var(--skip-port-color);
-    stroke: var(--skip-port-color);
   }
 
   &.stb {
     fill: var(--skip-starboard-color);
-    stroke: var(--skip-starboard-color);
   }
 
+  // As with the controls: reachable and operable from the keyboard, but with no ring
+  // left behind on the one last pressed.
+  &:focus,
   &:focus-visible {
     outline: none;
-    stroke-opacity: 1;
-    stroke-width: 3;
-    stroke-dasharray: none;
   }
+}
+
+// Controls drawn into the SVG, so they sit beside the marks they act on and scale with
+// the drawing rather than with the browser's idea of a button.
+.control {
+  cursor: pointer;
+
+  rect {
+    fill: var(--skip-grey-color);
+  }
+
+  &.accent rect {
+    fill: var(--skip-blue-color);
+  }
+
+  text {
+    fill: var(--skip-on-grey-color);
+    font-weight: bold;
+    text-anchor: middle;
+  }
+
+  &.accent text {
+    fill: var(--skip-on-blue-color);
+  }
+
+  .control-glyph {
+    fill: none;
+    stroke: var(--skip-on-grey-color);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &.accent .control-glyph {
+    fill: var(--skip-on-blue-color);
+    stroke: none;
+  }
+
+  // No focus ring. These are drawn controls in a glanceable instrument, and a ring left
+  // behind on the last one pressed reads as state the widget does not have. They stay
+  // keyboard-reachable and keyboard-operable; only the indicator is gone.
+  &:focus,
+  &:focus-visible {
+    outline: none;
+  }
+}
+
+// The line in use, named under the line it names.
+.name-label {
+  fill: var(--racer-color);
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+// Countdowns in the corner: a small caption and the time beside it.
+.readout {
+  // The caption carries the same weight and colour as the widget's own title: it names
+  // the reading rather than being one, and at this size bold made it compete with it.
+  text {
+    fill: var(--racer-dim);
+    font-weight: normal;
+  }
+
+  .readout-value {
+    fill: var(--racer-color);
+    font-weight: bold;
+  }
+}
+
+// The best-VMG pad: the numbers read as readings, the caption as the label it needs to
+// say what unit they are in.
+.vmg-value text {
+  fill: var(--racer-color);
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+// The one the adjust buttons are pointed at.
+.vmg-value.selected text {
+  fill: var(--skip-orange-color);
+}
+
+// The four-way arrow the values are arranged around: it is what says which value is
+// which, so it is drawn quietly and read as a diagram, not as a control.
+.vmg-compass {
+  fill: var(--racer-dim);
+  fill-opacity: 0.55;
+}
+
+.vmg-caption {
+  fill: var(--racer-dim);
+  text-anchor: middle;
 }

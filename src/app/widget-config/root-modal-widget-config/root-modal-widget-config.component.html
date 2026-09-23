@@ -229,20 +229,20 @@
                   <mat-hint>% the view may drift before re-scaling</mat-hint>
                 </mat-form-field>
               }
-              @if ((widgetConfig?.viewFreezeSeconds !== undefined)) {
-                <mat-form-field>
-                  <mat-label>Freeze View Before Start</mat-label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="300"
-                    matInput
-                    placeholder="Enter seconds..."
-                    name="viewFreezeSeconds"
-                    formControlName="viewFreezeSeconds"
-                  />
-                  <mat-hint>s before the start the view stops re-scaling</mat-hint>
-                </mat-form-field>
+              @if ((widgetConfig?.showLineLabel !== undefined)) {
+                <mat-checkbox name="showLineLabel" formControlName="showLineLabel">
+                  Show Line Length and Heading
+                </mat-checkbox>
+              }
+              @if ((widgetConfig?.showTimeToLine !== undefined)) {
+                <mat-checkbox name="showTimeToLine" formControlName="showTimeToLine">
+                  Show Time To Line
+                </mat-checkbox>
+              }
+              @if ((widgetConfig?.showTimeToBurn !== undefined)) {
+                <mat-checkbox name="showTimeToBurn" formControlName="showTimeToBurn">
+                  Show Time To Burn
+                </mat-checkbox>
               }
               @if ((widgetConfig?.showMin !== undefined)) {
                 <mat-checkbox name="showMin" formControlName="showMin">

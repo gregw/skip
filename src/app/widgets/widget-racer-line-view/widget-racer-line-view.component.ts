@@ -12,8 +12,6 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { SignalkRequestsService } from '../../core/services/signalk-requests.service';
 import { DashboardService } from '../../core/services/dashboard.service';
-import { MatButtonModule } from '@angular/material/button';
-import { MatTooltipModule } from '@angular/material/tooltip';
 import type { IWidgetPath, IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { ITheme } from '../../core/services/app-service';
 import { getColors } from '../../core/utils/themeColors.utils';
@@ -21,6 +19,8 @@ import {
   IRacerLineViewData,
   NO_VMG,
   RacerLineViewComponent,
+  TLineViewAction,
+  TVmgName,
   VMG_NAMES
 } from './racer-line-view/racer-line-view.component';
 
@@ -41,7 +41,7 @@ import {
   selector: 'widget-racer-line-view',
   templateUrl: './widget-racer-line-view.component.html',
   styleUrls: ['./widget-racer-line-view.component.scss'],
-  imports: [RacerLineViewComponent, MatButtonModule, MatTooltipModule],
+  imports: [RacerLineViewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class WidgetRacerLineViewComponent {
@@ -60,11 +60,11 @@ export class WidgetRacerLineViewComponent {
     filterSelfPaths: true,
     numDecimal: 1,
     updateInterval: 500,
-    viewSmoothing: 10,
-    viewFreezeSeconds: 15,
+    viewSmoothing: 25,
+    showLineLabel: false,
+    showTimeToLine: true,
+    showTimeToBurn: true,
     color: 'contrast',
-    enableTimeout: true,
-    dataTimeout: 5,
     paths: {
       // The plugin publishes one object at navigation.racing.lines holding both the
       // current line's name and the list of known lines, so both keys point at it and
@@ -159,6 +159,20 @@ export class WidgetRacerLineViewComponent {
         pathSkUnitsFilter: 'rad',
         enableTimeout: false
       },
+      ttlPath: {
+        description: 'Time to sail to the start line in seconds',
+        path: 'self.navigation.racing.timeToLine',
+        source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
+        convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false,
+        pathSkUnitsFilter: 's'
+      },
+      ttbPath: {
+        description: 'Time to delay before sailing to the start line in seconds',
+        path: 'self.navigation.racing.timeToBurn',
+        source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
+        convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false,
+        pathSkUnitsFilter: 's'
+      },
       ttsPath: {
         description: 'Time to the start in seconds',
         path: 'self.navigation.racing.timeToStart',
@@ -251,6 +265,10 @@ export class WidgetRacerLineViewComponent {
     boatLength: null, effVmgToLine: null, effVmgAlongLine: null,
     bestVmg: { ...NO_VMG }
   });
+  private readonly ttl = signal<number | null>(null);
+  private readonly ttb = signal<number | null>(null);
+  protected readonly timeToLine = this.ttl.asReadonly();
+  protected readonly timeToBurn = this.ttb.asReadonly();
   protected readonly viewData = this.view.asReadonly();
 
   protected readonly palette = signal<{ color: string; dim: string; dimmer: string }>(
@@ -266,8 +284,10 @@ export class WidgetRacerLineViewComponent {
   }
 
   protected readonly title = computed<string>(() => this.cfg().displayName || 'Start Line');
-  protected readonly viewSmoothing = computed<number>(() => this.cfg().viewSmoothing ?? 10);
-  protected readonly viewFreezeSeconds = computed<number>(() => this.cfg().viewFreezeSeconds ?? 15);
+  protected readonly viewSmoothing = computed<number>(() => this.cfg().viewSmoothing ?? 25);
+  protected readonly showLineLabel = computed<boolean>(() => this.cfg().showLineLabel ?? false);
+  protected readonly showTimeToLine = computed<boolean>(() => this.cfg().showTimeToLine ?? true);
+  protected readonly showTimeToBurn = computed<boolean>(() => this.cfg().showTimeToBurn ?? true);
   /**
    * The unit every distance in the drawing is shown in: the line's length, the approach
    * legs, all of it.
@@ -286,13 +306,18 @@ export class WidgetRacerLineViewComponent {
     this.pathsRecord['vmgToCourseSidePath']?.convertUnitTo ?? 'knots');
 
   /**
-   * Editing the line rather than watching it.
+   * Which screen is showing: 0 watches the line, 1 sets its ends and picks the named
+   * line, 2 adjusts the ends of the one in use, 3 adjusts the best VMGs behind the time
+   * to line.
    *
-   * Entered and left by the one button, and never by a timeout: pinging the ends takes
-   * as long as it takes, and a mode that expired just as the helm reached for the pin
-   * would be worse than no mode at all.
+   * Cycled by the one button, and never by a timeout: pinging the ends takes as long as
+   * it takes, and a mode that expired just as the helm reached for the pin would be
+   * worse than no mode at all.
    */
-  protected readonly editMode = signal<boolean>(false);
+  protected readonly mode = signal<0 | 1 | 2 | 3>(0);
+
+  /** Which best VMG the adjust buttons act on; null while none is chosen. */
+  protected readonly selectedVmg = signal<TVmgName | null>(null);
 
   /** The named lines the plugin knows, and which is current. */
   private readonly lines = signal<string[]>(['Default']);
@@ -300,8 +325,68 @@ export class WidgetRacerLineViewComponent {
   protected readonly lineNames = computed<string[]>(() => this.lines());
   protected readonly currentLineName = computed<string>(() => this.startLineName() || 'Default');
 
-  protected toggleEdit(): void {
-    this.editMode.update(v => !v);
+  /**
+   * Which named line the picker is showing. Held as a name rather than an index so that
+   * a list arriving or changing under it cannot silently point it at a different line;
+   * a name that is no longer known falls back to the one in use.
+   */
+  private readonly browsed = signal<string | null>(null);
+  protected readonly browsedLine = computed<string>(() => {
+    const name = this.browsed();
+    return name && this.lineNames().includes(name) ? name : this.currentLineName();
+  });
+
+  /** Step to the next screen, and back to watching after the last. */
+  protected nextMode(): void {
+    this.mode.update(m => (m === 3 ? 0 : m + 1) as 0 | 1 | 2 | 3);
+    // A selection only means anything on the screen that shows it.
+    this.selectedVmg.set(null);
+  }
+
+  /** What a control in the drawing asked for. */
+  protected onAction(action: TLineViewAction): void {
+    switch (action.kind) {
+      case 'mode':
+        this.nextMode();
+        break;
+      case 'browse': {
+        const names = this.lineNames();
+        const at = names.indexOf(this.browsedLine());
+        // Wraps both ways, so a short list is a couple of presses from anything in it.
+        this.browsed.set(names[(at + action.step + names.length) % names.length]);
+        break;
+      }
+      case 'choose':
+        this.selectLine(this.browsedLine());
+        break;
+      case 'adjust':
+        this.signalk.putRequest('navigation.racing.setStartLine',
+          { end: action.end, delta: action.delta, rotate: action.rotate || null }, this.id());
+        break;
+      case 'vmgNext': {
+        // Round the four and then off again, so the pad can be left showing no selection
+        // and nothing to press by accident.
+        const at = this.selectedVmg() ? VMG_NAMES.indexOf(this.selectedVmg()!) + 1 : 0;
+        this.selectedVmg.set(at >= VMG_NAMES.length ? null : VMG_NAMES[at]);
+        break;
+      }
+      case 'vmgStep': {
+        const name = this.selectedVmg();
+        if (!name) break;
+        this.signalk.putRequest('navigation.racing.setBestVmg',
+          { vmg: name, delta: action.deltaMs }, this.id());
+        break;
+      }
+      case 'vmgClear':
+        this.signalk.putRequest('navigation.racing.setBestVmg',
+          { command: 'clear' }, this.id());
+        break;
+      case 'vmgReset':
+        // No vmg name clears every override, which is what the Reset offers.
+        this.signalk.putRequest('navigation.racing.setBestVmg',
+          { command: 'reset' }, this.id());
+        break;
+    }
   }
 
   /** Put an end of the line on the boat's current position. */
@@ -312,6 +397,12 @@ export class WidgetRacerLineViewComponent {
   protected selectLine(name: string): void {
     this.signalk.putRequest('navigation.racing.setStartLineName',
       { startLineName: name === 'Default' ? null : name }, this.id());
+    // Follow the choice rather than waiting for the plugin to echo it back, so the
+    // control turns from a button into a label the moment it is pressed. The stream
+    // overwrites both the instant the plugin confirms, so a request that fails corrects
+    // itself rather than leaving the widget claiming a line it never got.
+    this.browsed.set(name);
+    this.startLineName.set(name === 'Default' ? null : name);
   }
 
   constructor() {
@@ -372,6 +463,8 @@ export class WidgetRacerLineViewComponent {
     });
     num('lineBearingPath', v => this.view.update(d => ({ ...d, lineBearing: v })));
     num('ttsPath', v => this.view.update(d => ({ ...d, timeToStart: v })));
+    num('ttlPath', v => this.ttl.set(v));
+    num('ttbPath', v => this.ttb.set(v));
     num('boatLengthPath', v => this.view.update(d => ({ ...d, boatLength: v })));
     num('effectiveVmgToLinePath', v => this.view.update(d => ({ ...d, effVmgToLine: v })));
     num('effectiveVmgAlongLinePath', v => this.view.update(d => ({ ...d, effVmgAlongLine: v })));

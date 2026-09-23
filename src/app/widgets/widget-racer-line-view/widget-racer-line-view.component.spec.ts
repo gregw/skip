@@ -7,6 +7,8 @@ import { UnitsService } from '../../core/services/units.service';
 import { SignalkRequestsService } from '../../core/services/signalk-requests.service';
 import { DashboardService } from '../../core/services/dashboard.service';
 import { signal } from '@angular/core';
+import { By } from '@angular/platform-browser';
+import { RacerLineViewComponent } from './racer-line-view/racer-line-view.component';
 
 /**
  * The widget subscribes and hands the values down; the drawing turns them into SVG. These tests
@@ -126,6 +128,7 @@ describe('WidgetRacerLineViewComponent', () => {
   });
 
   it('measures the line itself rather than converting the published length twice', () => {
+    setMode(1);
     // The published length arrives already converted; the drawing converts metres once.
     aLine(0.00035, 0.00030);
     feeds.get('lineLengthPath')?.({ data: { value: 99999, measure: 'm', timestamp: new Date() } });
@@ -171,7 +174,23 @@ describe('WidgetRacerLineViewComponent', () => {
     expect(svg()?.textContent).not.toContain('No start line set');
   });
 
+  it('leaves the length and heading off the watching screen by default', () => {
+    aLine(0.00035, 0.00030);
+    expect(svg()?.querySelector('.line-label')).toBeNull();
+  });
+
+  it('shows it on both editing screens whatever the setting says', () => {
+    aLine(0.00035, 0.00030);
+    for (const m of [1, 2] as const) {
+      setMode(m);
+      expect(svg()?.querySelector('.line-label'), `missing on screen ${m}`).toBeTruthy();
+    }
+  });
+
+  // The label is off by default on the watching screen, so these read it where it is
+  // always shown; the text is built the same way on every screen.
   it('labels the line with its length and the heading sailed to cross it', () => {
+    setMode(1);
     aLine(-0.00005, 0.00030);
     const label = svg()?.querySelector('.line-label')?.textContent ?? '';
     // "140m · 160°T↑" — the arrow says the heading is the way to sail to start.
@@ -213,6 +232,112 @@ describe('WidgetRacerLineViewComponent', () => {
     const after = bow();
     expect(after.x).toBeCloseTo(before.x, 0);
     expect(after.y).toBeCloseTo(before.y, 0);
+  });
+
+  /**
+   * The screen button lives outside the drawing's scene, so it is there even when there
+   * is no line to draw. Without that, entering a screen with no line set would be a room
+   * with no door.
+   */
+  it('offers the screen button with no line set at all', () => {
+    expect(svg()?.textContent).toContain('No start line set');
+    const c = [...svg()!.querySelectorAll('.control')];
+    expect(c).toHaveLength(1);
+    expect(c[0].getAttribute('aria-label')).toContain('Next screen');
+  });
+
+  it('shows the countdowns beside it, as minutes and seconds', () => {
+    aLine(0.00035, 0.00030);
+    feed({ ttlPath: 41, ttbPath: 19 });
+    // The caption and the value are separate <text> elements, laid out side by side.
+    const readouts = [...svg()!.querySelectorAll('.readout')]
+      .map(r => [...r.querySelectorAll('text')].map(t => t.textContent?.trim()));
+    expect(readouts).toEqual([['TTL', '0:41'], ['TTB', '0:19']]);
+  });
+
+  it('keeps the countdowns to the watching screen', () => {
+    aLine(0.00035, 0.00030);
+    feed({ ttlPath: 41, ttbPath: 19 });
+    setMode(1);
+    expect(svg()!.querySelectorAll('.readout')).toHaveLength(0);
+  });
+
+  /**
+   * The corner controls sit over the drawing, so the fit has to keep the line above
+   * them. Everything else may pass behind — the boat included, which is worth seeing
+   * where it actually is.
+   */
+  /**
+   * Holding both ends in frame capped the zoom just when the detail near the boat
+   * mattered most. One end may leave; the nearer one may not.
+   */
+  it('zooms past the far end, keeping the nearer one in frame', () => {
+    // Hard up by the starboard end of a 140m line.
+    aLine(0.00005, 0.00010);
+    const portX = Number(svg()!.querySelector('.start-line')!.getAttribute('x1'));
+    const stbX = Number(svg()!.querySelector('.start-line')!.getAttribute('x2'));
+    const width = Number(svg()!.getAttribute('viewBox')!.split(' ')[2]);
+    // The starboard end is the near one and stays on the drawing...
+    expect(stbX).toBeGreaterThanOrEqual(0);
+    expect(stbX).toBeLessThanOrEqual(width);
+    // ...and it is drawn further apart than a fit holding both ends could manage.
+    expect(Math.abs(stbX - portX)).toBeGreaterThan(width);
+  });
+
+  /**
+   * The zoom stops where the line stops being readable as a line: three boat lengths of
+   * it, measured on the line itself rather than on the fitted span, which is mostly open
+   * water when the boat is standing off.
+   */
+  it('always keeps three boat lengths of the line in frame', () => {
+    feed({ boatLengthPath: 12 });
+    // Sitting on the starboard end, which is where the zoom would otherwise run away.
+    aLine(0.00003, 0.00005);
+    const line = svg()!.querySelector('.start-line')!;
+    const portX = Number(line.getAttribute('x1'));
+    const stbX = Number(line.getAttribute('x2'));
+    const width = Number(svg()!.getAttribute('viewBox')!.split(' ')[2]);
+    // Units per metre, from the line's own drawn length.
+    const scale = Math.abs(stbX - portX) / 140;
+    const onScreen = Math.min(Math.max(portX, stbX), width) - Math.max(Math.min(portX, stbX), 0);
+    expect(onScreen / scale, 'less than three boat lengths of line in frame')
+      .toBeGreaterThanOrEqual(36 - 0.5);
+  });
+
+  it('keeps both ends when there is no boat to zoom towards', () => {
+    feed({
+      portPath: { latitude: 0.00043, longitude: 0.00118 },
+      stbPath: { latitude: 0, longitude: 0 },
+      lineLengthPath: 140
+    });
+    const line = svg()!.querySelector('.start-line')!;
+    const portX = Number(line.getAttribute('x1'));
+    const stbX = Number(line.getAttribute('x2'));
+    const width = Number(svg()!.getAttribute('viewBox')!.split(' ')[2]);
+    for (const x of [portX, stbX]) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('keeps the line clear of the corner controls', () => {
+    // A boat well up-course, which puts the line at the bottom of the fitted span.
+    aLine(-0.00060, 0.00030);
+    const lineY = Number(svg()!.querySelector('.start-line')!.getAttribute('y1'));
+    const buttonTop = Number(svg()!.querySelector('.control rect')!.getAttribute('y'));
+    expect(lineY, `line at ${lineY} runs into the controls at ${buttonTop}`)
+      .toBeLessThan(buttonTop);
+  });
+
+  it('keeps the boat clear of them too', () => {
+    // The mirror case: the boat below the line, so it is the low thing in the frame.
+    aLine(0.00200, 0.00030);
+    const buttonTop = Number(svg()!.querySelector('.control rect')!.getAttribute('y'));
+    const d = svg()!.querySelector('.boat')!.getAttribute('d') ?? '';
+    const ys = [...d.matchAll(/[ML,]\s*[\d.-]+,([\d.-]+)/g)].map(m => Number(m[1]));
+    expect(ys.length, 'no boat outline to check').toBeGreaterThan(0);
+    expect(Math.max(...ys), `boat reaches ${Math.max(...ys)}, controls start at ${buttonTop}`)
+      .toBeLessThanOrEqual(buttonTop);
   });
 
   describe('the line\u2019s own colour', () => {
@@ -287,27 +412,6 @@ describe('WidgetRacerLineViewComponent', () => {
     expect(getComputedStyle(boat).fillRule).not.toBe('evenodd');
   });
 
-  /**
-   * In the last seconds the helm is reading the boat against the line, so the view holds
-   * still — but never at the cost of drawing the boat outside the frame.
-   */
-  it('stops re-fitting the view inside the freeze window', () => {
-    feed({ startTimePath: '2026-01-01T10:00:00Z' });
-    aLine(0.00035, 0.00030);
-    feed({ ttsPath: 300 });
-    const early = svg()!.querySelector('.start-line')!.getAttribute('x1');
-    // A long way out: far enough that a re-fit would visibly rescale.
-    aLine(0.00500, 0.00030);
-    expect(svg()!.querySelector('.start-line')!.getAttribute('x1'),
-      'the view did not re-fit outside the freeze window').not.toBe(early);
-
-    feed({ ttsPath: 10 });
-    const frozen = svg()!.querySelector('.start-line')!.getAttribute('x1');
-    aLine(0.00450, 0.00030);
-    expect(svg()!.querySelector('.start-line')!.getAttribute('x1'),
-      'the view re-fitted inside the freeze window').toBe(frozen);
-  });
-
   it('marks the first leg of a two-leg approach so the pair reads in order', () => {
     // Outside the wedge: the approach turns a corner, so there are two legs.
     aLine(0.00120, 0.00300);
@@ -333,45 +437,288 @@ describe('WidgetRacerLineViewComponent', () => {
     expect(svg()?.querySelector('.wind-arrow')).toBeTruthy();
   });
 
-  it('renders nothing in the drawing the accessibility tree would announce as a control', () => {
+  it('offers one control while watching, and it is the screen button', () => {
     aLine(-0.00005, 0.00030);
-    // Watching the line: the drawing is inert, and the Edit button is the only control.
-    expect(svg()?.querySelector('[tabindex]')).toBeNull();
-    const buttons = [...host().querySelectorAll<HTMLButtonElement>('button')];
-    expect(buttons.map(b => b.textContent?.trim())).toEqual(['Edit']);
+    const controls = [...svg()!.querySelectorAll('.control')];
+    expect(controls).toHaveLength(1);
+    expect(controls[0].getAttribute('aria-label')).toContain('Next screen');
   });
 
-  const editButton = () => [...host().querySelectorAll<HTMLButtonElement>('button')]
-    .find(b => b.textContent?.trim() === 'Edit');
-
-  const setEditing = (on: boolean) => {
-    (fixture.componentInstance as unknown as { editMode: { set: (v: boolean) => void } })
-      .editMode.set(on);
+  /** Every control is an SVG group carrying its own aria-label. */
+  const controls = () => [...svg()!.querySelectorAll<SVGElement>('.control')];
+  const control = (label: string) =>
+    controls().find(c => (c.getAttribute('aria-label') ?? '').includes(label));
+  /** A control carrying a word, found by that word rather than by its description. */
+  const pressWord = (word: string) => {
+    const c = controls().find(x => x.querySelector('text')?.textContent?.trim() === word);
+    expect(c, `no control labelled ${word}`).toBeTruthy();
+    c!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     fixture.detectChanges();
   };
+  const press = (label: string) => {
+    const c = control(label);
+    expect(c, `no control matching ${label}`).toBeTruthy();
+    c!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    fixture.detectChanges();
+  };
+  const mode = () => (fixture.componentInstance as unknown as
+    { mode: { (): number; set: (v: number) => void } }).mode();
+
+  const setMode = (m: 0 | 1 | 2 | 3) => {
+    (fixture.componentInstance as unknown as { mode: { set: (v: number) => void } })
+      .mode.set(m);
+    fixture.detectChanges();
+  };
+  const setEditing = (on: boolean) => setMode(on ? 1 : 0);
 
   describe('edit mode', () => {
-    it('offers only the Edit button until editing', () => {
+    it('offers no end targets until editing', () => {
       aLine(0.00035, 0.00030);
-      expect(host().querySelectorAll('button')).toHaveLength(1);
-      expect(editButton(), 'no Edit button').toBeTruthy();
       expect(svg()?.querySelectorAll('.end-target')).toHaveLength(0);
     });
 
-    it('goes in and out on the one button, which says which way it goes', () => {
+    it('cycles watch, set ends, adjust ends, adjust VMGs and back on the one button', () => {
       aLine(0.00035, 0.00030);
-      editButton()!.click();
-      fixture.detectChanges();
-      expect(fixture.componentInstance['editMode']()).toBe(true);
-      expect(editButton(), 'still offering Edit while editing').toBeFalsy();
+      expect(mode()).toBe(0);
+      press('Next screen');
+      expect(mode()).toBe(1);
+      expect(svg()?.querySelectorAll('.end-target')).toHaveLength(2);
+      press('Next screen');
+      expect(mode()).toBe(2);
+      expect(svg()?.querySelectorAll('.end-target')).toHaveLength(0);
+      expect(control('Lengthen the line'), 'no adjust controls').toBeTruthy();
+      press('Next screen');
+      expect(mode()).toBe(3);
+      expect(svg()?.querySelector('.vmg-caption'), 'no VMG pad').toBeTruthy();
+      press('Next screen');
+      expect(mode()).toBe(0);
+    });
 
-      const done = [...host().querySelectorAll<HTMLButtonElement>('button')]
-        .find(b => b.textContent?.trim() === 'Done');
-      expect(done, 'no Done button').toBeTruthy();
-      done!.click();
-      fixture.detectChanges();
-      expect(fixture.componentInstance['editMode']()).toBe(false);
-      expect(editButton(), 'no Edit button after Done').toBeTruthy();
+    describe('the best-VMG pad', () => {
+      const openPad = () => { aLine(0.00035, 0.00030); setMode(3); };
+      const values = () => [...svg()!.querySelectorAll('.vmg-value')];
+      const texts = () => values().map(v => v.querySelector('text')?.textContent?.trim());
+
+      it('still draws the line and its label, for orientation', () => {
+        openPad();
+        expect(svg()?.querySelector('.start-line')).toBeTruthy();
+        expect(svg()?.querySelector('.line-label')).toBeTruthy();
+      });
+
+      it('lays the four VMGs around the arrow, matching the drawing above them', () => {
+        openPad();
+        feed({
+          vmgToCourseSidePath: 3.1, vmgFromCourseSidePath: 3.2,
+          vmgToPortEndPath: 2.7, vmgToStbEndPath: 2.5
+        });
+        const laid = values().map(v => {
+          const t = v.querySelector('text')!;
+          return { x: Number(t.getAttribute('x')), y: Number(t.getAttribute('y')),
+            text: t.textContent?.trim() };
+        });
+        expect(laid.map(v => v.text)).toEqual(['3.1', '2.7', '2.5', '3.2']);
+        const [course, port, stb, from] = laid;
+        expect(course.y).toBeLessThan(from.y);
+        expect(port.x).toBeLessThan(stb.x);
+        expect(svg()?.querySelector('.vmg-compass'), 'no four-way arrow').toBeTruthy();
+        expect(svg()?.querySelector('.vmg-caption')?.textContent).toContain('knots');
+      });
+
+      it('shows a VMG it has not got yet as blank rather than zero', () => {
+        openPad();
+        expect(texts()).toEqual(['--', '--', '--', '--']);
+      });
+
+      /** Nothing to press among the readings: the controls are all in the bottom row. */
+      it('puts no controls in the reading itself', () => {
+        openPad();
+        const inPad = controls().filter(c => {
+          const r = c.querySelector('rect')!;
+          return Number(r.getAttribute('y')) < 200;
+        });
+        expect(inPad).toHaveLength(0);
+      });
+
+    it('offers Reset, VMG and Clear beside the screen button until one is chosen', () => {
+        openPad();
+        expect(control('Clear every manual VMG adjustment'), 'no Reset').toBeTruthy();
+        expect(control('Choose a best VMG to adjust'), 'no VMG').toBeTruthy();
+        expect(control('Throw away the collected VMG samples'), 'no Clear').toBeTruthy();
+        expect(control('Increase the best VMG'), 'adjust buttons before a choice').toBeFalsy();
+        expect(values().some(v => v.classList.contains('selected'))).toBe(false);
+      });
+
+      /**
+       * Clear and the adjust pair share the space after the VMG button: throwing away
+       * every sample is not something to have under the thumb while stepping one VMG.
+       */
+      it('swaps Clear for the adjust buttons once a VMG is chosen', () => {
+        openPad();
+        pressWord('VMG');
+        expect(control('Throw away the collected VMG samples'), 'Clear while adjusting').toBeFalsy();
+        expect(control('Increase the best VMG')).toBeTruthy();
+        // Round to no selection, and it comes back.
+        for (let i = 0; i < 4; i++) pressWord('VMG');
+        expect(control('Throw away the collected VMG samples')).toBeTruthy();
+      });
+
+      it('clears the collected samples, which is not what Reset does', () => {
+        openPad();
+        pressWord('Clear');
+        expect(requestsMock.putRequest).toHaveBeenCalledWith(
+          'navigation.racing.setBestVmg', { command: 'clear' }, 'racer-line-view-test');
+      });
+
+      it('steps the highlight through the four and back off, the buttons following it', () => {
+        openPad();
+        const selected = () => values().findIndex(v => v.classList.contains('selected'));
+        for (const expected of [0, 1, 2, 3]) {
+          pressWord('VMG');
+          expect(selected(), `expected the ${expected} value highlighted`).toBe(expected);
+          expect(control('Increase the best VMG'), 'no adjust buttons').toBeTruthy();
+        }
+        pressWord('VMG');
+        expect(selected()).toBe(-1);
+        expect(control('Increase the best VMG'), 'adjust buttons with nothing chosen').toBeFalsy();
+      });
+
+      /**
+       * A tenth of a knot per press, as the plugin's own webapp uses, sent as the metres
+       * per second the plugin works in - and applied to whichever VMG is highlighted.
+       */
+      it('adjusts the highlighted VMG by a tenth of the shown unit', () => {
+        openPad();
+        pressWord('VMG');
+        pressWord('VMG');
+        press('Increase the best VMG');
+        expect(requestsMock.putRequest).toHaveBeenCalledTimes(1);
+        expect(requestsMock.putRequest.mock.calls[0][0]).toBe('navigation.racing.setBestVmg');
+        const args = requestsMock.putRequest.mock.calls[0][1] as { vmg: string; delta: number };
+        expect(args.vmg).toBe('toPortEnd');
+        // The units mock converts one for one, so a tenth stays a tenth here.
+        expect(args.delta).toBeCloseTo(0.1, 6);
+
+        requestsMock.putRequest.mockClear();
+        press('Reduce the best VMG');
+        expect((requestsMock.putRequest.mock.calls[0][1] as { delta: number }).delta)
+          .toBeCloseTo(-0.1, 6);
+      });
+
+      it('resets every override at once', () => {
+        openPad();
+        pressWord('Reset');
+        expect(requestsMock.putRequest).toHaveBeenCalledWith(
+          'navigation.racing.setBestVmg', { command: 'reset' }, 'racer-line-view-test');
+      });
+
+      /**
+       * The drawing at a given viewBox width. jsdom lays nothing out, so the width the
+       * ResizeObserver would set is set here instead — and narrow is where a row of five
+       * controls has to give way rather than run off the edge.
+       */
+      const atWidth = (w: number) => {
+        const view = fixture.debugElement.query(By.directive(RacerLineViewComponent))
+          .componentInstance as { vbWidth: { set: (v: number) => void } };
+        view.vbWidth.set(w);
+        fixture.detectChanges();
+      };
+
+      it.each([[400], [260], [200], [160]])(
+        'fits the whole control row inside a %ipx drawing', (w) => {
+        openPad();
+        atWidth(w);
+        // Both shapes of the row: Clear with nothing chosen, the adjust pair with one.
+        checkRow(w, 'screen, reset, vmg, clear');
+        pressWord('VMG');
+        checkRow(w, 'screen, reset, vmg, minus, plus');
+      });
+
+      const checkRow = (w: number, what: string) => {
+        const boxes = controls().map(c => {
+          const r = c.querySelector('rect')!;
+          return {
+            label: c.getAttribute('aria-label') ?? '',
+            x: Number(r.getAttribute('x')), w: Number(r.getAttribute('width')),
+            y: Number(r.getAttribute('y')), h: Number(r.getAttribute('height'))
+          };
+        });
+        expect(boxes.length, what).toBe(what.split(',').length);
+        for (const b of boxes) {
+          expect(b.x, `${b.label} runs off the left`).toBeGreaterThanOrEqual(-0.5);
+          expect(b.x + b.w, `${b.label} runs off the right`).toBeLessThanOrEqual(w + 0.5);
+        }
+        for (let i = 0; i < boxes.length; i++) {
+          for (let j = i + 1; j < boxes.length; j++) {
+            const a = boxes[i], b = boxes[j];
+            const hit = a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+            expect(hit, `${a.label} overlaps ${b.label}`).toBe(false);
+          }
+        }
+      };
+
+      it('keeps the top reading clear of the line above it', () => {
+        openPad();
+        const lineY = Number(svg()!.querySelector('.start-line')!.getAttribute('y1'));
+        const tops = values().map(v => {
+          const t = v.querySelector('text')!;
+          return Number(t.getAttribute('y')) - Number(t.getAttribute('font-size')) * 0.8;
+        });
+        expect(Math.min(...tops), 'a reading climbed into the line').toBeGreaterThan(lineY);
+      });
+
+      it('drops the selection on leaving the screen', () => {
+        openPad();
+        pressWord('VMG');
+        press('Next screen');
+        setMode(3);
+        expect(values().some(v => v.classList.contains('selected'))).toBe(false);
+      });
+    });
+
+    /**
+     * At the line itself the label is written over by the pair of shorten buttons, which
+     * reach much further in than the rotate buttons above and below.
+     */
+    it('lifts the length label clear of the adjust buttons', () => {
+      aLine(0.00035, 0.00030);
+      setMode(2);
+      const label = svg()!.querySelector('.line-label')!;
+      const labelY = Number(label.getAttribute('y'));
+      const font = Number(label.getAttribute('font-size'));
+      const width = (label.textContent ?? '').length * font * 0.51;
+      const labelX = Number(label.getAttribute('x'));
+      const box = { top: labelY - font * 0.8, bottom: labelY + font * 0.25,
+        left: labelX - width / 2, right: labelX + width / 2 };
+
+      for (const c of controls()) {
+        if (!/Lengthen|Shorten|Rotate/.test(c.getAttribute('aria-label') ?? '')) continue;
+        const r = c.querySelector('rect')!;
+        const x = Number(r.getAttribute('x')), y = Number(r.getAttribute('y'));
+        const w = Number(r.getAttribute('width')), h = Number(r.getAttribute('height'));
+        const overlaps = x < box.right && x + w > box.left
+          && y < box.bottom && y + h > box.top;
+        expect(overlaps, `${c.getAttribute('aria-label')} overlaps the label`).toBe(false);
+      }
+    });
+
+    it('adjusts the end the button sits beside, and only that end', () => {
+      aLine(0.00035, 0.00030);
+      setMode(2);
+      press('Lengthen the line by 5m at the port (pin) end');
+      expect(requestsMock.putRequest).toHaveBeenCalledTimes(1);
+      expect(requestsMock.putRequest.mock.calls[0][0]).toBe('navigation.racing.setStartLine');
+      expect(requestsMock.putRequest.mock.calls[0][1])
+        .toEqual({ end: 'port', delta: 5, rotate: null });
+    });
+
+    it('rotates the two ends in opposite senses, an end moving up being one way round', () => {
+      aLine(0.00035, 0.00030);
+      setMode(2);
+      press('Rotate the line by moving the port (pin) end up');
+      press('Rotate the line by moving the starboard (boat) end up');
+      const [port, stb] = requestsMock.putRequest.mock.calls.map(c => c[1] as { rotate: number });
+      expect(port.rotate).toBeGreaterThan(0);
+      expect(stb.rotate).toBeLessThan(0);
     });
 
     it('hides its controls behind the drag overlay while the dashboard is unlocked', () => {
@@ -425,7 +772,10 @@ describe('WidgetRacerLineViewComponent', () => {
       expect(targets).toHaveLength(2);
       const pinRadius = Number(svg()!.querySelector('.port-mark')!.getAttribute('r'));
       for (const t of targets) {
-        expect(Number(t.getAttribute('r'))).toBeGreaterThan(pinRadius);
+        // Square like every other control, and wider than the mark under it.
+        expect(t.tagName.toLowerCase()).toBe('rect');
+        expect(Number(t.getAttribute('width'))).toBe(Number(t.getAttribute('height')));
+        expect(Number(t.getAttribute('width'))).toBeGreaterThan(pinRadius * 2);
       }
     });
 
@@ -450,30 +800,91 @@ describe('WidgetRacerLineViewComponent', () => {
       expect(requestsMock.putRequest.mock.calls[0][1]).toEqual({ end: 'port', position: 'bow' });
     });
 
-    it('lists the named lines with the current one marked, and switches on a press', () => {
+    /**
+     * The line in use is a label and any other is a button, so the control says whether
+     * pressing it will do anything.
+     */
+    it('browses the named lines, showing the one in use as a label', () => {
       aLine(0.00035, 0.00030);
       // The directive extracts the sub-field before the callback, so a test feeds the
       // extracted value — the whole navigation.racing.lines object never reaches here.
       feeds.get('linesPath')?.({ data: { value: [{ startLineName: 'Race 1' }, { startLineName: 'Race 2' }] } });
       feeds.get('startLineNamePath')?.({ data: { value: 'Race 2' } });
-      setEditing(true);
-      const chips = [...host().querySelectorAll<HTMLButtonElement>('.line-button')]
-        .map(b => b.textContent?.trim());
-      expect(chips).toEqual(['Default', 'Race 1', 'Race 2']);
-      const current = host().querySelector('.line-button.current');
-      expect(current?.textContent?.trim()).toBe('Race 2');
+      setMode(1);
+      expect(svg()?.querySelector('.name-label')?.textContent?.trim()).toBe('Race 2');
+      expect(control('Use the'), 'the line in use offered itself as a button').toBeFalsy();
 
-      host().querySelectorAll<HTMLButtonElement>('.line-button')[1].click();
-      expect(requestsMock.putRequest).toHaveBeenCalledWith(
-        'navigation.racing.setStartLineName', { startLineName: 'Race 1' }, 'racer-line-view-test');
+      press('Show the next named line');
+      expect(svg()?.querySelector('.name-label')).toBeNull();
+      expect(control('Use the Default line'), 'no button for the browsed line').toBeTruthy();
     });
 
-    it('sends the default line as a cleared name, not the literal word', () => {
+    it('selects the browsed line, and shows it as the current one at once', () => {
       aLine(0.00035, 0.00030);
-      setEditing(true);
-      host().querySelector<HTMLButtonElement>('.line-button')!.click();
+      feeds.get('linesPath')?.({ data: { value: [{ startLineName: 'Race 1' }] } });
+      feeds.get('startLineNamePath')?.({ data: { value: 'Race 1' } });
+      setMode(1);
+      press('Show the next named line');
+      press('Use the Default line');
       expect(requestsMock.putRequest).toHaveBeenCalledWith(
         'navigation.racing.setStartLineName', { startLineName: null }, 'racer-line-view-test');
+      // Default is a cleared name, not the literal word, and the control is now a label.
+      expect(svg()?.querySelector('.name-label')?.textContent?.trim()).toBe('Default');
+    });
+
+    /**
+     * The row is sized for the longest name there is, so the buttons either side of it
+     * stay where they are as you step through — otherwise they walk out from under the
+     * finger pressing them.
+     */
+    it('holds the prev and next buttons still while browsing', () => {
+      aLine(0.00035, 0.00030);
+      feeds.get('linesPath')?.({
+        data: { value: [{ startLineName: 'A' }, { startLineName: 'A very long line name indeed' }] }
+      });
+      setMode(1);
+      const at = () => controls()
+        .filter(c => (c.getAttribute('aria-label') ?? '').includes('named line'))
+        .map(c => c.querySelector('rect')!.getAttribute('x'));
+      const before = at();
+      expect(before).toHaveLength(2);
+      press('Show the next named line');
+      expect(at()).toEqual(before);
+      press('Show the next named line');
+      expect(at()).toEqual(before);
+    });
+
+    it('keeps the picker no wider than the line, truncating a name that will not fit', () => {
+      aLine(0.00035, 0.00030);
+      feeds.get('linesPath')?.({
+        data: { value: [{ startLineName: 'An absurdly long start line name that cannot possibly fit' }] }
+      });
+      setMode(1);
+      press('Show the next named line');
+      const button = controls().find(c => (c.getAttribute('aria-label') ?? '').startsWith('Use the'))!;
+      const lineWidth = Math.abs(
+        Number(svg()!.querySelector('.start-line')!.getAttribute('x2'))
+        - Number(svg()!.querySelector('.start-line')!.getAttribute('x1')));
+      // The picker only — not the screen button down in the corner.
+      const rects = controls()
+        .filter(c => /named line|^Use the/.test(c.getAttribute('aria-label') ?? ''))
+        .map(c => c.querySelector('rect')!);
+      expect(rects).toHaveLength(3);
+      const left = Math.min(...rects.map(r => Number(r.getAttribute('x'))));
+      const right = Math.max(...rects.map(r => Number(r.getAttribute('x')) + Number(r.getAttribute('width'))));
+      expect(right - left, 'the picker is wider than the line').toBeLessThanOrEqual(lineWidth + 1);
+      // The name is cut, but the label still says which line it is.
+      expect(button.querySelector('text')!.textContent).toContain('\u2026');
+      expect(button.getAttribute('aria-label')).toBe(
+        'Use the An absurdly long start line name that cannot possibly fit line');
+    });
+
+    it('wraps both ways through the list', () => {
+      aLine(0.00035, 0.00030);
+      feeds.get('linesPath')?.({ data: { value: [{ startLineName: 'Race 1' }] } });
+      setMode(1);
+      press('Show the previous named line');
+      expect(control('Use the Race 1 line'), 'did not wrap backwards').toBeTruthy();
     });
   });
 });

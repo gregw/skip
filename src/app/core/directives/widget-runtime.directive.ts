@@ -39,6 +39,7 @@ export class WidgetRuntimeDirective {
     if (base && user) {
       merged = merge(cloneDeep(base), cloneDeep(user));
       restoreFixedPaths(merged, base);
+      dropRetiredWiring(merged, base);
     } else if (base && !user) {
       merged = cloneDeep(base);
     } else if (!base && user) {
@@ -118,5 +119,22 @@ function restoreFixedPaths(merged: IWidgetSvcConfig, base: IWidgetSvcConfig): vo
     mergedPath.pathType = basePath.pathType;
     mergedPath.enableTimeout = basePath.enableTimeout;
     mergedPath.showConvertUnitTo = basePath.showConvertUnitTo;
+  }
+}
+
+/**
+ * Widget-level settings that are the widget's own wiring rather than a user preference.
+ *
+ * A saved config is a snapshot of the merged config when the widget was placed, so it
+ * carries whatever these were then - and because the merge lets the saved value win, a
+ * widget that later drops one is stuck with it, still behaving as it did and still
+ * offering the setting in its options dialog. Dropping them when the widget's defaults
+ * no longer declare them is what lets a widget retire one.
+ */
+const RETIRED_WIRING_KEYS = ['enableTimeout', 'dataTimeout'] as const;
+
+function dropRetiredWiring(merged: IWidgetSvcConfig, base: IWidgetSvcConfig): void {
+  for (const key of RETIRED_WIRING_KEYS) {
+    if (base[key] === undefined) delete merged[key];
   }
 }

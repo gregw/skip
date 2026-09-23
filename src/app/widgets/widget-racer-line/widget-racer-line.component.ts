@@ -62,8 +62,6 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
     ignoreZones: true,
     color: 'contrast',
     modeTimeout: 10,
-    enableTimeout: true,
-    dataTimeout: 5,
     updateInterval: 500,
     paths: {
       dtsPath: {

@@ -73,9 +73,7 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
     },
     color: 'contrast',
     updateInterval: 500,
-    enableTimeout: true,
     modeTimeout: 10,
-    dataTimeout: 5,
     ignoreZones: true
   };
 

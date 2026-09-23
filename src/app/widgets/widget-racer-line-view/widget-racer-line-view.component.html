@@ -1,40 +1,27 @@
-<div class="view-wrapper" [class.editing]="editMode()">
+<div class="view-wrapper" [class.editing]="mode() !== 0">
 
   <racer-line-view
     [data]="viewData()"
-    [editMode]="editMode()"
+    [mode]="mode()"
     [title]="title()"
     [palette]="palette()"
     [lengthUnit]="lengthUnit()"
     [vmgUnit]="vmgUnit()"
     [viewSmoothing]="viewSmoothing()"
-    [viewFreezeSeconds]="viewFreezeSeconds()"
-    (endPressed)="setLineEnd($event)" />
-
-  <!-- The widget's only control, in the lower left where the Start Line Setup widget
-       keeps its mode button. Edit mode does not time out - pinging the ends takes as
-       long as it takes - so the same button reads Done and is the way back out. -->
-  <div class="buttons-container">
-    <button mat-flat-button type="button" class="button edit-button"
-      [matTooltip]="editMode() ? 'Stop editing the line' : 'Set and adjust the line ends'"
-      [attr.aria-label]="editMode() ? 'Stop editing the line' : 'Edit the start line'"
-      (click)="toggleEdit()"><span class="label">{{ editMode() ? 'Done' : 'Edit' }}</span></button>
-
-    @if (editMode()) {
-      <div class="line-picker">
-        @for (name of lineNames(); track name) {
-          <button mat-flat-button type="button"
-            class="button line-button" [class.current]="name === currentLineName()"
-            [attr.aria-pressed]="name === currentLineName()"
-            [matTooltip]="'Use the ' + name + ' line'"
-            (click)="selectLine(name)"><span class="label">{{ name }}</span></button>
-        }
-      </div>
-    }
-  </div>
+    [lines]="lineNames()"
+    [currentLine]="currentLineName()"
+    [browsedLine]="browsedLine()"
+    [timeToLine]="timeToLine()"
+    [timeToBurn]="timeToBurn()"
+    [showLineLabel]="showLineLabel()"
+    [showTimeToLine]="showTimeToLine()"
+    [showTimeToBurn]="showTimeToBurn()"
+    [selectedVmg]="selectedVmg()"
+    (endPressed)="setLineEnd($event)"
+    (action)="onAction($event)" />
 
   <!-- While the dashboard is unlocked the widget is something to drag, not something to
-       press: the overlay keeps a stray tap on a button from being taken as one. -->
+       press: the overlay keeps a stray tap on a control from being taken as one. -->
   @if (!dashboard.isDashboardStatic()) {
     <div class="widgetOverlay"></div>
   }

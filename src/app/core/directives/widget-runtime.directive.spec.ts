@@ -39,6 +39,27 @@ describe('WidgetRuntimeDirective config merge', () => {
     expect(merged?.paths?.['p'].enableTimeout).toBe(false);
   });
 
+  /**
+   * A widget that retires a setting must actually be rid of it: the saved config carries
+   * whatever it was when the widget was placed, and the merge lets the saved value win.
+   */
+  it('drops a retired widget setting the defaults no longer declare', () => {
+    const merged = build(
+      { paths: {} },
+      { enableTimeout: true, dataTimeout: 5, paths: {} }
+    );
+    expect(merged?.enableTimeout).toBeUndefined();
+    expect(merged?.dataTimeout).toBeUndefined();
+  });
+
+  it('keeps it for a widget that still declares it', () => {
+    const merged = build(
+      { enableTimeout: false, paths: {} },
+      { enableTimeout: true, paths: {} }
+    );
+    expect(merged?.enableTimeout).toBe(true);
+  });
+
   it('leaves a fixed path that offers options alone, the stored one being a choice', () => {
     const merged = build(
       {

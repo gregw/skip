@@ -31,6 +31,24 @@ export const VMG_TITLE: Record<TVmgName, string> = {
   fromCourseSide: 'Best VMG back across the line from the course side, used when OCS'
 };
 
+/**
+ * What a control in the drawing asks the host to do. The drawing owns where the controls
+ * are - they belong beside the line ends and under the line - and the host owns what they
+ * mean, so the geometry and the Signal K requests stay in separate places.
+ */
+export type TLineViewAction =
+  | { kind: 'mode' }
+  | { kind: 'browse'; step: -1 | 1 }
+  | { kind: 'choose' }
+  | { kind: 'adjust'; end: 'port' | 'stb'; delta: number; rotate: number }
+  // Step the selection on to the next VMG, and off the end of them.
+  | { kind: 'vmgNext' }
+  // Metres per second, whatever unit the pad shows: the plugin's own unit for a VMG.
+  | { kind: 'vmgStep'; deltaMs: number }
+  // Reset drops the manual overrides; clear throws away the collected samples too.
+  | { kind: 'vmgReset' }
+  | { kind: 'vmgClear' };
+
 /** No VMGs known yet, for seeding a record of them. */
 export const NO_VMG: Record<TVmgName, number | null> =
   { toCourseSide: null, toPortEnd: null, toStbEnd: null, fromCourseSide: null };
@@ -126,10 +144,53 @@ interface ISceneLeg {
   leading: boolean;
 }
 
+/**
+ * One control drawn into the scene: a rounded touch target with either a glyph or a word
+ * in it. Drawn in the SVG rather than as HTML over it so the controls sit exactly beside
+ * the marks they act on and scale with the drawing.
+ */
+interface ISceneButton {
+  x: number; y: number; w: number; h: number;
+  /** Corner radius, matching the 12px the other racer widgets' buttons use. */
+  rx: number;
+  /** Path for a chevron or the three dots, drawn centred on the button. */
+  glyph: string | null;
+  text: string | null;
+  fontSize: number;
+  title: string;
+  action: TLineViewAction;
+  /** Accent fill - the mode button, and a line name that can be selected. */
+  accent: boolean;
+}
+
+/**
+ * The four best VMGs, laid out to match the drawing above them: across the line towards
+ * the course side at the top, back across it at the bottom, and along it towards each end
+ * to the side that end is drawn on.
+ */
+interface ISceneVmgPad {
+  values: {
+    x: number; y: number; text: string; fontSize: number; title: string;
+    /** The one the adjust buttons are pointed at. */
+    selected: boolean;
+  }[];
+  /** The four-way arrow they are arranged around, which is what says which is which. */
+  compass: { x: number; y: number; path: string };
+  caption: { x: number; y: number; text: string; fontSize: number };
+}
+
+/** A countdown shown in the corner: a small caption and the time beside it. */
+interface ISceneReadout {
+  x: number; valueX: number; y: number; caption: string; value: string;
+  captionSize: number; valueSize: number;
+}
+
 /** Everything the template draws, in viewBox units. */
 interface IScene {
   portX: number; stbX: number; lineY: number;
   ends: ISceneEnds;
+  /** Whether the length and heading label is drawn at all. */
+  labelVisible: boolean;
   /**
    * How the line itself reads: over early with time still to run, a clean start already
    * made, or neither. See lineStatus.
@@ -154,11 +215,20 @@ interface IScene {
   legs: ISceneLeg[];
   /** Where the boat reaches along those legs at the gun, at the effective VMGs. */
   gun: { x: number; y: number; title: string } | null;
-  /** Touch targets over each end, in edit mode only. */
+  /**
+   * Touch targets over each end, while the ends are being set. Square with a rounded
+   * corner, like every other control here - the shape is what says it is a button.
+   */
   editEnds: {
-    port: { x: number; y: number; radius: number; title: string };
-    stb: { x: number; y: number; radius: number; title: string };
+    port: { x: number; y: number; size: number; rx: number; title: string };
+    stb: { x: number; y: number; size: number; rx: number; title: string };
   } | null;
+  /** Every control in this mode: the mode button, and whatever the mode itself offers. */
+  controls: ISceneButton[];
+  /** The current line's name, shown under the line while editing. */
+  nameLabel: { x: number; y: number; text: string; fontSize: number } | null;
+  /** The best-VMG pad, on the screen that adjusts them. */
+  vmgPad: ISceneVmgPad | null;
   /** Size of the length and heading label, shrunk from LABEL_FONT if it would not fit. */
   labelFont: number;
   /** The wind, shown against the line's own orientation. Null when TWD is unknown. */
@@ -180,12 +250,30 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   /** Everything live, from the host widget's subscriptions. */
   public data = input.required<IRacerLineViewData>();
   /**
-   * Editing the line: it takes the full width and its ends become targets, with nothing
-   * else drawn. The host owns the mode and what a press on an end does.
+   * Which screen is showing: 0 watches the line, 1 sets its ends and picks which named
+   * line to work on, 2 adjusts the ends of the one in use, 3 adjusts the best VMGs the
+   * time to line is computed from. Every editing screen gives the line the full width and
+   * draws nothing else, the boat being beside the point while the line and the numbers
+   * behind it are being worked on.
    */
-  public editMode = input<boolean>(false);
+  public mode = input<0 | 1 | 2 | 3>(0);
   /** Which end was pressed, for the host to act on. */
   public endPressed = output<'port' | 'stb'>();
+  /** Everything else a control in the drawing asks for. */
+  public action = output<TLineViewAction>();
+  /** The named lines the plugin knows, the one in use, and the one being browsed. */
+  public lines = input<string[]>(['Default']);
+  public currentLine = input<string>('Default');
+  public browsedLine = input<string>('Default');
+  /** Countdowns to show in the corner; null hides that one. */
+  public timeToLine = input<number | null>(null);
+  public timeToBurn = input<number | null>(null);
+  /** Show the line's length and heading. The editing screens show it regardless. */
+  public showLineLabel = input<boolean>(false);
+  public showTimeToLine = input<boolean>(false);
+  public showTimeToBurn = input<boolean>(false);
+  /** Which best VMG the adjust buttons act on, if any. The host owns the selection. */
+  public selectedVmg = input<TVmgName | null>(null);
   public title = input<string>('');
   public palette = input.required<{ color: string; dim: string; dimmer: string }>();
   /** Unit the line length and the approach legs are shown in. */
@@ -193,11 +281,12 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   /** Unit the best VMGs are shown in. */
   public vmgUnit = input<string>('knots');
   /** Percent of the drawing's height the view may drift before it re-fits. */
-  public viewSmoothing = input<number>(10);
-  /** Seconds before the start inside which the view stops re-fitting; 0 disables it. */
-  public viewFreezeSeconds = input<number>(15);
+  public viewSmoothing = input<number>(25);
 
   private readonly units = inject(UnitsService);
+
+  /** Either editing screen: the line takes the frame and the boat is not drawn. */
+  private readonly editing = computed<boolean>(() => this.mode() > 0);
 
   // The drawing was written against signals holding each value; these keep that shape so
   // the geometry below reads the same whether the data arrives as inputs or as streams.
@@ -243,6 +332,8 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   // of their true size so they stay legible landmarks whatever the line's zoom.
   private readonly END_METRES = 10;
   private readonly END_EXAGGERATION = 2;
+  /** Largest an end mark is drawn, in viewBox units; what buildEnds clamps to. */
+  private readonly END_SIZE_MAX = 40;
   // The vessel, in contrast, is drawn at true scale, so it can be read against the line.
   // Fallback length for a vessel that does not publish one, and the beam its hull is
   // drawn with as a fraction of that length.
@@ -254,6 +345,12 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   // end marks a scale to be drawn at.
   private readonly PLACEHOLDER_METRES = 100;
   protected readonly vbWidth = signal<number>(400);
+  /**
+   * The drawing's rendered height in CSS pixels, for the one measurement that has to be
+   * in pixels rather than viewBox units: the controls' corner radius, which matches the
+   * other racer widgets' 12px buttons and so cannot scale with the drawing.
+   */
+  private readonly hostHeightPx = signal<number>(this.VB_HEIGHT);
 
   private readonly vizRef = viewChild.required<ElementRef<HTMLDivElement>>('vizRef');
   private resizeObserver: ResizeObserver | null = null;
@@ -264,6 +361,15 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   private readonly viewFrame = signal<IViewFrame | null>(null);
   /** What the held frame was fitted for; a change here forces a re-fit. */
   private frameKey: string | null = null;
+  /**
+   * The exact fit the held frame was made from.
+   *
+   * Drift is measured against this rather than against the held frame itself, because
+   * the held frame is deliberately larger than its own fit when the view had to grow -
+   * and measuring against it would read that overshoot as drift and shrink the view
+   * straight back, which is the oscillation the overshoot exists to stop.
+   */
+  private frameIdeal: IViewFrame | null = null;
 
   /**
    * Whether the countdown reached zero with the boat still behind the line.
@@ -282,10 +388,9 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     effect(() => {
       const geo = this.geometry();
       const width = this.vbWidth();
-      const editMode = this.editMode();
+      const editMode = this.editing();
       const smoothing = this.viewSmoothing();
-      const freeze = this.viewFreezeSeconds();
-      untracked(() => this.updateViewFrame(geo, width, editMode, smoothing, freeze));
+      untracked(() => this.updateViewFrame(geo, width, editMode, smoothing));
     });
 
     // Watch the countdown through zero. Reading all three here makes this fire on every
@@ -328,6 +433,7 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     // Clamped so an extreme aspect cannot squash the drawing into a sliver.
     const width = Math.round(this.VB_HEIGHT * Math.min(Math.max(rect.width / rect.height, 0.6), 4));
     if (width !== this.vbWidth()) this.vbWidth.set(width);
+    if (rect.height !== this.hostHeightPx()) this.hostHeightPx.set(rect.height);
   }
 
   private readonly geometry = computed<ILineGeometry | null>(() =>
@@ -344,31 +450,39 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   protected readonly scene = computed<IScene | null>(() => {
     const geo = this.geometry();
     // Watching an unset line draws nothing; editing one has to draw something to press.
-    if (!geo) return this.editMode() ? this.placeholderScene() : null;
+    if (!geo) return this.editing() ? this.placeholderScene() : null;
 
     const W = this.vbWidth(), margin = this.VB_MARGIN;
     // The band the drawing gets: below the title, with room above the line kept clear
     // for the length and heading label that sits there.
-    const yMin = this.VB_TOP_BAND + this.LABEL_HEADROOM;
-    const yMax = this.VB_HEIGHT - this.VB_BOTTOM_MARGIN;
-    const editMode = this.editMode();
+    const yMin = this.bandYMin();
+    const yMax = this.bandYMax(W);
+    const editMode = this.editing();
     const boat = geo.boat;
 
     let scale: number;
     let sx: (a: number) => number;
     let sy: (c: number) => number;
 
-    // Radius of an end's touch target in edit mode. It also sets the side inset there,
-    // since a target centred on an end runs a radius past it and must stay in frame.
+    // Radius of an end's touch target while the ends are being set. It also sets the side
+    // inset there, since a target centred on an end runs a radius past it.
     const targetRadius = Math.min(W, this.VB_HEIGHT) * 0.11;
+    const ctrl = this.controlSize(W);
 
     if (editMode) {
-      // Setting an end is about hitting the right one, not about where the boat lies, so
-      // the line takes the full width and nothing else is drawn: the ends end up as far
-      // apart, and their targets as large, as the frame allows.
-      scale = (W - 2 * Math.max(margin, targetRadius)) / Math.max(geo.length, 1);
+      // Working on the line is about hitting the right end, not about where the boat
+      // lies, so the line takes the full width and nothing else is drawn. The ends are
+      // held clear of the sides by whatever sits around them: a touch target on the
+      // setting screen, a ring of adjust buttons on the other.
+      const inset = this.mode() === 2
+        ? Math.max(ctrl * 1.55, this.END_SIZE_MAX * 0.54 + ctrl) + 4
+        : this.mode() === 3
+          ? Math.max(margin, this.END_SIZE_MAX * 0.54)
+          : Math.max(margin, targetRadius) * 1.3;
+      scale = (W - 2 * inset) / Math.max(geo.length, 1);
       sx = (a: number) => W / 2 - (a - geo.length / 2) * scale;
-      sy = (c: number) => (yMin + yMax) / 2 + c * scale;
+      const editY = this.editLineY(ctrl, targetRadius);
+      sy = (c: number) => editY + c * scale;
     } else {
       // The frame the effect is holding, or a fresh fit on the very first paint before
       // that effect has run.
@@ -402,8 +516,18 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     const label = `${this.formatDistance(length)} \u00b7 ` +
       `${startBearing.toFixed(0).padStart(3, '0')}\u00b0T\u2191`;
     // Full size unless the label would run off a narrow widget.
-    const font = Math.min(this.LABEL_FONT, (W - 8) / (label.length * 0.51));
-    const labelY = lineY - font * 0.5;
+    // On the adjust screen the label lifts to the height of the rotate buttons and lives
+    // in the gap between them - at the line itself it would be written over by the pair
+    // of shorten buttons, which reach much further in. Elsewhere it sits just above the
+    // line with the drawing's full width.
+    const adjusting = this.mode() === 2;
+    const labelRoom = adjusting
+      ? Math.max(Math.abs(stbX - portX) - ctrl - 8, W * 0.3)
+      : W - 8;
+    const font = Math.min(this.LABEL_FONT, labelRoom / (label.length * 0.51));
+    const labelY = adjusting
+      ? lineY - this.adjusterOffsetY(ctrl) + font * 0.35
+      : lineY - font * 0.5;
     // Centred on the line, but held inside the drawing: the line can sit well off centre
     // when the fit has to reach out to a distant boat, and the label is often wider than
     // the line itself.
@@ -413,23 +537,33 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
 
     const scene: IScene = {
       portX, stbX, lineY, ends: this.buildEnds(stbX, lineY, scale),
+      labelVisible: this.labelShown(),
       lineStatus: editMode ? null : this.lineStatus(geo),
       portUndefined: false, stbUndefined: false,
       label, labelX, labelY,
       projections: [], boat: null, editEnds: null,
       guides: [], legs: [], gun: null,
+      controls: [], nameLabel: null, vmgPad: null,
       labelFont: font,
       // The arrow's angle only means anything beside the line it is measured against.
       wind: editMode ? null : this.buildWind(geo, W)
     };
 
-    if (editMode) {
+    if (this.mode() === 1) {
       // A target over each end, larger than the mark it covers: the drawn ends scale
       // with the line and would otherwise be below a usable touch size.
-      const radius = targetRadius;
+      const size = targetRadius * 2, rx = this.controlRadius(size);
       scene.editEnds = {
-        port: { x: portX, y: lineY, radius, title: 'Set the port (pin) end here' },
-        stb: { x: stbX, y: lineY, radius, title: 'Set the starboard (boat) end here' }
+        port: { x: portX, y: lineY, size, rx, title: 'Set the port (pin) end here' },
+        stb: { x: stbX, y: lineY, size, rx, title: 'Set the starboard (boat) end here' }
+      };
+      this.buildLinePicker(scene, W, lineY, ctrl, Math.abs(stbX - portX));
+    } else if (this.mode() === 3) {
+      this.buildVmgPad(scene, W, lineY, ctrl);
+    } else if (this.mode() === 2) {
+      this.buildEndAdjusters(scene, portX, stbX, lineY, ctrl);
+      scene.nameLabel = {
+        x: W / 2, y: lineY + ctrl * 0.95, text: this.currentLine(), fontSize: ctrl * 0.55
       };
     } else if (boat) {
       this.buildZone(scene, geo, sx, sy, W, scale);
@@ -438,6 +572,422 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     }
     return scene;
   });
+
+  /**
+   * Whether the line's length and heading is drawn. Always while the ends are being
+   * worked on - there it is the reading that says what the ends you are moving have
+   * produced - and otherwise only when the widget is set to show it.
+   */
+  private readonly labelShown = computed<boolean>(() => this.editing() || this.showLineLabel());
+
+  /**
+   * The upper edge of the band the line is drawn in.
+   *
+   * The label sits above the line, so the band has to keep room for it - and give that
+   * room back to the drawing when the label is not being shown, which is the whole point
+   * of turning it off.
+   */
+  private bandYMin(): number {
+    return this.VB_TOP_BAND + (this.labelShown() ? this.LABEL_HEADROOM : 8);
+  }
+
+  /**
+   * The lower edge of the band the line is drawn in.
+   *
+   * The line and the boat both have to stay clear of the corner controls - the screen
+   * button and the countdowns beside it - because between them they are the whole
+   * reading, and either one drawn under a button is unreadable at the moment it matters
+   * most. The rest may pass behind: a zone guide or a leg label there costs nothing, and
+   * the projection is read from the boat outwards.
+   */
+  private bandYMax(W: number): number {
+    const chrome = this.controlSize(W) + 6 + 4;
+    return this.VB_HEIGHT - Math.max(this.VB_BOTTOM_MARGIN, chrome);
+  }
+
+  /**
+   * Where the line sits while it is being worked on.
+   *
+   * High in the frame, because everything the editing screens put on the line hangs
+   * below it - the line picker, the name, the lower half of the ring of adjust buttons -
+   * and the space above it does nothing. A third of the way down is the target; the
+   * floor is whatever has to fit between the line and the widget's title, which on the
+   * adjust screen is the ring of buttons and on the setting screen the end targets. The
+   * title band is the one thing the drawing never writes into.
+   */
+  private editLineY(ctrl: number, targetRadius: number): number {
+    // The VMG pad needs the whole frame below the line, so there the line goes as high as
+    // its own label allows and nothing else claims the space.
+    if (this.mode() === 3) return this.VB_TOP_BAND + 4 + this.LABEL_FONT * 1.25;
+    const clearance = this.mode() === 2
+      // Half a button, plus the gap out to it.
+      ? Math.max(ctrl * 1.45, this.END_SIZE_MAX * 0.42 + ctrl)
+      : targetRadius;
+    return Math.max(this.VB_HEIGHT * 0.3, this.VB_TOP_BAND + 4 + clearance);
+  }
+
+  /**
+   * Side of a control, in viewBox units. Sized off the drawing rather than fixed, so a
+   * control is the same fraction of a widget whatever the widget's size, and stays a
+   * usable target on a phone-sized tile.
+   */
+  private controlSize(W: number): number {
+    return Math.min(Math.max(Math.min(W, this.VB_HEIGHT) * 0.13, 22), 46);
+  }
+
+  /**
+   * Corner radius of a control, in viewBox units, working out to the same 12 CSS pixels
+   * the other racer widgets round their buttons by.
+   *
+   * The conversion is the point: a viewBox unit is the drawing's rendered height over
+   * VB_HEIGHT, so a radius fixed in units grows with the widget and a big tile ends up
+   * with pills. This is the one measurement here that is about the screen rather than
+   * about the drawing, so it is the one that has to be converted back.
+   */
+  private controlRadius(h: number): number {
+    const unitsPerPixel = this.VB_HEIGHT / Math.max(this.hostHeightPx(), 1);
+    return Math.min(12 * unitsPerPixel, h * 0.5);
+  }
+
+  /** A chevron pointing left, right, up or down, centred on (0,0) at the given size. */
+  private chevron(dir: 'left' | 'right' | 'up' | 'down', size: number): string {
+    const a = size * 0.26, b = size * 0.16;
+    switch (dir) {
+      case 'left': return `M${b},${-a} L${-b},0 L${b},${a}`;
+      case 'right': return `M${-b},${-a} L${b},0 L${-b},${a}`;
+      case 'up': return `M${-a},${b} L0,${-b} L${a},${b}`;
+      default: return `M${-a},${-b} L0,${b} L${a},${-b}`;
+    }
+  }
+
+  /** The three dots of the mode button, centred on (0,0). */
+  private ellipsisGlyph(size: number): string {
+    const r = size * 0.07, gap = size * 0.22;
+    return [-gap, 0, gap].map(dx =>
+      `M${dx - r},0 a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0`).join(' ');
+  }
+
+  /**
+   * Browse the named lines the plugin knows, under the line itself.
+   *
+   * The line in use is a label, because pressing it would do nothing; any other is a
+   * button, because pressing it is how you switch to it. So the control says what it
+   * will do by whether it looks pressable, and the row does not change size as you
+   * step through the names.
+   */
+  private buildLinePicker(scene: IScene, W: number, lineY: number, ctrl: number,
+    lineWidth: number): void {
+    const isCurrent = this.browsedLine() === this.currentLine();
+    // Sized for the longest name there is, so stepping through them does not walk the
+    // prev and next buttons along the screen under the finger pressing them.
+    const longest = this.lines().reduce((a, b) => (b.length > a.length ? b : a), '');
+    const gap = ctrl * 0.62;
+    // The row is never wider than the line it sits under: past that it stops reading as
+    // part of the line and starts running out of the drawing.
+    const roomForName = Math.max(ctrl * 2.4, lineWidth - 2 * (gap + ctrl / 2));
+    let font = ctrl * 0.5;
+    let nameW = Math.max(ctrl * 2.4, longest.length * font * 0.62 + ctrl * 0.6);
+    if (nameW > roomForName) {
+      // Shrink to fit first, down to the point where it stops being readable...
+      font = Math.max(ctrl * 0.3, font * roomForName / nameW);
+      nameW = roomForName;
+    }
+    // ...and only then take characters off the end. The epsilon matters: the width above
+    // was computed from the longest name, so that name divides back to its own length -
+    // give or take the last bit of a float, which would otherwise clip a character off
+    // the very name the row was sized for.
+    const fits = Math.max(1, Math.floor((nameW - ctrl * 0.6) / (font * 0.62) + 1e-6));
+    const full = this.browsedLine();
+    const name = this.truncate(full, fits);
+    const y = lineY + ctrl * 1.5;
+    const step = nameW / 2 + gap;
+
+    scene.controls.push({
+      x: W / 2 - step, y, w: ctrl, h: ctrl, rx: this.controlRadius(ctrl),
+      glyph: this.chevron('left', ctrl), text: null, fontSize: 0,
+      title: 'Show the previous named line', action: { kind: 'browse', step: -1 }, accent: false
+    });
+    scene.controls.push({
+      x: W / 2 + step, y, w: ctrl, h: ctrl, rx: this.controlRadius(ctrl),
+      glyph: this.chevron('right', ctrl), text: null, fontSize: 0,
+      title: 'Show the next named line', action: { kind: 'browse', step: 1 }, accent: false
+    });
+
+    if (isCurrent) {
+      scene.nameLabel = { x: W / 2, y: y + font * 0.35, text: name, fontSize: font };
+    } else {
+      scene.controls.push({
+        x: W / 2, y, w: nameW, h: ctrl, rx: this.controlRadius(ctrl),
+        glyph: null, text: name, fontSize: font,
+        // The title carries the whole name even when the button cannot show it.
+        title: `Use the ${full} line`, action: { kind: 'choose' }, accent: true
+      });
+    }
+  }
+
+  /** A name cut to fit, with an ellipsis standing for what was taken off. */
+  private truncate(text: string, fits: number): string {
+    return text.length <= fits ? text : text.slice(0, Math.max(1, fits - 1)) + '\u2026';
+  }
+
+  /**
+   * The four adjustments on each end: out and in along the line, and the two directions
+   * of rotation about the other end.
+   *
+   * Laid out around the end they act on, so there is no labelling to read - the button
+   * on the outboard side moves that end outboard. The rotation sense per end matches the
+   * Start Line Setup widget's own buttons, so the two widgets do not disagree about which
+   * way up is.
+   */
+  private buildEndAdjusters(scene: IScene, portX: number, stbX: number, lineY: number,
+    ctrl: number): void {
+    const STEP_METRES = 5;
+    const STEP_RADIANS = Math.PI / 180;
+    // Close in to the mark each one acts on - proximity is what says which end a button
+    // belongs to - but clear of the symbol itself. The committee boat is the larger of
+    // the two and is drawn wider than it is tall, so the sideways buttons stand off
+    // further than the ones above and below. Taken at the end marks' largest drawn size,
+    // which is what they reach at the full-width layout these screens use.
+    const offX = Math.max(ctrl * 0.95, this.END_SIZE_MAX * 0.54 + ctrl * 0.5 + 3);
+    const offY = this.adjusterOffsetY(ctrl);
+
+    const ends: { end: 'port' | 'stb'; x: number; outward: 'left' | 'right'; up: number }[] = [
+      // The port (pin) end draws on the left, so outboard for it is to the left; a press
+      // of its up button rotates the line the way the setup widget's port arrow does.
+      { end: 'port', x: portX, outward: 'left', up: STEP_RADIANS },
+      { end: 'stb', x: stbX, outward: 'right', up: -STEP_RADIANS }
+    ];
+    const named = { port: 'port (pin)', stb: 'starboard (boat)' };
+
+    for (const e of ends) {
+      const outSign = e.outward === 'left' ? -1 : 1;
+      const push = (dx: number, dy: number, dir: 'left' | 'right' | 'up' | 'down',
+        title: string, action: TLineViewAction) =>
+        scene.controls.push({
+          x: e.x + dx, y: lineY + dy, w: ctrl, h: ctrl, rx: this.controlRadius(ctrl),
+          glyph: this.chevron(dir, ctrl), text: null, fontSize: 0,
+          title, action, accent: false
+        });
+
+      push(outSign * offX, 0, e.outward,
+        `Lengthen the line by ${STEP_METRES}m at the ${named[e.end]} end`,
+        { kind: 'adjust', end: e.end, delta: STEP_METRES, rotate: 0 });
+      push(-outSign * offX, 0, e.outward === 'left' ? 'right' : 'left',
+        `Shorten the line by ${STEP_METRES}m at the ${named[e.end]} end`,
+        { kind: 'adjust', end: e.end, delta: -STEP_METRES, rotate: 0 });
+      push(0, -offY, 'up',
+        `Rotate the line by moving the ${named[e.end]} end up`,
+        { kind: 'adjust', end: e.end, delta: 0, rotate: e.up });
+      push(0, offY, 'down',
+        `Rotate the line by moving the ${named[e.end]} end down`,
+        { kind: 'adjust', end: e.end, delta: 0, rotate: -e.up });
+    }
+  }
+
+  /** How far above and below its end the rotate buttons sit, clear of the end symbol. */
+  private adjusterOffsetY(ctrl: number): number {
+    return Math.max(ctrl * 0.95, this.END_SIZE_MAX * 0.42 + ctrl * 0.5 + 3);
+  }
+
+  /**
+   * The best VMGs, with a minus and a plus either side of each and a Reset in the middle.
+   *
+   * Laid out as a cross matching the drawing above it, so no label is needed to say which
+   * is which: across the line to the course side at the top, back across it at the bottom,
+   * and along it towards the port and starboard ends on the sides they are drawn on. The
+   * step is a tenth of a knot, the same as the plugin's own webapp, and goes to the plugin
+   * as metres per second whatever unit is on screen.
+   */
+  /**
+   * The best VMGs, arranged around a four-way arrow.
+   *
+   * Nothing but the numbers and the arrow: which VMG is which is said by where it sits
+   * relative to the drawing above - across the line to the course side at the top, back
+   * across it at the bottom, along it towards each end on the side that end is drawn on -
+   * and the arrow is what makes that readable without a word of labelling. The controls
+   * that change them live in the bottom row, out of the way of the reading.
+   */
+  private buildVmgPad(scene: IScene, W: number, lineY: number, ctrl: number): void {
+    const unit = this.vmgUnit();
+    const valueFont = ctrl * 0.9;
+    const captionFont = ctrl * 0.42;
+    // Four characters of room, so a two-digit VMG does not crowd the arrow.
+    const valueW = 4 * valueFont * 0.58;
+    const arrow = ctrl * 1.5;
+
+    // The band between the line and the bottom row, less the caption's own line. The rows
+    // are spaced to sit inside it whatever is left, so the top value cannot climb into
+    // the line above it - which is where it went when the gap was sized on its own.
+    const top = lineY + ctrl * 0.4;
+    const bottom = this.VB_HEIGHT - this.controlSize(W) - 10 - captionFont * 1.4;
+    const cy = (top + bottom) / 2;
+    const rowGap = Math.max(
+      Math.min(arrow * 0.62 + valueFont * 0.8, (bottom - top) / 2 - valueFont * 0.5),
+      valueFont * 0.7);
+    const colGap = Math.min(arrow * 0.62 + valueW / 2, (W - valueW) / 2 - 4);
+
+    const selected = this.selectedVmg();
+    const pad: ISceneVmgPad = {
+      values: [],
+      compass: { x: W / 2, y: cy, path: this.fourWayGlyph(arrow) },
+      caption: {
+        x: W / 2, y: bottom + captionFont,
+        text: `Best VMG in ${unit}`, fontSize: captionFont
+      }
+    };
+
+    const place = (name: TVmgName, x: number, y: number) => {
+      const value = this.bestVmg()[name];
+      pad.values.push({
+        x, y: y + valueFont * 0.35, fontSize: valueFont, title: VMG_TITLE[name],
+        text: value == null ? '--' : value.toFixed(1),
+        selected: name === selected
+      });
+    };
+
+    place('toCourseSide', W / 2, cy - rowGap);
+    place('toPortEnd', W / 2 - colGap, cy);
+    place('toStbEnd', W / 2 + colGap, cy);
+    place('fromCourseSide', W / 2, cy + rowGap);
+    scene.vmgPad = pad;
+  }
+
+  /** A four-way arrow centred on (0,0): the four directions the VMGs are read in. */
+  private fourWayGlyph(size: number): string {
+    const r = size / 2, head = size * 0.16, stem = size * 0.05;
+    const arm = (dx: number, dy: number) => {
+      // Along the arm, and across it.
+      const ax = dx * r, ay = dy * r;
+      const px = -dy, py = dx;
+      const bx = dx * (r - head), by = dy * (r - head);
+      return `M${ax},${ay} L${bx + px * head},${by + py * head} `
+        + `L${bx + px * stem},${by + py * stem} L${px * stem},${py * stem} `
+        + `L${-px * stem},${-py * stem} L${bx - px * stem},${by - py * stem} `
+        + `L${bx - px * head},${by - py * head} Z`;
+    };
+    return [arm(0, -1), arm(0, 1), arm(-1, 0), arm(1, 0)].join(' ');
+  }
+
+  /** A minus and a plus, centred on (0,0), drawn like the chevrons. */
+  private minusGlyph(size: number): string {
+    const a = size * 0.24;
+    return `M${-a},0 L${a},0`;
+  }
+
+  private plusGlyph(size: number): string {
+    const a = size * 0.24;
+    return `M${-a},0 L${a},0 M0,${-a} L0,${a}`;
+  }
+
+  /**
+   * The bottom-left corner: the button that cycles the three screens, and - while
+   * watching - the countdowns beside it.
+   *
+   * They sit bottom left because the boat comes in from the bottom right far more often
+   * than not, and they are drawn under everything else so that when it does cross them
+   * the boat stays the thing you can see.
+   */
+  protected readonly chrome = computed<{ controls: ISceneButton[]; readouts: ISceneReadout[] }>(() => {
+    const W = this.vbWidth();
+    const full = this.controlSize(W);
+    // What this screen's row needs, in multiples of a control: the screen button, and on
+    // the VMG screen a Reset, a VMG and - once one is chosen - the pair that adjusts it.
+    // The row comes down as a whole when it will not fit, rather than running off the
+    // edge or overlapping itself.
+    const parts = this.mode() === 3
+      ? 1.5 + 0.25 + 1.9 + 0.25 + 1.5
+        + (this.selectedVmg() ? 0.25 + 1 + 0.25 + 1 : 0.25 + 1.9)
+      : 1.5;
+    const needed = full * parts + 12;
+    const ctrl = needed <= W ? full : Math.max(full * (W - 12) / (needed - 12), 14);
+    const y = this.VB_HEIGHT - ctrl * 0.5 - 6;
+    const modeW = ctrl * 1.5;
+    const left = 6;
+    const controls: ISceneButton[] = [{
+      x: left + modeW / 2, y, w: modeW, h: ctrl, rx: this.controlRadius(ctrl),
+      glyph: this.ellipsisGlyph(ctrl), text: null, fontSize: 0,
+      title: 'Next screen: watch the line, set its ends, adjust them',
+      action: { kind: 'mode' }, accent: true
+    }];
+
+    // On the VMG screen the row carries the controls that change them: a Reset, a VMG
+    // button that steps the selection through the four, and - once one is selected - the
+    // pair that adjusts it. Keeping them here leaves the reading above uncluttered, and
+    // puts every control on one line under the thumb.
+    if (this.mode() === 3) {
+      const selected = this.selectedVmg();
+      let x = left + modeW + ctrl * 0.25;
+      const wordButton = (text: string, w: number, title: string,
+        action: TLineViewAction, accent: boolean) => {
+        controls.push({
+          x: x + w / 2, y, w, h: ctrl, rx: this.controlRadius(ctrl),
+          glyph: null, text, fontSize: Math.min(ctrl * 0.5, w / (text.length * 0.62)),
+          title, action, accent
+        });
+        x += w + ctrl * 0.25;
+      };
+      wordButton('Reset', ctrl * 1.9, 'Clear every manual VMG adjustment',
+        { kind: 'vmgReset' }, false);
+      wordButton('VMG', ctrl * 1.5,
+        selected ? `Adjusting ${VMG_TITLE[selected]}; press for the next`
+          : 'Choose a best VMG to adjust',
+        { kind: 'vmgNext' }, !!selected);
+
+      if (!selected) {
+        // Only offered with nothing selected: it throws away every sample the plugin has
+        // collected, which is a different thing from Reset dropping the hand adjustments
+        // on top of them, and not something to have under the thumb while stepping one
+        // VMG up and down.
+        wordButton('Clear', ctrl * 1.9,
+          'Throw away the collected VMG samples and start again', { kind: 'vmgClear' }, false);
+      } else {
+        const perBaseUnit = this.units.convertToUnit(this.vmgUnit(), 1) || 1;
+        const step = 0.1 / perBaseUnit;
+        const name = VMG_TITLE[selected].charAt(0).toLowerCase() + VMG_TITLE[selected].slice(1);
+        for (const [glyph, delta, verb] of [
+          [this.minusGlyph(ctrl), -step, 'Reduce'] as const,
+          [this.plusGlyph(ctrl), step, 'Increase'] as const
+        ]) {
+          controls.push({
+            x: x + ctrl / 2, y, w: ctrl, h: ctrl, rx: this.controlRadius(ctrl),
+            glyph, text: null, fontSize: 0,
+            title: `${verb} the ${name}`,
+            action: { kind: 'vmgStep', deltaMs: delta }, accent: false
+          });
+          x += ctrl + ctrl * 0.25;
+        }
+      }
+    }
+
+    const readouts: ISceneReadout[] = [];
+    if (this.mode() === 0) {
+      const valueSize = ctrl * 0.85;
+      const captionSize = ctrl * 0.42;
+      let x = left + modeW + ctrl * 0.5;
+      const add = (caption: string, seconds: number | null) => {
+        const value = this.formatCountdown(seconds);
+        const valueX = x + captionSize * caption.length * 0.62 + captionSize * 0.5;
+        readouts.push({ x, valueX, y: y + valueSize * 0.36, caption, value, captionSize, valueSize });
+        // Past the value, then a gap before the next pair.
+        x = valueX + value.length * valueSize * 0.58 + ctrl * 0.45;
+      };
+      if (this.showTimeToLine()) add('TTL', this.timeToLine());
+      if (this.showTimeToBurn()) add('TTB', this.timeToBurn());
+    }
+    return { controls, readouts };
+  });
+
+  /** A countdown as m:ss, or h:mm:ss once there is an hour of it. */
+  private formatCountdown(seconds: number | null): string {
+    if (seconds == null || !Number.isFinite(seconds)) return '--:--';
+    const negative = seconds < 0;
+    const v = Math.floor(Math.abs(seconds));
+    const h = Math.floor(v / 3600), m = Math.floor((v % 3600) / 60), sec = v % 60;
+    const body = h > 0
+      ? `${h}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+      : `${m}:${sec.toString().padStart(2, '0')}`;
+    return (negative ? '-' : '') + body;
+  }
 
   /**
    * How the line reads: red across the line, green once a start has been made from
@@ -468,12 +1018,10 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    */
   private placeholderScene(): IScene {
     const W = this.vbWidth();
-    const yMin = this.VB_TOP_BAND + this.LABEL_HEADROOM;
-    const yMax = this.VB_HEIGHT - this.VB_BOTTOM_MARGIN;
-    const lineY = (yMin + yMax) / 2;
     // The same targets edit mode uses on a real line, at the same inset: a target centred
     // on an end runs a radius past it and has to stay in frame.
     const radius = Math.min(W, this.VB_HEIGHT) * 0.11;
+    const lineY = this.editLineY(this.controlSize(W), radius);
     const inset = Math.max(this.VB_MARGIN, radius);
     // Port (pin) to the left and starboard (committee boat) to the right, as ever.
     const portX = inset, stbX = W - inset;
@@ -484,13 +1032,21 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     return {
       portX, stbX, lineY,
       ends: this.buildEnds(stbX, lineY, (stbX - portX) / this.PLACEHOLDER_METRES),
+      labelVisible: true,
       lineStatus: null,
       portUndefined: true, stbUndefined: true,
       label, labelX: W / 2, labelY: lineY - font * 0.5, labelFont: font,
       projections: [], boat: null, guides: [], legs: [], gun: null, wind: null,
+      controls: [], nameLabel: null, vmgPad: null,
       editEnds: {
-        port: { x: portX, y: lineY, radius, title: 'Set the port (pin) end here' },
-        stb: { x: stbX, y: lineY, radius, title: 'Set the starboard (boat) end here' }
+        port: {
+          x: portX, y: lineY, size: radius * 2, rx: this.controlRadius(radius * 2),
+          title: 'Set the port (pin) end here'
+        },
+        stb: {
+          x: stbX, y: lineY, size: radius * 2, rx: this.controlRadius(radius * 2),
+          title: 'Set the starboard (boat) end here'
+        }
       }
     };
   }
@@ -516,77 +1072,112 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    *  - re-fitting now would move the drawing further than `viewSmoothing` percent
    *  - the boat would be drawn outside the viewBox under it, which must never wait
    *
-   * Inside the last `viewFreezeSeconds` of the countdown only the drift rule is dropped.
-   * That is the moment the helm is reading the boat against the line, and a re-scale
-   * under them then costs the read; the two framing rules stay, because a drawing that
-   * holds still by putting the boat off the edge has stopped answering the question.
-   *
    * @param smoothing Percent of the drawing's height the view may drift; 0 re-fits on
    *   every update.
-   * @param freezeSeconds Seconds before the start to hold the view; 0 never freezes.
    */
   private updateViewFrame(geo: ILineGeometry | null, W: number, editMode: boolean,
-    smoothing: number | undefined, freezeSeconds: number | undefined): void {
+    smoothing: number | undefined): void {
     // Edit mode lays the line out for itself and never uses a fitted frame.
     if (!geo || editMode) {
       this.viewFrame.set(null);
       this.frameKey = null;
+      this.frameIdeal = null;
       return;
     }
 
     // A resize, or an edit to the line itself, invalidates the frame outright.
     const key = `${W}|${geo.length.toFixed(1)}`;
     const current = this.viewFrame();
-    const tolerance = Math.max(0, smoothing ?? 10) / 100;
+    const tolerance = Math.max(0, smoothing ?? 25) / 100;
 
-    const tts = this.timeToStart();
-    const frozen = (freezeSeconds ?? 0) > 0 && this.timerRunning()
-      && tts != null && tts > 0 && tts <= (freezeSeconds ?? 0);
-
+    const ideal = this.fitFrame(geo, W);
     if (!current || key !== this.frameKey
-      || (!frozen && this.frameDrift(current, this.fitFrame(geo, W), geo, W) > tolerance)
-      || !this.lineFitsIn(current)
+      || this.frameDrift(this.frameIdeal ?? current, ideal, geo, W) > tolerance
+      || !this.lineFitsIn(current, W)
       || !this.boatFitsIn(current, geo, W)) {
-      this.viewFrame.set(this.fitFrame(geo, W));
+      // Growing the view to exactly fit leaves it fitting exactly, so the next update
+      // pushes back out of it and it re-fits again - a stutter every second or two on an
+      // approach. Overshooting a growth by the smoothing tolerance buys that many more
+      // updates before the next one is needed. Shrinking is not overshot: a view that
+      // shrank past its content would have to grow straight back.
+      const grow = current && ideal.scale < current.scale;
+      this.viewFrame.set(grow ? { ...ideal, scale: ideal.scale / (1 + tolerance) } : ideal);
+      this.frameIdeal = ideal;
       this.frameKey = key;
     }
   }
 
   /**
-   * How far re-fitting now would shift the drawing: the largest movement of either end
-   * of the line, as a fraction of the drawing's height. Measuring the line's own ends
-   * catches both a change of scale and a pure pan - the latter happens whenever the
-   * across axis is the binding one and the boat works its way along the line.
+   * How far re-fitting now would shift the drawing, as a fraction of its height.
+   *
+   * Measured at the two things the fit is built around and the eye is actually on: the
+   * end being kept in frame, and the boat. That catches both a change of scale and a
+   * pure pan - the latter happens whenever the across axis is the binding one and the
+   * boat works its way along the line. The far end is deliberately not measured: it can
+   * be a long way outside the frame, where a small change of scale moves it hugely and
+   * would re-fit a drawing that has not visibly moved.
    */
   private frameDrift(held: IViewFrame, ideal: IViewFrame, geo: ILineGeometry, W: number): number {
-    const yMin = this.VB_TOP_BAND + this.LABEL_HEADROOM;
-    const yMax = this.VB_HEIGHT - this.VB_BOTTOM_MARGIN;
+    const yMin = this.bandYMin();
+    const yMax = this.bandYMax(W);
     const at = (frame: IViewFrame, a: number) => ({
       x: W / 2 - (a - frame.midA) * frame.scale,
       y: (yMin + yMax) / 2 - frame.midC * frame.scale
     });
+    const boat = geo.boat;
+    const marks = boat ? [this.nearestEnd(geo, boat.a), boat.a] : [0, geo.length];
     let worst = 0;
-    for (const a of [0, geo.length]) {
+    for (const a of marks) {
       const from = at(held, a), to = at(ideal, a);
       worst = Math.max(worst, Math.hypot(from.x - to.x, from.y - to.y));
     }
     return worst / Math.max(yMax - yMin, 1);
   }
 
-  /** Fit the line and the boat, with the boat's drawn size allowed for. */
+  /**
+   * Fit the boat and the line, with the boat's drawn size allowed for.
+   *
+   * Only one end of the line has to be in frame. Holding both caps how far the drawing
+   * can zoom in, which is exactly backwards: the closer the boat gets to an end, the
+   * more the detail near that end is what is being read, and the less the far end - a
+   * hundred metres of empty water away - is worth the scale it costs. So the along axis
+   * is fitted to the boat and its nearer end, and the far one is allowed to leave.
+   *
+   * It does not let the drawing zoom without limit: three boat lengths of line stay in
+   * frame, which is the shortest run of it that still shows where the boat is along the
+   * line rather than just beside a mark. A line shorter than that is shown whole.
+   */
   private fitFrame(geo: ILineGeometry, W: number): IViewFrame {
     const margin = this.VB_MARGIN;
-    const yMin = this.VB_TOP_BAND + this.LABEL_HEADROOM;
-    const yMax = this.VB_HEIGHT - this.VB_BOTTOM_MARGIN;
+    const yMin = this.bandYMin();
+    const yMax = this.bandYMax(W);
     const boat = geo.boat;
     // The boat is drawn aft of its position, not at it, so the fit has to hold the whole
     // hull rather than just the fix or the transom gets clipped at the edge.
     const pad = boat ? this.boatReach() : 0;
 
-    const minA = Math.min(0, boat ? boat.a - pad : 0);
-    const maxA = Math.max(geo.length, boat ? boat.a + pad : geo.length);
+    // With no boat there is nothing to zoom towards, so the whole line is the subject.
+    const ends = boat ? [this.nearestEnd(geo, boat.a)] : [0, geo.length];
+    let minA = Math.min(...ends, boat ? boat.a - pad : 0);
+    let maxA = Math.max(...ends, boat ? boat.a + pad : geo.length);
     const minC = Math.min(0, boat ? boat.c - pad : 0);
     const maxC = Math.max(0, boat ? boat.c + pad : 0);
+
+    // Keep a usable run of the line itself in frame. Measured on the line rather than on
+    // the span, because the span is mostly open water when the boat is standing off, and
+    // a fit that satisfied the floor with water would still show a stub of line.
+    const wanted = Math.min(3 * this.boatReach(), geo.length);
+    const visibleLo = Math.max(minA, 0), visibleHi = Math.min(maxA, geo.length);
+    if (visibleHi - visibleLo < wanted) {
+      // Grown about what is already showing, then slid back inside the line's own ends:
+      // there is no point reserving room past them, where there is no line to see.
+      const middle = (visibleLo + visibleHi) / 2;
+      let lo = middle - wanted / 2, hi = middle + wanted / 2;
+      if (lo < 0) { hi -= lo; lo = 0; }
+      if (hi > geo.length) { lo = Math.max(0, lo - (hi - geo.length)); hi = geo.length; }
+      minA = Math.min(minA, lo);
+      maxA = Math.max(maxA, hi);
+    }
 
     // Keep the across axis from collapsing when the boat is sitting on the line.
     const spanA = Math.max(maxA - minA, 1);
@@ -596,6 +1187,14 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
       midA: (minA + maxA) / 2,
       midC: (minC + maxC) / 2
     };
+  }
+
+  /**
+   * The end of the line the boat is nearer to, as a distance along the line. The one the
+   * drawing keeps in frame, and the one drift is measured at.
+   */
+  private nearestEnd(geo: ILineGeometry, a: number): number {
+    return Math.abs(a) <= Math.abs(a - geo.length) ? 0 : geo.length;
   }
 
   /**
@@ -615,24 +1214,29 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    * frame. The fit keeps it clear, but a frame held through several updates can drift,
    * and a line sitting on the bottom edge reads as one about to disappear.
    */
-  private lineFitsIn(frame: IViewFrame): boolean {
-    const yMin = this.VB_TOP_BAND + this.LABEL_HEADROOM;
-    const yMax = this.VB_HEIGHT - this.VB_BOTTOM_MARGIN;
+  private lineFitsIn(frame: IViewFrame, W: number): boolean {
+    const yMin = this.bandYMin();
+    const yMax = this.bandYMax(W);
     const lineY = (yMin + yMax) / 2 - frame.midC * frame.scale;
     return lineY >= yMin && lineY <= yMax;
   }
 
-  /** Whether the boat's whole outline still lands inside the viewBox under this frame. */
+  /**
+   * Whether the boat's whole outline still lands inside the drawing under this frame.
+   *
+   * Bounded below by the same edge as the line, so the boat never disappears behind the
+   * corner controls either: a boat drawn under a button is a boat you cannot place.
+   */
   private boatFitsIn(frame: IViewFrame, geo: ILineGeometry, W: number): boolean {
     const boat = geo.boat;
     if (!boat) return true;
-    const yMin = this.VB_TOP_BAND + this.LABEL_HEADROOM;
-    const yMax = this.VB_HEIGHT - this.VB_BOTTOM_MARGIN;
+    const yMin = this.bandYMin();
+    const yMax = this.bandYMax(W);
     const bx = W / 2 - (boat.a - frame.midA) * frame.scale;
     const by = (yMin + yMax) / 2 + (boat.c - frame.midC) * frame.scale;
     const radius = this.boatReach() * frame.scale;
     return bx - radius >= 2 && bx + radius <= W - 2
-      && by - radius >= this.VB_TOP_BAND && by + radius <= this.VB_HEIGHT - 2;
+      && by - radius >= this.VB_TOP_BAND && by + radius <= yMax;
   }
 
   /**
@@ -881,7 +1485,7 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    */
   private buildEnds(stbX: number, lineY: number, scale: number): ISceneEnds {
     const size = Math.min(Math.max(
-      this.END_METRES * scale * this.END_EXAGGERATION, 12), 40);
+      this.END_METRES * scale * this.END_EXAGGERATION, 12), this.END_SIZE_MAX);
     // The committee boat's shape is drawn at 24 units wide, so scale it to `size`.
     const k = size / 24;
     return {
