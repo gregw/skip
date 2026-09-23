@@ -125,7 +125,7 @@ export function aisRadarWidget() {
  * Wind Steer factory. The widget deep-merges its DEFAULT_CONFIG under this, so only the display
  * options are pinned here; every path keeps its default Signal K path.
  */
-export function windsteerWidget({ w = 24, h = 24, compassModeEnabled = true } = {}) {
+export function windsteerWidget({ w = 24, h = 24, compassModeEnabled = true, polarOverlayEnable = false } = {}) {
   const uuid = uid('windsteer');
   return (x, y) => node(w, h, x, y, {
     type: 'widget-wind-steer', uuid,
@@ -133,7 +133,7 @@ export function windsteerWidget({ w = 24, h = 24, compassModeEnabled = true } = 
       compassModeEnabled, windSectorEnable: false, laylineEnable: true, laylineAngle: 45,
       waypointEnable: true, courseOverGroundEnable: true, driftEnable: true,
       awsEnable: true, twsEnable: true, twaEnable: true, rudderEnable: true,
-      updateInterval: 500, enableTimeout: false,
+      polarOverlayEnable, updateInterval: 500, enableTimeout: false,
     },
   });
 }
