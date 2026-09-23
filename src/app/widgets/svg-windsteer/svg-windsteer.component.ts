@@ -1,6 +1,14 @@
 import { Component, ElementRef, input, viewChild, signal, computed, effect, untracked, ChangeDetectionStrategy, OnDestroy, NgZone, inject } from '@angular/core';
 import { animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
 import { DecimalPipe } from '@angular/common';
+import { OverlayPoint } from '../../core/utils/polar-overlay.util';
+
+/** Polar overlay state the parent resolves: hidden, the polar curve, or the VMC curve. */
+export type PolarOverlayMode = 'hidden' | 'polar' | 'vmc';
+/** Radius, in viewBox units, the active polar's peak speed maps to: inside the COG and waypoint ring (r ≈ 325). */
+export const POLAR_OVERLAY_PEAK_RADIUS = 300;
+/** The dial radius, in viewBox units, and so the outer limit of the overlay. */
+export const POLAR_OVERLAY_DIAL_RADIUS = 350;
 
 const angle = ([a, b], [c, d], [e, f]) => (Math.atan2(f - d, e - c) - Math.atan2(b - d, a - c) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
 
@@ -66,6 +74,14 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly trueWindSpeedFresh = input<boolean>(true);
   protected readonly driftFresh = input<boolean>(true);
   protected readonly setFresh = input<boolean>(true);
+  // Polar overlay, resolved by the parent. The polar curve is in the wind frame and its group turns
+  // by the water TWA; the VMC curve is in the compass frame inside the rotating dial; the dot is at
+  // this radius on the bow axis in the boat frame.
+  protected readonly polarOverlayMode = input<PolarOverlayMode>('hidden');
+  protected readonly polarCurve = input<OverlayPoint[] | null>(null);
+  protected readonly polarCurveRotation = input<number>(0);
+  protected readonly vmcCurve = input<OverlayPoint[] | null>(null);
+  protected readonly overlayDotRadius = input<number | null>(null);
 
   protected compass: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected twa: ISVGRotationObject = { oldValue: 0, newValue: 0 };
@@ -107,7 +123,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   private animationFrameIds = new WeakMap<SVGGElement, number>();
 
   private readonly CENTER = 500;
-  private readonly RADIUS = 350;
+  private readonly RADIUS = POLAR_OVERLAY_DIAL_RADIUS;
   // Pivot of the corner set arrow: the visual centre of the drift value's digits, the point of the
   // corner farthest from the dial edge and the viewBox (87.5 units). The arrow reaches 80 from it.
   private readonly SET_ARROW_CENTER: [number, number] = [904, 912];

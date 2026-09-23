@@ -413,6 +413,8 @@ export interface IWidgetSvcConfig {
   rudderEnable?: boolean;
   /** Used by wind Widget: flip the rudder-angle bar so it grows toward the side the boat turns */
   invertRudder?: boolean;
+  /** Used by wind Widget: draw the active polar's curve (or, with a waypoint in compass mode, its VMC curve) on the dial */
+  polarOverlayEnable?: boolean;
 
   /** Used by autopilot Widget to configure autopilot settings */
   autopilot?: IAutopilotConfig,
