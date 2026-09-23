@@ -91,8 +91,25 @@ svg {
   fill: var(--skip-starboard-color);
 }
 
-.drift-arrow {
-  stop-color: var(--skip-blue-color);
+.drift {
+  fill: var(--skip-blue-color);
+}
+
+.drift-label {
+  fill: var(--skip-blue-dim-color);
+}
+
+// The set arrow lies behind the drift readout, so it stays faint and the text carries a card halo.
+.drift-set-arrow {
+  fill: var(--skip-blue-color);
+  fill-opacity: 0.4;
+}
+
+.drift-halo {
+  paint-order: stroke;
+  stroke: var(--skip-widget-card-background-color);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .crosshair {

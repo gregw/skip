@@ -17,8 +17,10 @@ const DEFAULT_WIND_SECTOR_WINDOW_SECONDS = 5;
 const DEFAULT_DATA_TIMEOUT_SECONDS = 5;
 
 // Overlay auto-hide thresholds in SI (m/s). Compared against the true speed regardless of the
-// path's display unit: the current-set arrow/readout hide below DRIFT, the COG arrow below SOG.
-const DRIFT_HIDE_LIMIT_MS = 0.1;
+// path's display unit. The current-set arrow shows from SHOW and hides only below HIDE, so a drift
+// estimate hovering near one limit cannot blink it; the COG arrow hides below SOG.
+const SET_ARROW_SHOW_MS = 0.1;
+const SET_ARROW_HIDE_MS = 0.05;
 const SOG_HIDE_LIMIT_MS = 0.05;
 // Change-detection dedup granularity in SI (m/s): a speed signal only re-sets when it moves at least
 // this much, converted to the value's own display unit each update — never a fixed display-unit step.
@@ -233,8 +235,8 @@ export class WidgetWindComponent implements OnDestroy {
   protected driftFlow = signal(0);
   private driftMeasure = signal('');
   protected driftUnit = computed(() => this.speedUnitSymbol(this.driftMeasure()));
-  protected driftActive = computed(() =>
-    (this.driftFlow() ?? 0) >= this.speedInDisplayUnit(this.driftMeasure(), DRIFT_HIDE_LIMIT_MS));
+  // Evaluated on every raw sample, not the deduped driftFlow: the dedup step equals the band width.
+  protected setArrowActive = signal(false);
   protected driftSet = signal(0);
   protected sog = signal<number | undefined>(undefined);
   private sogMeasure = signal('');
@@ -339,9 +341,12 @@ export class WidgetWindComponent implements OnDestroy {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
     this.markFresh('drift', this.driftFresh);
-    if (!this.hasDrift || Math.abs(this.driftFlow() - raw) >= this.speedInDisplayUnit(u.data.measure ?? '', SPEED_DEDUP_MS)) {
+    const measure = u.data.measure ?? '';
+    const limit = this.setArrowActive() ? SET_ARROW_HIDE_MS : SET_ARROW_SHOW_MS;
+    this.setArrowActive.set(raw >= this.speedInDisplayUnit(measure, limit));
+    if (!this.hasDrift || Math.abs(this.driftFlow() - raw) >= this.speedInDisplayUnit(measure, SPEED_DEDUP_MS)) {
       this.driftFlow.set(raw); this.hasDrift = true;
-      this.driftMeasure.set(u.data.measure ?? '');
+      this.driftMeasure.set(measure);
     }
   };
   private onSOGUpdate = (u: IPathUpdate) => {

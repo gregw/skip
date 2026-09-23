@@ -535,18 +535,22 @@ describe('WidgetWindComponent speed-over-ground gating (#442)', () => {
 });
 
 /**
- * #441: the current-set arrow and drift readout hide below a physical-speed threshold. The limit is
- * defined in SI (m/s) and expressed in the value's own display unit before comparison, so the cutoff
- * is the same real current whether the readout is in knots, m/s, or km/h.
+ * #441/#637: the drift readout shows at any magnitude; only the set arrow is gated on speed, with
+ * hysteresis so an estimate hovering near the limit cannot blink it. The limits are SI (m/s) and
+ * expressed in the value's own display unit before comparison, so the cutoff is the same real
+ * current whether the readout is in knots, m/s, or km/h.
  */
-describe('WidgetWindComponent drift/current gating (#441)', () => {
+describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
   let component: WidgetWindComponent;
   let options: WritableSignal<IWidgetSvcConfig | undefined>;
   let callbacks: Map<string, (u: IPathUpdate) => void>;
 
   const update = (value: number | null, measure?: string): IPathUpdate => ({ data: { value, timestamp: null, measure }, state: 'normal' });
-  const driftActive = (): boolean => (component as unknown as { driftActive: () => boolean }).driftActive();
+  const setArrowActive = (): boolean => (component as unknown as { setArrowActive: () => boolean }).setArrowActive();
   const driftUnit = (): string => (component as unknown as { driftUnit: () => string }).driftUnit();
+  const KNOTS_PER_MS = 1.94384;
+  // Show at 0.1 m/s, hide below 0.05 m/s: the band between keeps the arrow's last state.
+  const HYSTERESIS_STEPS_MS: [number, boolean][] = [[0.12, true], [0.07, true], [0.04, false], [0.07, false], [0.11, true]];
 
   beforeEach(() => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
@@ -565,19 +569,29 @@ describe('WidgetWindComponent drift/current gating (#441)', () => {
     TestBed.tick();
   });
 
-  it('hides below 0.1 m/s and shows above it when the value is in knots', () => {
-    // 0.1 m/s -> ~0.19 kn threshold; driftFlow is the display (knots) value.
-    callbacks.get('drift')!(update(0.15, 'knots'));  // 0.15 kn < 0.19 kn
-    expect(driftActive()).toBe(false);
-    callbacks.get('drift')!(update(0.3, 'knots'));   // 0.3 kn > 0.19 kn
-    expect(driftActive()).toBe(true);
+  it('starts with the set arrow hidden', () => {
+    expect(setArrowActive()).toBe(false);
   });
 
-  it('applies the 0.1 m/s threshold directly when the value is already in m/s', () => {
-    callbacks.get('drift')!(update(0.05, 'm/s'));
-    expect(driftActive()).toBe(false);
-    callbacks.get('drift')!(update(0.15, 'm/s'));
-    expect(driftActive()).toBe(true);
+  it('applies set-arrow hysteresis to drift in knots', () => {
+    for (const [ms, shown] of HYSTERESIS_STEPS_MS) {
+      callbacks.get('drift')!(update(ms * KNOTS_PER_MS, 'knots'));
+      expect(setArrowActive(), `${ms} m/s`).toBe(shown);
+    }
+  });
+
+  it('applies set-arrow hysteresis to drift already in m/s', () => {
+    for (const [ms, shown] of HYSTERESIS_STEPS_MS) {
+      callbacks.get('drift')!(update(ms, 'm/s'));
+      expect(setArrowActive(), `${ms} m/s`).toBe(shown);
+    }
+  });
+
+  it('keeps the drift value at any magnitude, including zero', () => {
+    const driftFlow = (): number => (component as unknown as { driftFlow: () => number }).driftFlow();
+    callbacks.get('drift')!(update(0, 'm/s'));
+    expect(driftFlow()).toBe(0);
+    expect(setArrowActive()).toBe(false);
   });
 
   it('exposes the drift display unit for the readout label', () => {

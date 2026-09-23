@@ -110,12 +110,27 @@ resolution itself is unit-tested in `units.service.spec.ts`.
 `shot-fuel-rate.mjs` is the #536 probe: a steel gauge, a linear gauge and a numeric tile
 on `propulsion.0.fuel.rate`, shot twice to `results/shots/fuel-rate/` — once with the
 `displayUnits` meta the server's metric preset publishes for the `volumeRate` category
-(`targetUnit: 'L/h'`), once with the same path carrying units but no preference. It is the
-only probe that drives `control.selfMeta`, so it is the one that exercises server-resolved
-measures end to end rather than a stored `convertUnitTo`. The machine step boot-asserts
-the tile count only; **the reading and its label are canvas-drawn and need a human
-eyeball**: `preference.png` must read ~7.2 with an `l/h` label on all three tiles, and
+(`targetUnit: 'L/h'`), once with the same path carrying units but no preference. It drives
+`control.selfMeta` to exercise server-resolved measures end to end rather than a stored
+`convertUnitTo`, with and without a preference (`shot-windsteer.mjs` drives it too, only to
+put the drift in knots). The machine step boot-asserts the tile count only; **the reading
+and its label are canvas-drawn and need a human eyeball**: `preference.png` must read ~7.2 with an `l/h` label on all three tiles, and
 `si-only.png` must show the raw SI value with no label at all — never the word "unitless".
+
+`shot-windsteer.mjs` is the #637 Wind Steer current-readout probe. It streams one fixed
+boat state — heading 030°, apparent and true wind, COG/SOG, a waypoint bearing, hard-over
+starboard rudder, and a current (knots arrive as `displayUnits` meta via
+`control.selfMeta`) — and shoots the widget in compass mode at a large (24-cell) and a
+small (6-cell) tile in the light, dark and night themes, to
+`results/shots/windsteer/<label>-<theme>-<size>.png`. Flags: `--public`, `--label`
+(default `windsteer`), `--out`, `--port`, `--drift` (current speed in knots, default 0.8)
+and `--set-rel` (set relative to the bow in degrees, default 90); there is no overlay
+option, so a before/after is two runs with different labels against two builds. The
+machine step boot-asserts only the widget count (one per page); **the arrow direction,
+legibility and clearance are a visual check**: the drift label, value and unit sit in the
+bottom-right corner with the value legible over a large faint set arrow pointing
+`--set-rel` degrees right of the bow, all clear of the dial and the rudder arcs. Below
+0.1 m/s (`--drift 0.058` is 0.03 m/s) the value shows and the arrow does not.
 
 `shot-default-seed.mjs` boots an empty-dashboards profile so `DashboardService`
 seeds the bundled `DefaultDashboard` exactly as on a fresh install, then shoots every
