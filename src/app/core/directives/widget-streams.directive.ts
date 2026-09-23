@@ -41,6 +41,17 @@ export function widgetPathSignature(pathCfg: IPathIdentity | undefined | null): 
 }
 
 /**
+ * A slot's config as it subscribes: a slot with `sourceFromPath` reads with that slot's source,
+ * but only while both read the same path; a source pinned for another path may not send this one.
+ */
+export function effectivePathConfig(paths: IWidgetSvcConfig['paths'], pathName: string) {
+  const pathCfg = paths?.[pathName];
+  const sourceCfg = pathCfg?.sourceFromPath ? paths?.[pathCfg.sourceFromPath] : undefined;
+  const samePath = !!sourceCfg && normalizeWidgetPath(sourceCfg.path) === normalizeWidgetPath(pathCfg?.path);
+  return pathCfg && sourceCfg && samePath ? { ...pathCfg, source: sourceCfg.source } : pathCfg;
+}
+
+/**
  * Tracks which path a widget's stream-derived presentation state describes across runs of the
  * widget's data effect, and reports when that state has gone stale.
  *
@@ -413,7 +424,7 @@ export class WidgetStreamsDirective implements OnDestroy {
     }
     const rootChanged = prevRootSig !== newRootSig;
     for (const p of newPaths) {
-      const pathCfg = cfg.paths[p];
+      const pathCfg = effectivePathConfig(cfg.paths, p);
       const normalizedPath = this.normalizePath(pathCfg?.path);
       if (!normalizedPath) {
         const existing = this.subscriptions.get(p);
@@ -513,7 +524,7 @@ export class WidgetStreamsDirective implements OnDestroy {
       return;
     }
 
-    const pathCfg = cfg.paths[pathName];
+    const pathCfg = effectivePathConfig(cfg.paths, pathName);
     const normalizedPath = this.normalizePath(pathCfg?.path);
     if (!normalizedPath) {
       // Invalid path - cleanup subscription and remove registration
@@ -537,6 +548,19 @@ export class WidgetStreamsDirective implements OnDestroy {
     if (existing && existing.signature === sig && prevReg === next && prevSubField === subField) return;
 
     this.buildAndSubscribe(pathName, next, cfg, normalizedCfg, subField);
+  }
+
+  /**
+   * Drop a path's registration and release its subscription: the inverse of {@link observe}, for a
+   * path a widget reads only while one of its options is on. A no-op for a path never observed.
+   */
+  public unobserve(pathName: string): void {
+    this.registrations = this.registrations.filter(r => r.pathName !== pathName);
+    this.subscriptions.get(pathName)?.sub.unsubscribe();
+    this.subscriptions.delete(pathName);
+    this.streams?.delete(pathName);
+    this.releaseBase(pathName);
+    this.baseSignatures.delete(pathName);
   }
 
   /**
