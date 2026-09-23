@@ -3,7 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { Subject, BehaviorSubject, Observable } from 'rxjs';
 import { WidgetStreamsDirective, widgetPathSignature, normalizeWidgetPath, WidgetRepointTracker } from './widget-streams.directive';
 import { DataService, IPathUpdate } from '../services/data.service';
-import { UnitsService } from '../services/units.service';
+import { TDurationFormat, UnitsService } from '../services/units.service';
 import { IWidgetSvcConfig, IWidgetPath } from '../interfaces/widgets-interface';
 import { ISkMetadata } from '../interfaces/signalk-interfaces';
 
@@ -71,6 +71,10 @@ class FakeUnitsService {
     }
     resolvePathMeasure(path: string): string {
         return this.pathMeasures.get(path) ?? 'kn';
+    }
+    pathDurationFormats = new Map<string, TDurationFormat>();
+    resolvePathDurationFormat(path: string): TDurationFormat | undefined {
+        return this.pathDurationFormats.get(path);
     }
 }
 
@@ -566,6 +570,48 @@ describe('WidgetStreamsDirective', () => {
         // so a pre-meta value matches the widget's stored-unit scale/label instead of raw SI.
         expect(received.at(-1)?.data.value).toBe(40);
         expect(received.at(-1)?.data.measure).toBe('x10');
+    });
+
+    it('keeps a duration-format display path numeric and tags it with the format (#627)', () => {
+        unitsSvc.pathMeasures.set('racing.ttl', 's');
+        unitsSvc.pathDurationFormats.set('racing.ttl', 'HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.ttl', source: null, pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('racing.ttl|default')!.next({ data: { value: 1800, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received.at(-1)?.data.value).toBe(1800);
+        expect(received.at(-1)?.data.measure).toBe('s');
+        expect(received.at(-1)?.data.durationFormat).toBe('HH:MM:SS');
+    });
+
+    it('re-emits the last value when only the duration format changes (late meta)', () => {
+        unitsSvc.pathMeasures.set('racing.late', 's');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.late', source: null, pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('racing.late|default')!.next({ data: { value: 90, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        expect(received.at(-1)?.data.durationFormat).toBeUndefined();
+
+        // The measure stays 's'; the format alone changing must still reach the widget.
+        unitsSvc.pathDurationFormats.set('racing.late', 'MM:SS');
+        dataSvc.metaSubjects.get('racing.late')!.next({} as ISkMetadata);
+        expect(received.at(-1)?.data.value).toBe(90);
+        expect(received.at(-1)?.data.durationFormat).toBe('MM:SS');
+    });
+
+    it('never tags a structural path with a duration format', () => {
+        unitsSvc.pathDurationFormats.set('racing.fixed', 'HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.fixed', source: null, pathType: 'number', convertUnitTo: 's', showConvertUnitTo: false, updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('racing.fixed|default')!.next({ data: { value: 30, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received.at(-1)?.data.measure).toBe('s');
+        expect(received.at(-1)?.data.durationFormat).toBeUndefined();
     });
 
     it('supports observer-level min/max compounding with sampling', async () => {

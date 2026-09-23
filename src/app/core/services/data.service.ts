@@ -6,6 +6,7 @@ import { ISignalKDataValueUpdate, ISkMetadata, ISkDisplayUnits, ISignalKNotifica
 import { SignalKDeltaService } from './signalk-delta.service';
 import { SignalKConnectionService } from './signalk-connection.service';
 import { cloneDeep, merge } from 'lodash-es';
+import type { TDurationFormat } from './units.service';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 
 const SELFROOTDEF = "self";
@@ -28,6 +29,11 @@ interface IPathData {
    * once a display path follows the server's resolved unit. Absent on raw (pre-conversion) updates.
    */
   measure?: string;
+  /**
+   * The server's duration format for a display path in seconds (set by the streams directive). The
+   * value stays numeric in `measure`; a widget that draws it as text applies the format.
+   */
+  durationFormat?: TDurationFormat;
 }
 export interface IDataState {
   path: string;
