@@ -559,8 +559,9 @@
           style="fill-opacity:0.5;stroke:none" />
      </g>
       <!-- VMC curve: compass frame (angle = true heading), so it turns with the dial like the waypoint marker -->
-      <g id="layerVmcCurve" [style.display]="vmcCurvePath() ? 'inline' : 'none'">
-        <path class="vmc-curve" [attr.d]="vmcCurvePath() || null" />
+      <g id="layerVmcCurve" [style.display]="vmcFillPath() ? 'inline' : 'none'">
+        <path class="vmc-fill" [attr.d]="vmcFillPath() || null" />
+        <path class="vmc-edge" [attr.d]="vmcEdgePath() || null" />
       </g>
       <g #wptIndicator
         [attr.display]="waypointActive() && compassModeEnabled() ? 'inline' : 'none'">

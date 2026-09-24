@@ -1,7 +1,7 @@
 import { Component, ElementRef, input, viewChild, signal, computed, effect, untracked, ChangeDetectionStrategy, OnDestroy, NgZone, inject } from '@angular/core';
 import { animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
 import { DecimalPipe } from '@angular/common';
-import { OverlayPoint } from '../../core/utils/polar-overlay.util';
+import { OverlayPoint, vmcEdgeRuns } from '../../core/utils/polar-overlay.util';
 import { toDegrees } from '../../core/utils/si-presentation.util';
 
 /** Polar overlay state the parent resolves: hidden, the polar curve, or the VMC curve. */
@@ -126,8 +126,11 @@ export class SvgWindsteerComponent implements OnDestroy {
 
   protected readonly polarCurvePath = computed(() =>
     this.polarOverlayMode() === 'polar' ? this.overlayPath(this.polarCurve(), false) : '');
-  protected readonly vmcCurvePath = computed(() =>
+  protected readonly vmcFillPath = computed(() =>
     this.polarOverlayMode() === 'vmc' ? this.overlayPath(this.vmcCurve(), true) : '');
+  protected readonly vmcEdgePath = computed(() => this.polarOverlayMode() === 'vmc'
+    ? vmcEdgeRuns(this.vmcCurve() ?? []).map(run => this.overlayPath(run, false)).join(' ')
+    : '');
   /** Y of the dot's center on the bow axis, or null when it is hidden. */
   protected readonly overlayDotY = computed(() => {
     const r = this.overlayDotRadius();

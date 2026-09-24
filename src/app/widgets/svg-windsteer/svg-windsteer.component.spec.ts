@@ -635,7 +635,8 @@ describe('SvgWindsteerComponent', () => {
             { angle: Math.PI / 2, r: 100 }
         ];
         const polarPath = (): SVGPathElement => fixture.nativeElement.querySelector('#layerPolarCurve path');
-        const vmcPath = (): SVGPathElement => fixture.nativeElement.querySelector('#layerVmcCurve path');
+        const vmcFill = (): SVGPathElement => fixture.nativeElement.querySelector('#layerVmcCurve path.vmc-fill');
+        const vmcEdge = (): SVGPathElement => fixture.nativeElement.querySelector('#layerVmcCurve path.vmc-edge');
         const layer = (id: string): SVGGElement => fixture.nativeElement.querySelector(`#${id}`);
         const dot = (): SVGCircleElement => fixture.nativeElement.querySelector('#layerPolarDot circle.polar-dot');
 
@@ -661,9 +662,28 @@ describe('SvgWindsteerComponent', () => {
             fixture.detectChanges();
             expect(layer('layerVmcCurve').style.display).toBe('inline');
             expect(layer('layerPolarCurve').style.display).toBe('none');
-            expect(vmcPath().getAttribute('class')).toBe('vmc-curve');
-            expect(vmcPath().getAttribute('d')).toBe('M 500.0,500.0 L 400.0,500.0 L 500.0,700.0 L 600.0,500.0 Z');
-            expect(component['rotatingDial']().nativeElement.contains(vmcPath())).toBe(true);
+            expect(vmcFill().getAttribute('d')).toBe('M 500.0,500.0 L 400.0,500.0 L 500.0,700.0 L 600.0,500.0 Z');
+            expect(component['rotatingDial']().nativeElement.contains(vmcFill())).toBe(true);
+        });
+
+        it('strokes the VMC lobe only where it has a radius, leaving no radial edges to the center', () => {
+            setRequiredInputs({ polarOverlayMode: 'vmc', vmcCurve: CURVE });
+            fixture.detectChanges();
+            expect(vmcEdge().getAttribute('d')).toBe('M 400.0,500.0 L 500.0,700.0 L 600.0,500.0');
+        });
+
+        it('strokes each tack of the VMC lobe as its own subpath', () => {
+            const twoTacks: OverlayPoint[] = [
+                { angle: 0, r: 0 },
+                { angle: Math.PI / 4, r: 100 },
+                { angle: Math.PI / 2, r: 100 },
+                { angle: Math.PI, r: 0 },
+                { angle: -Math.PI / 2, r: 100 },
+                { angle: -Math.PI / 4, r: 100 }
+            ];
+            setRequiredInputs({ polarOverlayMode: 'vmc', vmcCurve: twoTacks });
+            fixture.detectChanges();
+            expect(vmcEdge().getAttribute('d')).toBe('M 570.7,429.3 L 600.0,500.0 M 400.0,500.0 L 429.3,429.3');
         });
 
         it('stacks the groups per the layer order: VMC after the wind sectors, polar after the compass, dot after the crosshair', () => {

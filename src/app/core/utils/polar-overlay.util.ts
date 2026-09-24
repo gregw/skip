@@ -84,6 +84,31 @@ export function vmcCurve(profile: PolarSpeedProfile, twd: number, btw: number, s
   return points;
 }
 
+/**
+ * The stroked outline of a VMC curve: its runs of consecutive samples with a radius, so the edge
+ * has no radial lines to the center where the curve drops to zero (the in-irons wedge, VMC ≤ 0).
+ * A single-sample run is dropped, as a one-point stroke draws nothing. With no zero sample the
+ * outline is the whole loop, closed.
+ */
+export function vmcEdgeRuns(points: readonly OverlayPoint[]): OverlayPoint[][] {
+  const start = points.findIndex(point => !(point.r > 0));
+  if (start < 0) return points.length ? [[...points, points[0]]] : [];
+
+  const runs: OverlayPoint[][] = [];
+  let run: OverlayPoint[] = [];
+  // Walk the loop once from a zero sample, so a run that spans the list's end stays whole.
+  for (let step = 1; step <= points.length; step += 1) {
+    const point = points[(start + step) % points.length];
+    if (point.r > 0) {
+      run.push(point);
+    } else {
+      if (run.length > 1) runs.push(run);
+      run = [];
+    }
+  }
+  return runs;
+}
+
 /** Radius of the VMC dot on the bow axis from STW · cos(HDG − BTW); null when that is zero or less. */
 export function vmcDotRadius(stw: number, hdg: number, btw: number, scale: OverlayScale): number | null {
   const vmc = stw * Math.cos(hdg - btw);

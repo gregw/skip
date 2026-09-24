@@ -143,17 +143,14 @@ svg {
 // the edge stays ≥ 1.5 px and the dot ≥ 6 px across. Polar and VMC modes differ by treatment
 // (bare line vs filled lobe), not only colour, so they stay apart in the single-hue night theme.
 .polar-curve,
-.vmc-curve {
+.vmc-edge {
   stroke: var(--skip-purple-color);
   stroke-width: 8;
   stroke-linejoin: round;
-}
-
-.polar-curve {
   fill: none;
 }
 
-.vmc-curve {
+.vmc-fill {
   fill: var(--skip-purple-color);
   fill-opacity: 0.3;
 }
