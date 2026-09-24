@@ -25,6 +25,10 @@ import {MatButtonModule} from '@angular/material/button';
 import {ITheme} from '../../core/services/app-service';
 import {MatTooltipModule} from '@angular/material/tooltip';
 
+// DTS colour thresholds in m: warn below the first, alert below the second, alarm (OCS) below 0.
+const DTS_WARN_M = 10;
+const DTS_ALERT_M = 20;
+
 @Component({
   selector: 'widget-racer-line',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -152,7 +156,7 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
   private titleBitmapText: string | null = null;
   private titleBitmapColor: string | null = null;
 
-  // State
+  // State. Distances are in m and times in s; distances convert to their measure only for display.
   private dtsValue: number | null = null;
   private lengthValue: number | null = null;
   private biasValue: number | null = null;
@@ -175,6 +179,7 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
   protected mode = signal<number>(0);
 
   constructor() {
+    this.streams.useSiValues();
     // Theme/palette effect
     effect(() => {
       const cfg = this.runtime.options();
@@ -469,9 +474,15 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
   }
 
   private getValueText(): string {
-    if (this.dtsValue === null) return '--';
+    const dts = this.dtsValue === null ? null : this.toPresentation(this.dtsUnit(), this.dtsValue);
+    if (dts === null) return '--';
     const cfg = this.runtime.options();
-    return this.dtsValue.toFixed(cfg?.numDecimal ?? 0);
+    return dts.toFixed(cfg?.numDecimal ?? 0);
+  }
+
+  // A distance in its presentation measure; null for a measure the units table does not know.
+  private toPresentation(measure: string, metres: number): number | null {
+    return measure ? this.unitsService.convertToUnit(measure, metres) : metres;
   }
 
   private toHHMMSS(totalSeconds: number | null): string {
@@ -496,20 +507,22 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
   }
   private setLenBias(): void {
     const cfg = this.runtime.options(); if (!cfg) return;
-    if ((cfg.paths as IPathArray)['lineLengthPath'].path && this.lengthValue != null) {
+    const length = this.lengthValue == null ? null : this.toPresentation(this.lineLengthUnit(), this.lengthValue);
+    if ((cfg.paths as IPathArray)['lineLengthPath'].path && length != null) {
       const measure = this.lineLengthUnit();
       const unit = measure === 'feet' ? '′' : this.unitsService.getUnitDisplaySymbol(measure);
-      this.lineLengthValue.set(`―${this.applyDecorations(this.lengthValue.toFixed(cfg.numDecimal))}${unit}―`);
+      this.lineLengthValue.set(`―${this.applyDecorations(length.toFixed(cfg.numDecimal))}${unit}―`);
     }
-    if ((cfg.paths as IPathArray)['lineBiasPath'].path && this.biasValue != null) {
+    const bias = this.biasValue == null ? null : this.toPresentation(this.lineBiasUnit(), this.biasValue);
+    if ((cfg.paths as IPathArray)['lineBiasPath'].path && bias != null) {
       const measure = this.lineBiasUnit();
       const unit = measure === 'feet' ? '′' : this.unitsService.getUnitDisplaySymbol(measure);
-      if (this.biasValue < 0) {
-        this.portBiasValue.set('+' + (-this.biasValue).toFixed(cfg.numDecimal) + unit);
-        this.stbBiasValue.set(this.biasValue.toFixed(cfg.numDecimal) + unit);
+      if (bias < 0) {
+        this.portBiasValue.set('+' + (-bias).toFixed(cfg.numDecimal) + unit);
+        this.stbBiasValue.set(bias.toFixed(cfg.numDecimal) + unit);
       } else {
-        this.portBiasValue.set(' ' + (-this.biasValue).toFixed(cfg.numDecimal) + unit);
-        this.stbBiasValue.set(' +' + this.biasValue.toFixed(cfg.numDecimal) + unit);
+        this.portBiasValue.set(' ' + (-bias).toFixed(cfg.numDecimal) + unit);
+        this.stbBiasValue.set(' +' + bias.toFixed(cfg.numDecimal) + unit);
       }
     }
   }
@@ -528,13 +541,10 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
     const theme = this.theme(); const cfg = this.runtime.options();
     if (!theme || !cfg) return;
     if (cfg.ignoreZones) {
-      const measure = this.dtsUnit();
-      const warnThreshold = this.unitsService.convertToUnit(measure, 10) ?? 10;
-      const alertThreshold = this.unitsService.convertToUnit(measure, 20) ?? 20;
       if (!this.dtsValue) this.dtsColor = this.valueColor;
       else if (this.dtsValue < 0) this.dtsColor = theme.zoneAlarm;
-      else if (this.dtsValue < warnThreshold) this.dtsColor = theme.zoneWarn;
-      else if (this.dtsValue < alertThreshold) this.dtsColor = theme.zoneAlert;
+      else if (this.dtsValue < DTS_WARN_M) this.dtsColor = theme.zoneWarn;
+      else if (this.dtsValue < DTS_ALERT_M) this.dtsColor = theme.zoneAlert;
       else this.dtsColor = this.valueColor;
     } else {
       // Placeholder for potential state-driven colors (legacy used path states)

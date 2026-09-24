@@ -13,7 +13,7 @@ describe('WidgetRacerLineComponent', () => {
   let fixture: ComponentFixture<WidgetRacerLineComponent>;
 
   const runtimeMock = { options: () => WidgetRacerLineComponent.DEFAULT_CONFIG };
-  const streamsMock = { observe: vi.fn() };
+  const streamsMock = { observe: vi.fn(), useSiValues: () => undefined };
   const requestsMock = { subscribeRequest: () => EMPTY, putRequest: vi.fn() };
   const dashboardMock = { isDashboardStatic: () => true };
   // Typed so a member the widget does not have is a compile error under `npm run snc`. A member it

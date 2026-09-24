@@ -13,12 +13,6 @@ import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { ITheme } from '../../core/services/app-service';
 
-/** The structural units this widget's slots present in; both are SI, so legacy delivery is the identity. */
-const toLegacy = (measure: string, si: number): number => {
-  if (measure === 's' || measure === 'm') return si;
-  throw new Error(`no legacy conversion for ${measure}`);
-};
-
 const theme = {
   contrast: 'value', contrastDim: 'label', contrastDimmer: 'dimmer', cardColor: 'card',
   zoneAlarm: 'alarm', zoneWarn: 'warn', zoneAlert: 'alert'
@@ -39,8 +33,7 @@ describe('WidgetRacerTimerComponent output from SI inputs', () => {
   const feed = (pathKey: string, si: number | null, measure: string): void => {
     const callback = callbacks.get(pathKey);
     if (!callback) throw new Error(`${pathKey} is not observed`);
-    const legacy = si == null ? null : toLegacy(measure, si);
-    callback({ data: { value: legacy, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
+    callback({ data: { value: si, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
   };
   const feedTts = (seconds: number | null): void => feed('ttsPath', seconds, 's');
   const feedDts = (metres: number | null): void => feed('dtsPath', metres, 'm');

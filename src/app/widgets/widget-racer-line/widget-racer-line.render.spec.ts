@@ -40,8 +40,7 @@ describe('WidgetRacerLineComponent output from SI inputs', () => {
   const feed = (pathKey: string, si: number | null, measure: string): void => {
     const callback = callbacks.get(pathKey);
     if (!callback) throw new Error(`${pathKey} is not observed`);
-    const legacy = si == null ? null : unitsServiceStub.convertToUnit(measure, si);
-    callback({ data: { value: legacy, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
+    callback({ data: { value: si, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
   };
 
   /** The canvas readouts of the latest frame: DTS value and colour, its unit, TTL and TTB. */
