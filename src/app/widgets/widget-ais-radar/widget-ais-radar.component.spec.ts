@@ -122,11 +122,11 @@ const makeRenderHarness = (viewMode: RadarViewMode, ownShip: OwnShipState): Rend
     cfg: {
       color: 'grey',
       ais: {
-        rangeRings: [3, 6, 12, 24, 48],
+        rangeRings: [5556, 11112, 22224, 44448, 88896],
         rangeIndex: '0',
         showSelf: true,
         showCogVectors: true,
-        cogVectorsMinutes: 10,
+        cogVectorsSeconds: 600,
         showLostTargets: true,
         showUnconfirmedTargets: true
       }
@@ -262,8 +262,8 @@ describe('render() rings, labels and COG vectors for a stored config', () => {
 
   /** The radar's stored options, from ranges in nautical miles and a COG vector time in minutes. */
   const storedRadarOptions = (rangeRingsNm: number[] | undefined, cogMinutes: number): Record<string, unknown> => ({
-    ...(rangeRingsNm ? { rangeRings: rangeRingsNm } : {}),
-    cogVectorsMinutes: cogMinutes
+    ...(rangeRingsNm ? { rangeRings: rangeRingsNm.map(nm => nm * METRES_PER_NM) } : {}),
+    cogVectorsSeconds: cogMinutes * 60
   });
 
   const layer = (svg: SVGSVGElement) =>

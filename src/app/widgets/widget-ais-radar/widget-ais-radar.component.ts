@@ -18,6 +18,15 @@ import { resolveIconKey, resolveOwnShipIconDataUrl, resolveThemedIconDataUrl, VE
 import { COLLISION_RISK_HIGH_THRESHOLD, COLLISION_RISK_LOW_THRESHOLD } from '../../core/utils/ais-svg-icon.util';
 
 type ViewMode = 'north-up' | 'course-up';
+
+const METRES_PER_NM = 1852;
+/**
+ * Ranges used when the config has none, in metres: 3, 6, 12, 24 and 48 nm. The rings are ruled and
+ * labelled in nautical miles, so each stored range is an exact multiple of a mile.
+ */
+const FALLBACK_RANGE_RINGS_M = [5556, 11112, 22224, 44448, 88896];
+/** COG vector time used when the config has none, in seconds. */
+const FALLBACK_COG_VECTOR_S = 300;
 type RadarFilterKey = 'anchoredMoored' | 'noCollisionRisk' | 'allAton' | 'allButSar' | 'allVessels';
 
 interface RadarSize {
@@ -151,15 +160,22 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
         vesselTypes: []
       },
       viewMode: 'course-up',
-      rangeRings: [1, 3, 6, 12, 24, 48],
+      rangeRings: [1852, 5556, 11112, 22224, 44448, 88896],
       rangeIndex: '3',
       showCogVectors: true,
-      cogVectorsMinutes: 10,
+      cogVectorsSeconds: 600,
       showLostTargets: true,
       showUnconfirmedTargets: true,
       showSelf: true
     },
-    color: 'grey'
+    color: 'grey',
+    siVersion: 21
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'ais.rangeRings': 'm',
+    'ais.cogVectorsSeconds': 's'
   };
 
   private readonly svgRef = viewChild.required<ElementRef<SVGSVGElement>>('radarSvg');
@@ -175,7 +191,7 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
   });
   protected readonly effectiveRangeIndex = computed<number>(() => {
     const cfgIndex = this.resolveRangeIndex(this.runtime.options()?.ais);
-    const ranges = this.runtime.options()?.ais?.rangeRings ?? [3, 6, 12, 24, 48];
+    const ranges = this.runtime.options()?.ais?.rangeRings ?? FALLBACK_RANGE_RINGS_M;
     const maxIndex = Math.max(0, ranges.length - 1);
     const index = this.localRangeIndex() ?? cfgIndex;
     return Math.min(Math.max(index, 0), maxIndex);
@@ -326,9 +342,10 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
     const maxRingRadius = Math.hypot(width, height) / 2 / scale;
 
     const radarCfg = (cfg.ais ?? {}) as NonNullable<IWidgetSvcConfig['ais']>;
-    const availableRanges = radarCfg.rangeRings?.length ? radarCfg.rangeRings : [3, 6, 12, 24, 48];
+    const availableRanges = radarCfg.rangeRings?.length ? radarCfg.rangeRings : FALLBACK_RANGE_RINGS_M;
     const rangeIndex = this.effectiveRangeIndex();
-    const rangeNm = availableRanges[rangeIndex] ?? availableRanges[0];
+    // Stored in metres; the radar is ruled and labelled in nautical miles.
+    const rangeNm = (availableRanges[rangeIndex] ?? availableRanges[0]) / METRES_PER_NM;
     const ringCount = this.resolveRingCountForRange(rangeNm);
     const viewMode: ViewMode = this.localViewMode() ?? radarCfg.viewMode ?? 'course-up';
     const ownCog = this.toDegreesIfRadians(ownShip.courseOverGroundTrue);
@@ -569,7 +586,7 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
   }
 
   protected decrementRange(): void {
-    const ranges = this.runtime.options()?.ais?.rangeRings ?? [3, 6, 12, 24, 48];
+    const ranges = this.runtime.options()?.ais?.rangeRings ?? FALLBACK_RANGE_RINGS_M;
     const maxIndex = Math.max(0, ranges.length - 1);
     this.localRangeIndex.set(Math.min(this.effectiveRangeIndex() + 1, maxIndex));
   }
@@ -785,7 +802,7 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
     if (!this.vectorsLayer) return;
     const motionEnabled = cfg.showCogVectors ?? true;
     const baseSize = Math.max(6, radius * 0.04);
-    const durationSeconds = (cfg.cogVectorsMinutes ?? 5) * 60;
+    const durationSeconds = cfg.cogVectorsSeconds ?? FALLBACK_COG_VECTOR_S;
     const tipOffset = baseSize * 0.8;
     const motionData: VectorLine[] = [];
 
@@ -795,7 +812,7 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
       if (motionEnabled && typeof target.sog === 'number' && typeof target.cog === 'number') {
         const motionAngle = this.wrapDegrees(target.cog - viewRotation);
         const tip = this.offsetPoint(target.x, target.y, motionAngle, tipOffset);
-        const distanceNm = (target.sog * durationSeconds) / 1852;
+        const distanceNm = (target.sog * durationSeconds) / METRES_PER_NM;
         const vectorLength = Math.max(0, (distanceNm / rangeNm) * radius - tipOffset);
         if (vectorLength <= 0) continue;
         const end = this.offsetPoint(tip.x, tip.y, motionAngle, vectorLength);
@@ -816,7 +833,7 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
   ): void {
     if (!this.ownShipLayer) return;
     const baseSize = Math.max(6, radius * 0.04);
-    const durationSeconds = (cfg.cogVectorsMinutes ?? 5) * 60;
+    const durationSeconds = cfg.cogVectorsSeconds ?? FALLBACK_COG_VECTOR_S;
     const tipOffset = baseSize * 0.8;
     const ownShipMotionData: VectorLine[] = [];
 
@@ -826,7 +843,7 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
       if (ownCog !== null && typeof ownSog === 'number') {
         const motionAngle = this.wrapDegrees(ownCog - viewRotation);
         const tip = this.offsetPoint(0, 0, motionAngle, tipOffset);
-        const distanceNm = (ownSog * durationSeconds) / 1852;
+        const distanceNm = (ownSog * durationSeconds) / METRES_PER_NM;
         const vectorLength = Math.max(0, (distanceNm / rangeNm) * radius - tipOffset);
         if (vectorLength > 0) {
           const end = this.offsetPoint(tip.x, tip.y, motionAngle, vectorLength);
@@ -1356,7 +1373,7 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
     const h = sinDP * sinDP + Math.cos(phi1) * Math.cos(phi2) * sinDL * sinDL;
     const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
     const meters = R * c;
-    return meters / 1852;
+    return meters / METRES_PER_NM;
   }
 
   ngOnDestroy(): void {

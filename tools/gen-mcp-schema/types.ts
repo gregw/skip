@@ -97,7 +97,9 @@ export interface WidgetSchemaEntry extends WidgetCatalogEntry {
   pathSlots: PathSlot[];
   /**
    * The unit each listed option of `defaultConfig` is stored in, keyed by option name, from the
-   * widget's static OPTION_UNITS. Absent when the widget declares none.
+   * widget's static OPTION_UNITS. A nested option is named by its dotted path from the config root
+   * (`gauge.heelCautionAngle`), and an array option's unit applies to each element
+   * (`ais.rangeRings`). Absent when the widget declares none.
    */
   optionUnits?: Record<string, string>;
 }

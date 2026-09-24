@@ -353,9 +353,9 @@ export interface IWidgetSvcConfig {
     invertAngle?: boolean;
     /** Optional. Show the side label on the gauge */
     sideLabel?: boolean;
-    /** Optional. Used by Sea Horizon: heel angle (deg) where the scale turns from nominal to caution */
+    /** Optional. Used by Sea Horizon: heel angle (rad) where the scale turns from nominal to caution */
     heelCautionAngle?: number;
-    /** Optional. Used by Sea Horizon: heel angle (deg) where the scale turns to alarm, and where the red limit index sits */
+    /** Optional. Used by Sea Horizon: heel angle (rad) where the scale turns to alarm, and where the red limit index sits */
     heelAlarmAngle?: number;
     /** Optional. Used by Sea Horizon: smoothing time constant in seconds applied to attitude samples. 0 disables it */
     damping?: number;
@@ -501,14 +501,14 @@ export interface IAISRadarConfig {
   filters?: IAISRadarFilterConfig;
   /** Radar orientation: follow vessel course or keep north at the top. */
   viewMode: 'course-up' | 'north-up';
-  /** List of selectable radar ranges in nautical miles. */
+  /** List of selectable radar ranges in metres, each a whole number of nautical miles (the rings are labelled in nm). */
   rangeRings: number[];
   /** Zero-based index into rangeRings that selects the active range. */
   rangeIndex: string;
   /** Enable/disable drawing AIS motion vectors. */
   showCogVectors: boolean;
-  /** COG projection vector duration in minutes. */
-  cogVectorsMinutes: number;
+  /** COG projection vector duration in seconds. */
+  cogVectorsSeconds: number;
   /** Show targets that are marked as lost. */
   showLostTargets: boolean;
   /** Show targets that are not yet confirmed. */

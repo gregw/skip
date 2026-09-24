@@ -20,6 +20,7 @@ import {
   V18_MIGRATION_OUTPUT_VERSION,
   V19_MIGRATION_OUTPUT_VERSION,
   V20_MIGRATION_OUTPUT_VERSION,
+  V21_MIGRATION_OUTPUT_VERSION,
   migrateOneAppVersion,
   migrateUseNeedleToEnableNeedle,
   removeSplitShellConfigKeys
@@ -370,6 +371,31 @@ export class ConfigurationUpgradeService {
           // The active slot is still at v19, so a reload would run this upgrade again at once.
           this.upgrading.set(false);
           return;
+        }
+        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
+        setTimeout(() => this._settings.reloadApp(), 1500);
+      } catch (error) {
+        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
+        this.upgrading.set(false);
+      }
+
+    } else if (version === 20) {
+      // Remote (Signal K) configs. v20 slots live in the same active file version as v11..v19. No
+      // backup here: the v19 backup taken before the first SI step already covers a downgrade.
+      try {
+        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
+
+        for (const item of configsList) {
+          try {
+            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
+            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V21_MIGRATION_OUTPUT_VERSION}.`);
+            const migratedConfig = migrateOneAppVersion(config, 20, this.sink);
+            if (!migratedConfig) continue; // skip if not a v20 slot
+
+            await this._storage.setConfig(item.scope, item.name, migratedConfig);
+          } catch (error) {
+            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
+          }
         }
         this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
         setTimeout(() => this._settings.reloadApp(), 1500);

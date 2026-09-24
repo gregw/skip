@@ -4,6 +4,7 @@ import type { IPathUpdate } from '../../core/services/data.service';
 import { ITheme } from '../../core/services/app-service';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective, widgetPathSignature, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
+import { presentedOption, toDegrees } from '../../core/utils/si-presentation.util';
 
 /**
  * Sea Horizon — a marine attitude indicator.
@@ -81,8 +82,9 @@ const COLOR_NOMINAL = '#2FA84F';
 const COLOR_CAUTION = '#E8912B';
 const COLOR_ALARM = '#CE2A20';
 
-const DEFAULT_CAUTION_ANGLE = 20;
-const DEFAULT_ALARM_ANGLE = 30;
+/** Default heel angles, stored in rad: 20° and 30°. Literals, so the schema generator reads them. */
+const DEFAULT_HEEL_CAUTION_ANGLE_RAD = 0.3490658503988659;
+const DEFAULT_HEEL_ALARM_ANGLE_RAD = 0.5235987755982988;
 /**
  * Longest damping time constant honoured, in seconds. The settings panel offers up to 5; the stored
  * value is not otherwise bounded (the dashboard schema publishes it as a plain number, and external
@@ -125,6 +127,14 @@ function bandPath(rIn: number, rOut: number, a0: number, a1: number): string {
 /** Confine a value to an inclusive range. */
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+/**
+ * A stored heel angle (rad) in degrees as the user entered it, or the default when it is not a
+ * finite number. Rounded so 30° stored in rad reads back as 30, not 29.999999999999996.
+ */
+function heelAngleDegrees(rad: unknown, defaultRad: number): number {
+  return presentedOption(toDegrees(typeof rad === 'number' && isFinite(rad) ? rad : defaultRad));
 }
 
 /** Heel scale: a tick every 5°, major every 10°. */
@@ -616,8 +626,8 @@ export class WidgetSeaHorizonComponent {
     paths: {
       // pathType stays 'number' though the path is the whole navigation.attitude object: the
       // streams pipeline extracts the pitch/roll sub-field (observe below) BEFORE the number-type
-      // conversion runs, so it converts the scalar rad->deg. Switching to 'object' would skip that
-      // conversion and render radians. Both paths are fixed (isPathConfigurable:false) — no Paths tab.
+      // handling runs, so the scalar arrives in rad with 'deg' as its presentation measure.
+      // Both paths are fixed (isPathConfigurable:false) — no Paths tab.
       gaugePitchPath: {
         description: 'Attitude Pitch Data',
         path: 'self.navigation.attitude',
@@ -650,18 +660,25 @@ export class WidgetSeaHorizonComponent {
       backgroundColor: 'carbon',
       invertPitch: false,
       invertRoll: false,
-      heelCautionAngle: 20,
-      heelAlarmAngle: 30,
+      heelCautionAngle: DEFAULT_HEEL_CAUTION_ANGLE_RAD,
+      heelAlarmAngle: DEFAULT_HEEL_ALARM_ANGLE_RAD,
       damping: 0
     },
     numDecimal: 1,
     updateInterval: 1000,
     enableTimeout: true,
-    dataTimeout: 5
+    dataTimeout: 5,
+    siVersion: 21
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'gauge.heelCautionAngle': 'rad',
+    'gauge.heelAlarmAngle': 'rad'
   };
 
   // ---- live readings -------------------------------------------------------
-  // Raw (un-inverted) degrees are what the signals hold, so flipping an axis in the config takes
+  // Raw (un-inverted) rad are what the signals hold, so flipping an axis in the config takes
   // effect at once rather than at the next sample.
   private readonly rawPitch = signal<number | null>(null);
   private readonly rawRoll = signal<number | null>(null);
@@ -685,12 +702,12 @@ export class WidgetSeaHorizonComponent {
   private transitionFrame: number | null = null;
 
   protected readonly pitchDeg = computed(() => {
-    const v = this.rawPitch();
+    const v = toDegrees(this.rawPitch());
     if (v == null) return null;
     return this.runtime.options()?.gauge?.invertPitch ? -v : v;
   });
   protected readonly rollDeg = computed(() => {
-    const v = this.rawRoll();
+    const v = toDegrees(this.rawRoll());
     if (v == null) return null;
     return this.runtime.options()?.gauge?.invertRoll ? -v : v;
   });
@@ -744,14 +761,14 @@ export class WidgetSeaHorizonComponent {
     return `translate(${CX} ${CY}) scale(${scale.toFixed(4)}) translate(${-CX} ${-CY})`;
   });
 
-  protected readonly cautionAngle = computed(() => {
-    const raw = this.runtime.options()?.gauge?.heelCautionAngle;
-    return clamp(typeof raw === 'number' && isFinite(raw) ? raw : DEFAULT_CAUTION_ANGLE, 1, HEEL_SCALE_MAX - 1);
-  });
+  /** The caution angle in degrees, confined to the ruled scale. Stored in rad. */
+  protected readonly cautionAngle = computed(() =>
+    clamp(heelAngleDegrees(this.runtime.options()?.gauge?.heelCautionAngle, DEFAULT_HEEL_CAUTION_ANGLE_RAD), 1, HEEL_SCALE_MAX - 1)
+  );
 
+  /** The alarm angle in degrees, confined to the ruled scale and kept above caution. Stored in rad. */
   protected readonly alarmAngle = computed(() => {
-    const raw = this.runtime.options()?.gauge?.heelAlarmAngle;
-    const alarm = clamp(typeof raw === 'number' && isFinite(raw) ? raw : DEFAULT_ALARM_ANGLE, 2, HEEL_SCALE_MAX);
+    const alarm = clamp(heelAngleDegrees(this.runtime.options()?.gauge?.heelAlarmAngle, DEFAULT_HEEL_ALARM_ANGLE_RAD), 2, HEEL_SCALE_MAX);
     // An alarm angle at or below the caution angle would render a zero-width caution band and an
     // alarm band starting before the caution it is meant to escalate from.
     return Math.max(alarm, this.cautionAngle() + 1);
@@ -974,6 +991,7 @@ export class WidgetSeaHorizonComponent {
   });
 
   constructor() {
+    this.streams.useSiValues();
     effect(() => {
       const cfg = this.runtime.options();
       if (!cfg) return;

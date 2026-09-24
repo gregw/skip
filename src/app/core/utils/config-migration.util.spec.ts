@@ -284,3 +284,111 @@ describe('applySiSteps (per-widget SI markers)', () => {
     expect(applySiSteps(config, recordingSink())).toBe(false);
   });
 });
+
+describe('v20 -> v21: Sea Horizon heel angles and AIS radar options in SI', () => {
+  const seaHorizon = (gauge: Record<string, unknown>) => ({ type: 'widget-sea-horizon', config: { gauge } });
+  const aisRadar = (ais: Record<string, unknown>) => ({ type: 'widget-ais-radar', config: { ais } });
+
+  it('converts the heel caution and alarm angles to rad at full precision', () => {
+    const migrated = migrateOneAppVersion(
+      configWith(20, [seaHorizon({ heelCautionAngle: 20, heelAlarmAngle: 30, damping: 3 })]), 20, recordingSink());
+
+    expect(migrated?.app?.configVersion).toBe(21);
+    const [config] = widgetConfigs(migrated as IConfig);
+    // Frozen factor pinned by literal values.
+    expect(config).toEqual({ gauge: { heelCautionAngle: 0.3490658503988659, heelAlarmAngle: 0.5235987755982988, damping: 3 }, [SI_VERSION_KEY]: 21 });
+  });
+
+  it('converts the AIS range rings to metres and the COG vector time to seconds, renaming its key', () => {
+    const migrated = migrateOneAppVersion(
+      configWith(20, [aisRadar({ rangeRings: [1, 3, 6, 12, 24, 48], rangeIndex: '3', cogVectorsMinutes: 10, showCogVectors: true })]), 20, recordingSink());
+
+    const [config] = widgetConfigs(migrated as IConfig);
+    // Frozen factors pinned by literal values.
+    expect(config).toEqual({
+      ais: { rangeRings: [1852, 5556, 11112, 22224, 44448, 88896], rangeIndex: '3', cogVectorsSeconds: 600, showCogVectors: true },
+      [SI_VERSION_KEY]: 21
+    });
+  });
+
+  it('marks a Sea Horizon or AIS radar without the options, and leaves other widgets alone', () => {
+    const migrated = migrateOneAppVersion(configWith(20, [
+      { type: 'widget-sea-horizon', config: { updateInterval: 500 } },
+      { type: 'widget-ais-radar', config: { ais: { viewMode: 'north-up' } } },
+      { type: 'widget-heel-gauge', config: { gauge: { heelCautionAngle: 20 } } }
+    ]), 20, recordingSink());
+    expect(widgetConfigs(migrated as IConfig)).toEqual([
+      { updateInterval: 500, [SI_VERSION_KEY]: 21 },
+      { ais: { viewMode: 'north-up' }, [SI_VERSION_KEY]: 21 },
+      { gauge: { heelCautionAngle: 20 } }
+    ]);
+  });
+
+  it('leaves Wind Steer to the v20 step: a v20 config keeps its close-hauled angle', () => {
+    const migrated = migrateOneAppVersion(
+      configWith(20, [{ type: 'widget-wind-steer', config: { closeHauledLineAngle: 0.6, [SI_VERSION_KEY]: 20 } }]), 20, recordingSink());
+    expect(widgetConfigs(migrated as IConfig)[0]).toEqual({ closeHauledLineAngle: 0.6, [SI_VERSION_KEY]: 20 });
+  });
+
+  it('refuses a config that is not at v20', () => {
+    const sink = recordingSink();
+    expect(migrateOneAppVersion(configWith(19, []), 20, sink)).toBeNull();
+    expect(sink.errors).toHaveLength(1);
+  });
+
+  it('v19 -> v20 does not run the v21 steps', () => {
+    const migrated = migrateOneAppVersion(configWith(19, [seaHorizon({ heelCautionAngle: 20 })]), 19, recordingSink());
+    expect(widgetConfigs(migrated as IConfig)[0]).toEqual({ gauge: { heelCautionAngle: 20 } });
+  });
+
+  it('reruns of v20 -> v21 on marked Sea Horizon and AIS radar configs change nothing', () => {
+    const first = migrateOneAppVersion(configWith(20, [
+      seaHorizon({ heelCautionAngle: 20, heelAlarmAngle: 30 }),
+      aisRadar({ rangeRings: [1, 3, 6], cogVectorsMinutes: 10 })
+    ]), 20, recordingSink()) as IConfig;
+    const expected = structuredClone(widgetConfigs(first));
+    // A tab on an older build lowered the stamp but kept the migrated widgets.
+    first.app!.configVersion = 20;
+
+    const again = migrateOneAppVersion(first, 20, recordingSink()) as IConfig;
+    expect(widgetConfigs(again)).toEqual(expected);
+  });
+
+  it('converts unmarked Sea Horizon and AIS radar configs written back under the current stamp', () => {
+    // An older build's dashboards-only save leaves the stamp at latest.
+    const config = configWith(LATEST_APP_CONFIG_VERSION, [
+      seaHorizon({ heelCautionAngle: 20, heelAlarmAngle: 30 }),
+      aisRadar({ rangeRings: [1, 3], cogVectorsMinutes: 5 })
+    ]);
+
+    expect(applySiSteps(config, recordingSink())).toBe(true);
+    expect(widgetConfigs(config)).toEqual([
+      { gauge: { heelCautionAngle: 0.3490658503988659, heelAlarmAngle: 0.5235987755982988 }, [SI_VERSION_KEY]: 21 },
+      { ais: { rangeRings: [1852, 5556], cogVectorsSeconds: 300 }, [SI_VERSION_KEY]: 21 }
+    ]);
+  });
+
+  it('migrateConfig carries a v19 Sea Horizon through both steps to rad', () => {
+    const result = migrateConfig(configWith(19, [seaHorizon({ heelCautionAngle: 20 })]), recordingSink());
+    expect(result.config.app?.configVersion).toBe(21);
+    expect(widgetConfigs(result.config)[0]).toEqual({ gauge: { heelCautionAngle: 0.3490658503988659 }, [SI_VERSION_KEY]: 21 });
+  });
+
+  it('deletes a stale COG vector time an older build merged back into a marked AIS radar, without reading it', () => {
+    const config = configWith(LATEST_APP_CONFIG_VERSION, [
+      aisRadar({ rangeRings: [1852], cogVectorsSeconds: 900, cogVectorsMinutes: 10 })
+    ]);
+    (widgetConfigs(config)[0])[SI_VERSION_KEY] = 21;
+
+    expect(applySiSteps(config, recordingSink())).toBe(true);
+    expect(widgetConfigs(config)[0]).toEqual({ ais: { rangeRings: [1852], cogVectorsSeconds: 900 }, [SI_VERSION_KEY]: 21 });
+  });
+
+  it('reports no change for marked Sea Horizon and AIS radar configs without stale keys', () => {
+    const config = configWith(LATEST_APP_CONFIG_VERSION, [
+      { type: 'widget-sea-horizon', config: { gauge: { heelCautionAngle: 0.3 }, [SI_VERSION_KEY]: 21 } },
+      { type: 'widget-ais-radar', config: { ais: { cogVectorsSeconds: 600 }, [SI_VERSION_KEY]: 21 } }
+    ]);
+    expect(applySiSteps(config, recordingSink())).toBe(false);
+  });
+});

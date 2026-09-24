@@ -77,8 +77,9 @@ type GaugeOverrides = Partial<NonNullable<IWidgetSvcConfig['gauge']>>;
  * say how each reaches the widget: a reading as the streams directive delivers it, and a heel
  * angle as the widget config stores it.
  */
-const delivered = (deg: number | null): number | null => deg;
-const storedHeelAngle = (deg: number): number => deg;
+const DEG = Math.PI / 180;
+const delivered = (deg: number | null): number | null => deg == null ? null : deg * DEG;
+const storedHeelAngle = (deg: number): number => deg * DEG;
 
 /**
  * A merged config as the runtime directive would hand it to the widget, with the gauge block

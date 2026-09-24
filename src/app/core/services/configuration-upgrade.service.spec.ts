@@ -994,6 +994,35 @@ describe('ConfigurationUpgradeService', () => {
         });
     });
 
+    it('v20 upgrade converts Sea Horizon heel angles and AIS radar options to SI and stamps v21, without a backup', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 20 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', configuration: [
+                { input: { widgetProperties: { type: 'widget-sea-horizon', config: { gauge: { heelCautionAngle: 20, heelAlarmAngle: 30 } } } } },
+                { input: { widgetProperties: { type: 'widget-ais-radar', config: { ais: { rangeRings: [1, 3, 6, 12, 24, 48], cogVectorsMinutes: 10 } } } } }
+            ] }]
+        });
+
+        await service.runUpgrade(20);
+
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        expect(mockStorage.setConfig.mock.calls[0]).toHaveLength(3);
+        const written = mockStorage.setConfig.mock.calls[0][2];
+        expect(written.app.configVersion).toBe(21);
+        const [sea, ais] = written.dashboards[0].configuration.map((w: { input: { widgetProperties: { config: unknown } } }) => w.input.widgetProperties.config);
+        expect(sea).toEqual({ gauge: { heelCautionAngle: 0.3490658503988659, heelAlarmAngle: 0.5235987755982988 }, siVersion: 21 });
+        expect(ais).toEqual({ ais: { rangeRings: [1852, 5556, 11112, 22224, 44448, 88896], cogVectorsSeconds: 600 }, siVersion: 21 });
+    });
+
+    it('v20 upgrade skips a slot that is not at version 20 (no re-stamp)', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 19 }, theme: { themeName: '' }, dashboards: [] });
+        await service.runUpgrade(20);
+        expect(mockStorage.setConfig).not.toHaveBeenCalled();
+    });
+
     it('startFresh retires BOTH global and user legacy configs via an awaited write before resetting', async () => {
         mockStorage.initConfig = null; // remote (Signal K) path
         mockStorage.listConfigs.mockResolvedValueOnce([

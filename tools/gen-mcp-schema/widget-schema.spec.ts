@@ -105,6 +105,22 @@ describe('extractWidgetSchemas', () => {
     expect(bySelector('widget-numeric')?.optionUnits).toBeUndefined();
   });
 
+  it('names nested SI options by their dotted path (Sea Horizon heel angles, AIS radar ranges and COG time)', () => {
+    const seaHorizon = bySelector('widget-sea-horizon');
+    expect(seaHorizon?.optionUnits).toEqual({ 'gauge.heelCautionAngle': 'rad', 'gauge.heelAlarmAngle': 'rad' });
+    const gauge = seaHorizon?.defaultConfig['gauge'] as Record<string, unknown>;
+    expect(gauge['heelCautionAngle']).toBeCloseTo(20 * Math.PI / 180, 15);
+    expect(gauge['heelAlarmAngle']).toBeCloseTo(30 * Math.PI / 180, 15);
+    expect(seaHorizon?.defaultConfig['siVersion']).toBe(21);
+
+    const ais = bySelector('widget-ais-radar');
+    expect(ais?.optionUnits).toEqual({ 'ais.rangeRings': 'm', 'ais.cogVectorsSeconds': 's' });
+    const aisConfig = ais?.defaultConfig['ais'] as Record<string, unknown>;
+    expect(aisConfig['rangeRings']).toEqual([1, 3, 6, 12, 24, 48].map(nm => nm * 1852));
+    expect(aisConfig['cogVectorsSeconds']).toBe(600);
+    expect('cogVectorsMinutes' in aisConfig).toBe(false);
+  });
+
   it('keeps a widget special config object verbatim (bms)', () => {
     const config = bySelector('widget-bms')?.defaultConfig as { bms?: unknown };
     expect(config.bms).toMatchObject({ trackedDevices: [], groups: [], banks: [] });

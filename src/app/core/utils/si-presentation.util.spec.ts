@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { presentationValue, toDegrees } from './si-presentation.util';
+import { presentationValue, presentedOption, toDegrees } from './si-presentation.util';
 
 describe('toDegrees', () => {
   it('converts rad to degrees and passes null and undefined through', () => {
@@ -20,5 +20,17 @@ describe('presentationValue', () => {
     expect(presentationValue(units, '', 5)).toBe(5);
     expect(presentationValue(units, 'unitless', 5)).toBe(5);
     expect(presentationValue(units, 'no-such-measure', 5)).toBe(5);
+  });
+});
+
+describe('presentedOption', () => {
+  it('drops the float noise of a unit round trip', () => {
+    expect(30 * Math.PI / 180 * 180 / Math.PI).not.toBe(30);
+    expect(presentedOption(30 * Math.PI / 180 * 180 / Math.PI)).toBe(30);
+    expect(presentedOption(119.99999999999997)).toBe(120);
+  });
+
+  it('keeps a value that has ten significant digits of its own', () => {
+    expect(presentedOption(12.34567891)).toBe(12.34567891);
   });
 });
