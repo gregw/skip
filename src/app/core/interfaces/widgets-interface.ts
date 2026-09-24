@@ -718,7 +718,10 @@ export interface IWidgetPath {
    */
   showPathSkUnitsFilter?: boolean;
   /**
-   * Used in Widget Options UI and by observeDataStream() method to convert Signal K transmitted values to a specified format.
+   * The measure the slot presents its value in. A structural slot (`showConvertUnitTo: false`)
+   * always presents in this measure; a display slot follows the server's resolved measure and uses
+   * this one only until the path's unit meta arrives. `WidgetStreamsDirective` converts the value to
+   * the measure, or, for a widget in SI mode, delivers the SI value with the measure alongside.
    * Allowed values are defined in {@link unitConversionFunctions}.
    * Also used as a source to identify conversion group.
    * Use null for no conversion.

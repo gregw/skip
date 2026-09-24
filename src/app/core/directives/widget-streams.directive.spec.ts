@@ -64,9 +64,15 @@ class FakeDataService {
 class FakeUnitsService {
     /** Per-path resolved measure a display path follows; defaults to an identity measure ('kn'). */
     pathMeasures = new Map<string, string>();
-    convertToUnit(unit: string, value: number): number {
+    convertToUnit(unit: string, value: number): number | string {
         if (unit === 'x10')
             return value * 10;
+        if (unit === 'knots')
+            return value * 3600 / 1852;
+        if (unit === 'deg')
+            return value * 180 / Math.PI;
+        if (unit === 'D HH:MM:SS')
+            return `0 00:00:${value}`;
         return value;
     }
     resolvePathMeasure(path: string): string {
@@ -962,6 +968,150 @@ describe('WidgetStreamsDirective', () => {
     });
 });
 
+describe('WidgetStreamsDirective SI mode', () => {
+    let directive: WidgetStreamsDirective;
+    let dataSvc: FakeDataService;
+    let unitsSvc: FakeUnitsService;
+
+    beforeEach(() => {
+        TestBed.configureTestingModule({
+            providers: [
+                WidgetStreamsDirective,
+                { provide: DataService, useClass: FakeDataService },
+                { provide: UnitsService, useClass: FakeUnitsService }
+            ]
+        });
+        directive = TestBed.inject(WidgetStreamsDirective);
+        dataSvc = TestBed.inject(DataService) as unknown as FakeDataService;
+        unitsSvc = TestBed.inject(UnitsService) as unknown as FakeUnitsService;
+        directive.useSiValues();
+    });
+
+    const emit = (key: string, value: unknown) =>
+        dataSvc.subjects.get(key)!.next({ data: { value, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+    it('delivers a display slot\'s SI value with the server-resolved measure', () => {
+        unitsSvc.pathMeasures.set('nav.sog', 'knots');
+        directive.setStreamsConfig(makeCfg({ path: 'nav.sog', pathType: 'number', convertUnitTo: 'kph', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('nav.sog|default', 5.14);
+
+        expect(received.at(-1)?.data.value).toBe(5.14);
+        expect(received.at(-1)?.data.measure).toBe('knots');
+    });
+
+    it('delivers a structural slot\'s SI value with its fixed convertUnitTo as measure', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.twa', pathType: 'number', convertUnitTo: 'deg', showConvertUnitTo: false, updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('env.twa|default', Math.PI / 2);
+
+        expect(received.at(-1)?.data.value).toBe(Math.PI / 2);
+        expect(received.at(-1)?.data.measure).toBe('deg');
+    });
+
+    it('tags a display slot with the stored unit before meta resolves, then re-emits with the server measure', () => {
+        unitsSvc.pathMeasures.set('nav.stw', 'unitless');
+        directive.setStreamsConfig(makeCfg({ path: 'nav.stw', pathType: 'number', convertUnitTo: 'knots', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('nav.stw|default', 5.14);
+
+        expect(received.at(-1)?.data.value).toBe(5.14);
+        expect(received.at(-1)?.data.measure).toBe('knots');
+
+        unitsSvc.pathMeasures.set('nav.stw', 'kph');
+        dataSvc.metaSubjects.get('nav.stw')!.next({} as ISkMetadata);
+
+        expect(received).toHaveLength(2);
+        expect(received.at(-1)?.data.value).toBe(5.14);
+        expect(received.at(-1)?.data.measure).toBe('kph');
+    });
+
+    it('delivers the SI number of seconds for a string-format measure', () => {
+        unitsSvc.pathMeasures.set('env.uptime', 'D HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'env.uptime', pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('env.uptime|default', 3600);
+
+        expect(received.at(-1)?.data.value).toBe(3600);
+        expect(received.at(-1)?.data.measure).toBe('D HH:MM:SS');
+    });
+
+    it('keeps carrying the duration format of a display slot', () => {
+        unitsSvc.pathMeasures.set('racing.ttl', 's');
+        unitsSvc.pathDurationFormats.set('racing.ttl', 'HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.ttl', pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('racing.ttl|default', 1800);
+
+        expect(received.at(-1)?.data.durationFormat).toBe('HH:MM:SS');
+    });
+
+    it('passes a null value through on display and structural slots', () => {
+        const cfg = makeMultiCfg([{ key: 'display', path: 'env.a' }, { key: 'structural', path: 'env.b' }]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['display'].pathType = 'number';
+        paths['structural'].pathType = 'number';
+        paths['structural'].convertUnitTo = 'deg';
+        paths['structural'].showConvertUnitTo = false;
+        directive.setStreamsConfig(cfg);
+
+        const received: IPathUpdate[] = [];
+        directive.observe('display', u => received.push(u));
+        directive.observe('structural', u => received.push(u));
+        emit('env.a|default', null);
+        emit('env.b|default', null);
+
+        expect(received.map(u => u.data.value)).toEqual([null, null]);
+        expect(received.map(u => u.data.measure)).toEqual(['kn', 'deg']);
+    });
+
+    it('refuses to switch modes once a slot is observed, so one widget never mixes units', () => {
+        const legacy = TestBed.runInInjectionContext(() => new WidgetStreamsDirective());
+        legacy.setStreamsConfig(makeCfg({ path: 'env.x', pathType: 'number' }));
+        legacy.observe('p', () => { });
+
+        expect(() => legacy.useSiValues()).toThrow();
+    });
+
+    it('keeps refusing after the last observed slot is unobserved', () => {
+        const legacy = TestBed.runInInjectionContext(() => new WidgetStreamsDirective());
+        legacy.setStreamsConfig(makeCfg({ path: 'env.x', pathType: 'number' }));
+        legacy.observe('p', () => { });
+        legacy.unobserve('p');
+
+        expect(() => legacy.useSiValues()).toThrow();
+    });
+
+    it('delivers the converted value to a legacy widget and the SI value to an SI widget on the same path', () => {
+        unitsSvc.pathMeasures.set('nav.sog', 'knots');
+        const legacy = TestBed.runInInjectionContext(() => new WidgetStreamsDirective());
+        const cfg = makeCfg({ path: 'nav.sog', pathType: 'number', updateInterval: 50 });
+        directive.setStreamsConfig(cfg);
+        legacy.setStreamsConfig(cfg);
+
+        const si: IPathUpdate[] = [];
+        const converted: IPathUpdate[] = [];
+        directive.observe('p', u => si.push(u));
+        legacy.observe('p', u => converted.push(u));
+        emit('nav.sog|default', 5.14);
+
+        expect(si.at(-1)?.data.value).toBe(5.14);
+        expect(converted.at(-1)?.data.value).toBeCloseTo(5.14 * 3600 / 1852, 10);
+        expect(si.at(-1)?.data.measure).toBe('knots');
+        expect(converted.at(-1)?.data.measure).toBe('knots');
+    });
+});
+
 /**
  * Faithful-to-DataService fake: path values live in a BehaviorSubject (so the current value is
  * replayed on re-subscription), and timeoutPathObservable() resets the value to null - exactly
@@ -1053,6 +1203,28 @@ describe('WidgetStreamsDirective TTL value reset (#1069)', () => {
         expect(dataSvc.timeoutCalls.length).toBeGreaterThanOrEqual(1);
         // The widget must be reset to null ("--"), not left showing the stale 500.
         expect(hits[hits.length - 1]).toBeNull();
+    });
+
+    it('resets an SI-mode value to null after a TTL timeout', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'log');
+        directive.useSiValues();
+        directive.setStreamsConfig(makeCfg({
+            path: 'env.ttl-si', source: null, pathType: 'number', updateInterval: 50,
+            convertUnitTo: 'x10', showConvertUnitTo: false, enableTimeout: true
+        }));
+
+        const hits: (number | null)[] = [];
+        directive.observe('p', u => hits.push((u?.data?.value as number | null) ?? null));
+
+        dataSvc.subjects.get('env.ttl-si|default')!.next({ data: { value: 7, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        await vi.advanceTimersByTimeAsync(60);
+        expect(hits.at(-1)).toBe(7);
+
+        // The fixed 5 s TTL fires, then the 5 s retry resubscribes and replays the reset null.
+        await vi.advanceTimersByTimeAsync(10100);
+        expect(dataSvc.timeoutCalls.length).toBeGreaterThanOrEqual(1);
+        expect(hits.at(-1)).toBeNull();
     });
 });
 
