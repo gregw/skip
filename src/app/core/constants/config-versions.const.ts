@@ -17,9 +17,9 @@ export const REMOTE_CONFIG_FILE_VERSION = 11;
 
 /**
  * Current app-config schema version, stamped into `IAppConfig.configVersion` by everything that
- * writes a baseline/current config. ConfigurationUpgradeService deliberately does NOT stamp this:
- * its legacy transforms pin their own MIGRATION_OUTPUT_VERSION so that bumping this constant
- * cannot silently re-label old migration output as current — add a chained migration instead.
+ * writes a baseline/current config. The migration steps (config-migration.util) deliberately do NOT
+ * stamp this: each pins its own output version so that bumping this constant cannot silently
+ * re-label old migration output as current — add a chained migration step instead.
  */
 export const LATEST_APP_CONFIG_VERSION = 19;
 
