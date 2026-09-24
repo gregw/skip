@@ -332,6 +332,11 @@ describe('render() rings, labels and COG vectors for a stored config', () => {
     expect(ringRadii(svg)[3]).toBeCloseTo(RADIUS, 9);
   });
 
+  it('labels the rings of a range that is not a whole number of miles to three significant digits', () => {
+    const svg = draw(storedRadarOptions([5000 / METRES_PER_NM], 10), 0);
+    expect([...new Set(ringLabels(svg))]).toEqual(['0.675', '1.35', '2.02', '2.7', '3.37', '4.05']);
+  });
+
   it('falls back to its own ranges when the config has none', () => {
     // The fallback list starts at 3 nm, so index 1 is 6 nm.
     const svg = draw(storedRadarOptions(undefined, 10), 1);

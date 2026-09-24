@@ -527,7 +527,8 @@ export class WidgetAisRadarComponent implements AfterViewInit, OnDestroy {
       .attr('y', d => d.y)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
-      .text(d => `${d.value}`);
+      // Three significant digits: a range authored in metres need not be a whole number of miles.
+      .text(d => `${Number(d.value.toPrecision(3))}`);
 
     labelSelection.exit().remove();
 
