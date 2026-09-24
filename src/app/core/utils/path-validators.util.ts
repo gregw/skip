@@ -30,7 +30,7 @@ export const pathPointerValidator: ValidatorFn = (control: AbstractControl): Val
   return split.valid && split.basePath ? null : { pointer: true };
 };
 
-/** What a widget slot demands of a path, mirroring the filters `DataService.getPathsAndMetaByType` applies. */
+/** What a widget slot demands of a path, mirroring the filters `DataService.getPathsAndFieldsByType` applies. */
 export interface IPathSlotRequirements {
   pathType: string;
   supportsPutOnly: boolean;
@@ -38,7 +38,7 @@ export interface IPathSlotRequirements {
   selfOnly: boolean;
 }
 
-// `getPathsAndMetaByType` matches these against the runtime type of the last received value, and
+// `getPathsAndFieldsByType` matches these against the runtime type of the last received value, and
 // anything else against `meta.type`.
 const RUNTIME_TYPES = ['string', 'number', 'boolean', 'object', 'undefined', 'function', 'symbol', 'bigint', 'Date'];
 

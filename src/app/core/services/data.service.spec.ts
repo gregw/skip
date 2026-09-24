@@ -1085,13 +1085,6 @@ describe('DataService', () => {
           'vessels.urn:mrn:imo:mmsi:100000001.navigation.position#/latitude',
         );
       });
-
-      it('leaves getPathsAndMetaByType without field entries', () => {
-        pushValue('navigation.position', { latitude: 60.1, longitude: 24.9 });
-        pushMeta('navigation.position', POSITION_META);
-
-        expect(pointerPaths(service.getPathsAndMetaByType('number'))).toEqual([]);
-      });
     });
 
     describe('read-side lookups', () => {

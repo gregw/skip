@@ -1023,16 +1023,10 @@ export class DataService implements OnDestroy {
       .filter(path => !selfOnly || path.startsWith('self.'));
   }
 
-  public getPathsAndMetaByType(valueType: string, supportsPutOnly = false, hasZones = false, selfOnly = true): IPathMetaData[] {
-    return this.getSkDataArray()
-      .filter(item => this.pathMatches(item, valueType, supportsPutOnly, hasZones, selfOnly))
-      .map(item => ({ path: item.path, meta: item.meta }));
-  }
-
   /**
-   * {@link getPathsAndMetaByType} plus a `path#/field` entry for each field of type `valueType` that
-   * an object path's `meta.properties` declares, listed right after its base path's position in the
-   * store. Metadata alone is enough: a field is listed before any value arrives. A field cannot be
+   * Every known path whose value (or `meta.type`) is `valueType` and that passes the put, zones and
+   * self filters, plus a `path#/field` entry for each field of type `valueType` that an object path's
+   * `meta.properties` declares, listed right after its base path's position in the store. Metadata alone is enough: a field is listed before any value arrives. A field cannot be
    * written or carry zones, so `supportsPutOnly` and `hasZones` requests get no field entries.
    */
   public getPathsAndFieldsByType(valueType: string, supportsPutOnly = false, hasZones = false, selfOnly = true): IPathMetaData[] {
