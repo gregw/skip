@@ -15,7 +15,7 @@ import { DefaultConnectionConfig } from '../../../default-config/config.blank.co
 import { buildDefaultConfig } from '../../../default-config/config.default.factory';
 import { isValidConfigShape } from '../utils/config-shape.util';
 import { dashboardsRequireRemoteContexts } from '../utils/remote-context-demand.util';
-import { CONSOLE_MIGRATION_SINK, migrateConfig } from '../utils/config-migration.util';
+import { CONSOLE_MIGRATION_SINK, ConfigMigrationResult, migrateConfig, skipsPersistentUpgrade } from '../utils/config-migration.util';
 import { cloneDeep } from 'lodash-es';
 import { BehaviorSubject, Observable, Subscription } from 'rxjs';
 import { DataService } from './data.service';
@@ -237,10 +237,21 @@ export class AppNetworkInitService implements OnDestroy {
             this._bootstrapStatus$.next('degraded');
             return;
           }
+          // A session AppComponent does not upgrade would otherwise render an older slot exactly as
+          // stored. The migrated copy is stamped current while the slot is not, so the session holds
+          // it as a view: one that gains write access later must not save that stamp over dashboards
+          // no upgrade has touched.
+          let migratedInMemory = false;
+          if (skipsPersistentUpgrade(this.embedMode, this.storage)) {
+            const result = this.migrateProfileInMemory(remoteConfig);
+            remoteConfig = result.config;
+            migratedInMemory = result.migrated;
+          }
           const bootstrapContext: IStorageRemoteBootstrapContext = {
             sharedConfigName: effectiveSharedConfigName,
             configFileVersion: REMOTE_CONFIG_FILE_VERSION,
-            initConfig: remoteConfig
+            initConfig: remoteConfig,
+            readOnly: migratedInMemory
           };
           this.storage.bootstrapRemoteContext(bootstrapContext);
         }
@@ -397,6 +408,20 @@ export class AppNetworkInitService implements OnDestroy {
     } catch (error) {
       console.warn(`[AppInit Network Service] The published shared configuration cannot be migrated (${(error as Error).message}); using the dashboards shipped with this version.`);
       return buildDefaultConfig();
+    }
+  }
+
+  /**
+   * Migrates a stored profile for a session that renders it without running the persistent upgrade.
+   * The result is never written back. A profile the chain cannot migrate renders as stored: it is
+   * the user's own dashboard, and showing it unmigrated beats swapping in the shipped one.
+   */
+  private migrateProfileInMemory(config: IConfig): ConfigMigrationResult {
+    try {
+      return migrateConfig(config, CONSOLE_MIGRATION_SINK);
+    } catch (error) {
+      console.warn(`[AppInit Network Service] The loaded profile cannot be migrated (${(error as Error).message}); rendering it as stored.`);
+      return { config, migrated: false };
     }
   }
 

@@ -1,10 +1,11 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { HttpTestingController } from '@angular/common/http/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BehaviorSubject } from 'rxjs';
 
 import { AppNetworkInitService, IBootstrapIssue, TCookieAuthOutcome } from './app-initNetwork.service';
 import { IConfig, IConnectionConfig } from '../interfaces/app-settings.interfaces';
-import { SignalKConnectionService } from './signalk-connection.service';
+import { EndpointStatus, IEndpointStatus, SignalKConnectionService } from './signalk-connection.service';
 import { AuthenticationService, ILoginStatus } from './authentication.service';
 import { SsoRedirectService } from './sso-redirect.service';
 import { ConnectionState, ConnectionStateMachine } from './connection-state-machine.service';
@@ -897,6 +898,163 @@ describe('AppNetworkInitService', () => {
 
             expect(mockStorage.listConfigs).not.toHaveBeenCalled();
             expect(latestIssue()).toEqual({ reason: 'missing-shared-config', statusCode: 404, sharedConfigName: 'default' });
+        });
+
+        describe('a session that does not run the persistent upgrade', () => {
+            it('renders an embedded ?profile slot migrated in memory, writing nothing', async () => {
+                seedPersistedConnConfig('default');
+                loginAs();
+                mockEmbed.embed.mockReturnValue(true);
+                mockEmbed.profile.mockReturnValue('day');
+                mockStorage.listConfigs.mockResolvedValue([{ scope: 'user', name: 'day' }]);
+                mockStorage.getConfig.mockResolvedValue(v18AutopilotConfig());
+
+                await service.initNetworkServices();
+
+                const rendered = bootstrappedConfig();
+                expect(rendered.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
+                expect(autopilotPaths(rendered)['windAngleTrueWater']).toBeUndefined();
+                expect(autopilotPaths(rendered)['headingTrue'].isPathConfigurable).toBe(false);
+                expect(mockStorage.setConfig).not.toHaveBeenCalled();
+            });
+
+            it('renders a read-only user\'s slot migrated in memory, writing nothing', async () => {
+                seedPersistedConnConfig('default');
+                loginAs();
+                mockStorage.canPersist.mockReturnValue(false);
+                mockStorage.getConfig.mockResolvedValue(v18AutopilotConfig());
+
+                await service.initNetworkServices();
+
+                const rendered = bootstrappedConfig();
+                expect(rendered.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
+                expect(autopilotPaths(rendered)['windAngleTrueWater']).toBeUndefined();
+                expect(mockStorage.setConfig).not.toHaveBeenCalled();
+            });
+
+            it('renders a slot the chain cannot migrate as loaded, with a warning', async () => {
+                seedPersistedConnConfig('default');
+                loginAs();
+                mockStorage.canPersist.mockReturnValue(false);
+                const legacy = { app: { configVersion: 10 }, theme: null, dashboards: [] } as unknown as IConfig;
+                mockStorage.getConfig.mockResolvedValue(legacy);
+                const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+                await service.initNetworkServices();
+
+                expect(bootstrappedConfig()).toEqual(legacy);
+                expect(warn).toHaveBeenCalledWith(expect.stringMatching(/too old/i));
+                expect(latestStatus()).toBe('ready');
+                warn.mockRestore();
+            });
+
+            it('leaves a writable session\'s slot to the persistent upgrade', async () => {
+                seedPersistedConnConfig('default');
+                loginAs();
+                mockStorage.getConfig.mockResolvedValue(v18AutopilotConfig());
+
+                await service.initNetworkServices();
+
+                expect(bootstrappedConfig().app?.configVersion).toBe(18);
+            });
+
+            // The in-memory copy is stamped current while the slot is not. A session that owned it
+            // could write that stamp over dashboards no upgrade has touched, so it boots as a view.
+            it('bootstraps a slot it migrated in memory as a read-only view', async () => {
+                seedPersistedConnConfig('default');
+                loginAs();
+                mockStorage.canPersist.mockReturnValue(false);
+                mockStorage.getConfig.mockResolvedValue(v18AutopilotConfig());
+
+                await service.initNetworkServices();
+
+                expect(mockStorage.bootstrapRemoteContext).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
+            });
+
+            it('bootstraps an embedded slot it migrated in memory as a read-only view', async () => {
+                seedPersistedConnConfig('default');
+                loginAs();
+                mockEmbed.embed.mockReturnValue(true);
+                mockStorage.getConfig.mockResolvedValue(v18AutopilotConfig());
+
+                await service.initNetworkServices();
+
+                expect(mockStorage.bootstrapRemoteContext).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
+            });
+
+            it('bootstraps a current slot as the session\'s own, with nothing to migrate', async () => {
+                seedPersistedConnConfig('default');
+                loginAs();
+                mockStorage.canPersist.mockReturnValue(false);
+                mockStorage.getConfig.mockResolvedValue({ app: { configVersion: LATEST_APP_CONFIG_VERSION }, theme: null, dashboards: [] } as unknown as IConfig);
+
+                await service.initNetworkServices();
+
+                expect(mockStorage.bootstrapRemoteContext.mock.calls[0][0].readOnly).toBeFalsy();
+            });
+
+            describe('against the real storage write gate', () => {
+                let storage: StorageService;
+                let http: HttpTestingController;
+                let writable = false;
+
+                beforeEach(() => {
+                    writable = false;
+                    TestBed.resetTestingModule();
+                    TestBed.configureTestingModule({
+                        providers: [
+                            AppNetworkInitService,
+                            StorageService,
+                            {
+                                provide: SignalKConnectionService,
+                                useValue: {
+                                    ...mockConnection,
+                                    serverServiceEndpoint$: new BehaviorSubject<IEndpointStatus>({
+                                        state: EndpointStatus.Connected, message: '', serverDescription: '',
+                                        httpServiceUrl: 'http://localhost/signalk/v1/api/', WsServiceUrl: ''
+                                    }),
+                                    serverVersion$: new BehaviorSubject<string | null>(null)
+                                }
+                            },
+                            { provide: AuthenticationService, useValue: { ...mockAuth, canWriteUserData: () => writable } },
+                            { provide: SsoRedirectService, useValue: mockSsoRedirect },
+                            { provide: ConnectionStateMachine, useValue: mockConnectionStateMachine },
+                            { provide: SignalKDeltaService, useValue: {} },
+                            { provide: DataService, useValue: {} },
+                            { provide: InternetReachabilityService, useValue: mockInternetReachability },
+                            { provide: EmbedModeService, useValue: mockEmbed }
+                        ]
+                    });
+                    service = TestBed.inject(AppNetworkInitService);
+                    storage = TestBed.inject(StorageService);
+                    http = TestBed.inject(HttpTestingController);
+                });
+
+                afterEach(() => http.verify());
+
+                async function bootWithoutWriteAccess(slot: IConfig): Promise<void> {
+                    seedPersistedConnConfig('default');
+                    loginAs();
+                    vi.spyOn(storage, 'getConfig').mockResolvedValue(slot);
+                    await service.initNetworkServices();
+                    // A loginStatus re-probe grants the session write access after boot.
+                    writable = true;
+                }
+
+                it('keeps a slot migrated in memory unwritable after the session gains write access', async () => {
+                    await bootWithoutWriteAccess(v18AutopilotConfig());
+
+                    expect(storage.canPersist()).toBe(false);
+                    storage.patchConfig('IAppConfig', { configVersion: LATEST_APP_CONFIG_VERSION });
+                    http.expectNone(() => true);
+                });
+
+                it('lets a current slot become writable when the session gains write access', async () => {
+                    await bootWithoutWriteAccess({ app: { configVersion: LATEST_APP_CONFIG_VERSION }, theme: null, dashboards: [] } as unknown as IConfig);
+
+                    expect(storage.canPersist()).toBe(true);
+                });
+            });
         });
 
         it('pre-v13 boot: a valid override never leaks the ephemeral slot identity into the persisted config', async () => {

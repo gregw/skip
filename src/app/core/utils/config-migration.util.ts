@@ -120,6 +120,16 @@ export class ConfigTooOldError extends Error {
   }
 }
 
+/**
+ * Whether a session renders its profile without the persistent upgrade: the chromeless embed, which
+ * must never rewrite a slot, and any session storage refuses writes from. AppComponent skips the
+ * upgrade for such a session and the bootstrap migrates its profile in memory instead; one predicate,
+ * so a session is never migrated twice or rendered unmigrated.
+ */
+export function skipsPersistentUpgrade(embedMode: { embed(): boolean }, storage: { canPersist(): boolean }): boolean {
+  return embedMode.embed() || !storage.canPersist();
+}
+
 /** Outcome of an in-memory migration: the current-version config and whether any step ran. */
 export interface ConfigMigrationResult {
   config: IConfig;
