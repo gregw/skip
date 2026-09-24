@@ -19,7 +19,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective, widgetPathSignature, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
-import { presentationValue } from '../../core/utils/si-presentation.util';
+import { presentationValue, presentedScaleBounds } from '../../core/utils/si-presentation.util';
 import { ITheme } from '../../core/services/app-service';
 
 @Component({
@@ -59,7 +59,7 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
         convertUnitTo: 'unitless'
       }
     },
-    displayScale: { lower: 0, upper: 100, type: 'linear' },
+    displayScale: { lower: null, upper: null, type: 'linear' },
     gauge: {
       type: 'ngRadial',
       subType: 'measuring',
@@ -76,7 +76,14 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
     enableTimeout: false,
     color: 'contrast',
     dataTimeout: 5,
-    ignoreZones: false
+    ignoreZones: false,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'displayScale.lower': 'SI unit of gaugePath',
+    'displayScale.upper': 'SI unit of gaugePath'
   };
 
   // Gauge option setting constant
@@ -110,13 +117,18 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
   private effectiveMeasure = computed<string>(() =>
     this.effectiveUnit() || (this.runtime.options()?.paths?.['gaugePath']?.convertUnitTo ?? 'unitless')
   );
+  /** The scale bounds in the presentation measure, which the clamp shares. */
+  private scaleBounds = computed(() => presentedScaleBounds(
+    this.unitsService,
+    this.effectiveMeasure(),
+    this.runtime.options()?.displayScale,
+    this.metadata.displayScale(),
+    { lower: 0, upper: 100 }
+  ));
   protected adjustedScale = computed<IScale>(() => {
     const cfg = this.runtime.options();
     if (!cfg) return { min: 0, max: 100, majorTicks: [] };
-    const fromUnit = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-    const toMeasure = this.effectiveMeasure();
-    const lower = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.lower ?? 0);
-    const upper = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.upper ?? 100);
+    const { lower, upper } = this.scaleBounds();
     if (cfg.gauge?.subType === 'capacity') {
       return { min: lower, max: upper, majorTicks: [] };
     }
@@ -178,10 +190,7 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
 
         const measure = path.data.measure ?? '';
         this.effectiveUnit.set(measure);
-        const fromUnit = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-        const toMeasure = measure || fromUnit;
-        const lower = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.lower ?? 0);
-        const upper = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.upper ?? 100);
+        const { lower, upper } = this.scaleBounds();
 
         const si = (path?.data?.value as number) ?? null;
         this.dataAvailable.set(si != null);
@@ -196,10 +205,10 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
       });
     });
 
-    // Metadata observation (idempotent) – only when zones not ignored
+    // Metadata observation (idempotent): zones, and the meta scale for bounds that are not set
     effect(() => {
       const cfg = this.runtime.options();
-      if (!cfg || cfg.ignoreZones) return;
+      if (!cfg) return;
       untracked(() => this.metadata.observe('gaugePath'));
     });
 

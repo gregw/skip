@@ -19,7 +19,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective, widgetPathSignature, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
-import { presentationValue } from '../../core/utils/si-presentation.util';
+import { presentationValue, presentedScaleBounds } from '../../core/utils/si-presentation.util';
 import { ITheme } from '../../core/services/app-service';
 
 /** Cap on the gauge's short axis as a fraction of its long axis, so the bar never turns squat. */
@@ -64,7 +64,7 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
         convertUnitTo: 'unitless'
       }
     },
-    displayScale: { lower: 0, upper: 100, type: 'linear' },
+    displayScale: { lower: null, upper: null, type: 'linear' },
     gauge: {
       type: 'ngLinear',
       subType: 'vertical', // vertical | horizontal
@@ -78,7 +78,14 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
     updateInterval: 500,
     enableTimeout: false,
     dataTimeout: 5,
-    ignoreZones: false
+    ignoreZones: false,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'displayScale.lower': 'SI unit of gaugePath',
+    'displayScale.upper': 'SI unit of gaugePath'
   };
 
   protected readonly ngGauge = viewChild<LinearGauge>('linearGauge');
@@ -118,15 +125,22 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
     this.currentState.set(States.Normal);
   }
 
+  /** Measure the scale, zones and clamp are presented in: the tagged one, else the stored convertUnitTo before the first update. */
+  private effectiveMeasure = computed<string>(() =>
+    this.effectiveUnit() || (this.runtime.options()?.paths?.['gaugePath']?.convertUnitTo ?? 'unitless')
+  );
+  /** The scale bounds in the presentation measure, which the clamp shares. */
+  private scaleBounds = computed(() => presentedScaleBounds(
+    this.unitsService,
+    this.effectiveMeasure(),
+    this.runtime.options()?.displayScale,
+    this.metadata.displayScale(),
+    { lower: 0, upper: 100 }
+  ));
   protected adjustedScale = computed<IScale>(() => {
     const cfg = this.runtime.options();
     if (!cfg) return { min: 0, max: 100, majorTicks: [] };
-    // displayScale bounds are stored in the user-picked convertUnitTo; re-express them in the
-    // effective (server-resolved) measure so the scale lines up with the presented value.
-    const stored = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-    const effective = this.effectiveUnit();
-    const lower = this.unitsService.convertBetweenMeasures(stored, effective, cfg.displayScale?.lower ?? 0);
-    const upper = this.unitsService.convertBetweenMeasures(stored, effective, cfg.displayScale?.upper ?? 100);
+    const { lower, upper } = this.scaleBounds();
     if (cfg.gauge?.enableTicks) {
       return adjustLinearScaleAndMajorTicks(lower, upper);
     }
@@ -143,9 +157,8 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
 
     if (!cfg.paths?.['gaugePath']) return [];
     // Zones are in SI base; convert them to the effective measure so the bands align with the
-    // presented value and the reinterpreted scale. Fall back to the stored unit before first data.
-    const effective = this.effectiveUnit() || (cfg.paths['gaugePath'].convertUnitTo ?? 'unitless');
-    return getHighlights(zones, theme, effective, this.unitsService, this.adjustedScale().min, this.adjustedScale().max);
+    // presented value and the scale.
+    return getHighlights(zones, theme, this.effectiveMeasure(), this.unitsService, this.adjustedScale().min, this.adjustedScale().max);
   });
   protected displayName = computed(() => this.runtime.options()?.displayName || 'Gauge Label');
   /** Unit symbol for the header row; blank for a measure that carries none. */
@@ -169,11 +182,7 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
           const si = (path?.data?.value as number) ?? null;
           const measure = path.data.measure ?? '';
           this.effectiveUnit.set(measure);
-          // Clamp against the stored displayScale bounds re-expressed in the effective measure,
-          // so the presented value and the reinterpreted scale share one unit space.
-          const stored = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-          const lower = this.unitsService.convertBetweenMeasures(stored, measure, cfg.displayScale?.lower ?? 0);
-          const upper = this.unitsService.convertBetweenMeasures(stored, measure, cfg.displayScale?.upper ?? 100);
+          const { lower, upper } = this.scaleBounds();
           this.dataAvailable.set(si != null);
           if (si == null) {
             this.value.set(lower);
@@ -191,10 +200,10 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
       });
     });
 
-    // Metadata observation
+    // Metadata observation: zones, and the meta scale for bounds that are not set
     effect(() => {
       const cfg = this.runtime.options();
-      if (!cfg || cfg.ignoreZones) return;
+      if (!cfg) return;
       untracked(() => this.metadata.observe('gaugePath'));
     });
 

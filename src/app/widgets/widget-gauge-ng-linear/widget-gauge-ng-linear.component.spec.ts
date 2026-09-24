@@ -8,7 +8,8 @@ import { WidgetStreamsDirective } from '../../core/directives/widget-streams.dir
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
 import { IWidgetSvcConfig, IPathArray, IDataHighlight } from '../../core/interfaces/widgets-interface';
-import { ISkZone, States } from '../../core/interfaces/signalk-interfaces';
+import { ISkDisplayScale, ISkZone, States } from '../../core/interfaces/signalk-interfaces';
+import { adjustLinearScaleAndMajorTicks } from '../../core/utils/dataScales.util';
 import { DataService, IPathUpdate } from '../../core/services/data.service';
 
 /**
@@ -65,7 +66,6 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
     ({ data: { value, timestamp: null, measure }, state: States.Normal }) as unknown as IPathUpdate;
 
   const unitsFake = {
-    convertBetweenMeasures: (from: string, to: string, value: number): number => from === to ? value : value,
     // Identity: these specs feed readings already expressed in the tagged measure.
     convertToUnit: (_measure: string, value: number): number => value,
     getUnitDisplaySymbol: (measure: string | null | undefined): string => measure ?? '',
@@ -95,7 +95,7 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
           // synchronously inside the same effect run as the clear.
           if (replayOnObserve) next(replayOnObserve);
         } } },
-        { provide: WidgetMetadataDirective, useValue: { zones: () => [], observe: () => undefined } },
+        { provide: WidgetMetadataDirective, useValue: { zones: () => [], displayScale: () => undefined, observe: () => undefined } },
         { provide: UnitsService, useValue: unitsFake }
       ]
     }).compileComponents();
@@ -316,7 +316,7 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
  * the library after clamping, the scale bounds and major ticks, the header's unit and the zone
  * highlights, with ticks on (nice tick range) and off (bounds as they are). The vertical and
  * horizontal subtypes differ only in geometry. Pins the output so a change of the unit the widget
- * computes in cannot move anything on screen. The stored scale is 0..100 °C; the server may
+ * computes in cannot move anything on screen. The stored scale is 0..100 °C, in SI; the server may
  * present the path in another measure.
  */
 describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
@@ -324,6 +324,7 @@ describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
   let next: ((u: IPathUpdate) => void) | undefined;
   let siValues: boolean;
   let siBeforeObserve: boolean | undefined;
+  let metaObserved: string[];
 
   interface LinearOutput {
     value: () => number | null | undefined;
@@ -349,16 +350,25 @@ describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
     fixture.detectChanges();
   };
 
-  const render = (enableTicks: boolean): void => {
+  interface RenderOptions {
+    displayScale?: IWidgetSvcConfig['displayScale'];
+    convertUnitTo?: string;
+    metaScale?: ISkDisplayScale;
+    ignoreZones?: boolean;
+  }
+
+  const render = (enableTicks: boolean, over: RenderOptions = {}): void => {
     const dflt = WidgetGaugeNgLinearComponent.DEFAULT_CONFIG;
     const gaugePath = (dflt.paths as IPathArray)['gaugePath'];
     const cfg: IWidgetSvcConfig = {
       ...dflt,
-      ignoreZones: false,
-      displayScale: { lower: 0, upper: 100, type: 'linear' },
+      ignoreZones: over.ignoreZones ?? false,
+      // 0..100 °C, in SI.
+      displayScale: over.displayScale ?? { lower: KELVIN, upper: KELVIN + 100, type: 'linear' },
       gauge: { ...dflt.gauge, type: 'ngLinear', subType: 'vertical', enableTicks },
-      paths: { gaugePath: { ...gaugePath, path: 'self.propulsion.main.temperature', convertUnitTo: 'celsius' } }
+      paths: { gaugePath: { ...gaugePath, path: 'self.propulsion.main.temperature', convertUnitTo: over.convertUnitTo ?? 'celsius' } }
     };
+    metaObserved = [];
     TestBed.configureTestingModule({
       imports: [WidgetGaugeNgLinearComponent],
       providers: [
@@ -369,7 +379,11 @@ describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
           useSiValues: () => { siValues = true; },
           observe: (_p: string, n: (u: IPathUpdate) => void) => { siBeforeObserve ??= siValues; next = n; }
         } },
-        { provide: WidgetMetadataDirective, useValue: { zones: signal(temperatureZones), observe: () => undefined } }
+        { provide: WidgetMetadataDirective, useValue: {
+          zones: signal(temperatureZones),
+          displayScale: signal(over.metaScale),
+          observe: (key: string) => { metaObserved.push(key); }
+        } }
       ]
     });
     siValues = false;
@@ -485,6 +499,46 @@ describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
         { from: expect.closeTo(122), to: expect.closeTo(158), color: '#ff0' },
         { from: expect.closeTo(158), to: expect.closeTo(212), color: '#f00' }
       ]);
+    });
+  });
+
+  describe('scale bounds', () => {
+    it('draws 0..60 Hz as 0..3600 rpm, with the ticks a 0..3600 range gets', () => {
+      render(true, { displayScale: { lower: 0, upper: 60, type: 'linear' }, convertUnitTo: 'rpm', ignoreZones: true });
+      feed(30, 'rpm');
+      const s = shown();
+      expect(s.value).toBeCloseTo(1800);
+      expect({ min: s.min, max: s.max, majorTicks: s.ticks }).toEqual(adjustLinearScaleAndMajorTicks(0, 3600));
+      expect(s.unit).toBe('rpm');
+    });
+
+    it('draws 273.15..393.15 K as 0..120 °C, and as 32..248 °F when the server shows fahrenheit', () => {
+      render(false, { displayScale: { lower: KELVIN, upper: KELVIN + 120, type: 'linear' } });
+      feed(KELVIN + 20, 'celsius');
+      expect([shown().min, shown().max]).toEqual([0, 120]);
+      feed(KELVIN + 20, 'fahrenheit');
+      expect([shown().min, shown().max]).toEqual([32, 248]);
+    });
+
+    it("takes the path's meta scale for bounds that are not set", () => {
+      render(false, {
+        displayScale: { lower: null, upper: null, type: 'linear' },
+        metaScale: { lower: KELVIN, upper: KELVIN + 120, type: 'linear' }
+      });
+      feed(KELVIN + 20, 'fahrenheit');
+      expect([shown().min, shown().max]).toEqual([32, 248]);
+    });
+
+    it('draws 0..100 in the presentation measure when neither the config nor meta sets a bound', () => {
+      render(false, { displayScale: { lower: null, upper: null, type: 'linear' } });
+      feed(KELVIN + 20, 'fahrenheit');
+      expect([shown().min, shown().max]).toEqual([0, 100]);
+      expect(shown().value).toBeCloseTo(68);
+    });
+
+    it('observes the path meta for its scale even when zones are ignored', () => {
+      render(false, { ignoreZones: true });
+      expect(metaObserved).toContain('gaugePath');
     });
   });
 });
