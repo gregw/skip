@@ -111,28 +111,36 @@ export class WidgetRacerLineViewComponent {
         description: 'Position of the vessel',
         path: 'self.navigation.position',
         source: 'default', pathType: 'object', pathRequired: false, isPathConfigurable: false,
-        showPathSkUnitsFilter: false, pathSkUnitsFilter: null
+        showPathSkUnitsFilter: false, pathSkUnitsFilter: null,
+        // This and the four below are live navigation, published continuously, so they
+        // take the stale-data TTL: a frozen boat on the drawing reads as a live one. The
+        // drawing holds its frame and the gun's verdict across a lost fix - see
+        // updateViewFrame and startedClean.
+        enableTimeout: true
       },
       headingPath: {
         description: 'True heading of the vessel',
         path: 'self.navigation.headingTrue',
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 'rad', showConvertUnitTo: false, showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 'rad'
+        pathSkUnitsFilter: 'rad',
+        enableTimeout: true
       },
       twdPath: {
         description: 'True wind direction',
         path: 'self.environment.wind.directionTrue',
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 'rad', showConvertUnitTo: false, showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 'rad'
+        pathSkUnitsFilter: 'rad',
+        enableTimeout: true
       },
       cogPath: {
         description: 'Course over ground (true) of the vessel',
         path: 'self.navigation.courseOverGroundTrue',
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 'rad', showConvertUnitTo: false, showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 'rad'
+        pathSkUnitsFilter: 'rad',
+        enableTimeout: true
       },
       sogPath: {
         // Kept in m/s: the projections are metres on the ground, not a readout.
@@ -140,7 +148,8 @@ export class WidgetRacerLineViewComponent {
         path: 'self.navigation.speedOverGround',
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 'm/s', showConvertUnitTo: false, showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 'm/s'
+        pathSkUnitsFilter: 'm/s',
+        enableTimeout: true
       },
       lineLengthPath: {
         description: 'Length of the start line',

@@ -164,12 +164,10 @@ describe('WidgetRacerLineViewComponent', () => {
       'startLineNamePath', 'linesPath', 'boatLengthPath']) {
       expect(paths[key]?.enableTimeout, `${key} would be timed out`).toBe(false);
     }
-    for (const key of ['positionPath', 'headingPath', 'cogPath', 'sogPath', 'twdPath']) {
-      expect(paths[key]?.enableTimeout, `${key} should keep the timeout`).toBeUndefined();
-    }
-    // The readings the plugin computes on every position take the TTL on their own, the
-    // widget declaring no timeout of its own for them to inherit.
-    for (const key of ['ttlPath', 'ttbPath']) {
+    // The live navigation, and the readings the plugin computes on every position, take
+    // the TTL on their own, the widget declaring no timeout of its own for them to inherit.
+    for (const key of ['positionPath', 'headingPath', 'cogPath', 'sogPath', 'twdPath',
+      'ttlPath', 'ttbPath']) {
       expect(paths[key]?.enableTimeout, `${key} would never go stale`).toBe(true);
     }
     // The countdown is the exception among the live readings: published once when the
@@ -237,6 +235,39 @@ describe('WidgetRacerLineViewComponent', () => {
     // Well past the pin: the along-line leg to the wedge appears beside it.
     aLine(0.00090, 0.00200);
     expect(svg()?.querySelectorAll('.dimension')).toHaveLength(2);
+  });
+
+  /**
+   * The zone and across labels meet at the corner the approach turns, and used to land on
+   * top of each other there - both legs short, or the zone leg running away under the
+   * across label. Swept over boat positions off both ends, on both sides of the line, far
+   * and near, so every combination of leg directions and lengths comes up.
+   */
+  it('never draws the two leg labels over each other', () => {
+    const box = (text: Element) => {
+      const F = Number(text.getAttribute('font-size'));
+      const width = (text.textContent ?? '').trim().length * F * 0.6;
+      const x = Number(text.getAttribute('x')), y = Number(text.getAttribute('y'));
+      const anchor = text.getAttribute('text-anchor');
+      const left = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
+      return { left, right: left + width, top: y - F * 0.75, bottom: y + F * 0.25 };
+    };
+    let pairs = 0;
+    for (let lat = -0.0012; lat <= 0.0018; lat += 0.00008) {
+      for (let lon = -0.0014; lon <= 0.0026; lon += 0.00016) {
+        aLine(lat, lon);
+        const texts = [...svg()!.querySelectorAll('.dimension text')];
+        if (texts.length !== 2) continue;
+        pairs++;
+        const [a, b] = texts.map(box);
+        const apart = a.right <= b.left || b.right <= a.left
+          || a.bottom <= b.top || b.bottom <= a.top;
+        expect(apart, `labels overlap with the boat at ${lat.toFixed(5)}, ${lon.toFixed(5)}: `
+          + `${JSON.stringify(a)} ${JSON.stringify(b)}`).toBe(true);
+      }
+    }
+    // The sweep has to have actually turned corners for it to prove anything.
+    expect(pairs).toBeGreaterThan(50);
   });
 
   /**
@@ -399,6 +430,19 @@ describe('WidgetRacerLineViewComponent', () => {
     }
   });
 
+  /**
+   * The position takes the stale-data TTL. Losing the fix takes the boat off the drawing,
+   * but re-fitting to the bare line would zoom out and back in again when it returns.
+   */
+  it('holds the frame the boat was last seen in when the fix is lost', () => {
+    aLine(0.00005, 0.00010);
+    const line = () => svg()!.querySelector('.start-line')!;
+    const before = ['x1', 'y1', 'x2', 'y2'].map(a => line().getAttribute(a));
+    feed({ positionPath: null });
+    expect(svg()!.querySelector('.boat')).toBeNull();
+    expect(['x1', 'y1', 'x2', 'y2'].map(a => line().getAttribute(a))).toEqual(before);
+  });
+
   it('keeps the line clear of the corner controls', () => {
     // A boat well up-course, which puts the line at the bottom of the fitted span.
     aLine(-0.00060, 0.00030);
@@ -509,6 +553,32 @@ describe('WidgetRacerLineViewComponent', () => {
       feed({ ttsPath: 5 });
       feed({ ttsPath: 0 });
       expect(lineClasses()).toContain('started');
+    });
+
+    /**
+     * The position takes the stale-data TTL, so a fix that goes quiet just before the gun
+     * arrives there as null. The start is judged from where the boat was last seen.
+     */
+    it('judges the gun from the last fix when the position has just timed out', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
+      behind();
+      feed({ positionPath: null });
+      feed({ ttsPath: 0 });
+      expect(lineClasses()).toContain('started');
+    });
+
+    it('does not judge the gun from a fix lost long before it', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 60 });
+        behind();
+        feed({ positionPath: null });
+        vi.advanceTimersByTime(60_000);
+        feed({ ttsPath: 0 });
+        expect(lineClasses()).not.toContain('started');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('stays red rather than going green when the boat was over at the gun', () => {

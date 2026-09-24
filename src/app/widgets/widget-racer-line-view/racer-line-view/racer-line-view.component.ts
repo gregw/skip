@@ -70,6 +70,13 @@ declare global {
  */
 const MIN_EFFECTIVE_VMG = 0.514444;
 
+/**
+ * How old the last fix may be and still judge the gun, when the position has timed out
+ * by then. The stale-data TTL is 5s and its retry another 5s, so this covers one missed
+ * retry; a fix lost for longer than that says nothing about the start.
+ */
+const LAST_FIX_AT_GUN_MS = 15000;
+
 const LEGEND_CURRENT = 'Current cog/sog to start';
 const LEGEND_STUB = 'Current course over ground (no timer running)';
 
@@ -402,6 +409,12 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    * zero that has already been through its gun. See startedClean.
    */
   private countdownSeen = false;
+  /**
+   * Which side of the line the boat was last seen on, and when. A fix that times out just
+   * before the gun takes the boat away at the one moment it is needed, so the gun is
+   * judged from here instead - if it is recent enough to still say anything.
+   */
+  private lastBoatSide: { c: number; at: number } | null = null;
 
   constructor() {
     // Keep the view frame up to date. Reading the geometry, width and mode here makes
@@ -429,6 +442,9 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
         // this effect reading the geometry - is taken for a second gun.
         if (armed) this.countdownSeen = false;
         if (tts != null && tts > 0) this.countdownSeen = true;
+        // Measured against a line that is gone, the side means nothing.
+        if (!geo) this.lastBoatSide = null;
+        else if (geo.boat) this.lastBoatSide = { c: geo.boat.c, at: Date.now() };
 
         if (this.startedClean()) {
           // Only the next countdown ends the state - see startedClean for why the timer
@@ -440,8 +456,10 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
         // The gun. The plugin publishes 0 once before it stops the countdown, so this is
         // seen exactly once per start.
         if (tts != null && tts <= 0) {
-          const boat = geo?.boat;
-          this.startedClean.set(!!boat && boat.c >= 0);
+          const last = this.lastBoatSide;
+          const side = geo?.boat?.c
+            ?? (last && Date.now() - last.at <= LAST_FIX_AT_GUN_MS ? last.c : null);
+          this.startedClean.set(side != null && side >= 0);
         }
       });
     });
@@ -865,7 +883,8 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     };
 
     const place = (name: TVmgName, x: number, y: number) => {
-      const value = this.bestVmg()[name];
+      const best = this.bestVmg()[name];
+      const value = best == null ? null : this.units.convertToUnit(unit, best);
       pad.values.push({
         x, y: y + valueFont * 0.35, fontSize: valueFont, title: VMG_TITLE[name],
         text: value == null ? '--' : value.toFixed(1),
@@ -1118,6 +1137,11 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     const current = this.viewFrame();
     const tolerance = Math.max(0, smoothing ?? 25) / 100;
 
+    // A lost fix - the position timing out - takes the boat away, not the line. Re-fitting
+    // for the line alone would zoom out to it and straight back in when the fix returns,
+    // so the frame the boat was last seen in is held until it does.
+    if (!geo.boat && current && key === this.frameKey) return;
+
     const ideal = this.fitFrame(geo, W);
     if (!current || key !== this.frameKey
       || this.frameDrift(this.frameIdeal ?? current, ideal, geo, W) > tolerance
@@ -1365,20 +1389,40 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
 
     // Each leg is labelled with how far it is - a dimension states a distance - while the
     // VMG it would be sailed at stays on the hover text.
+    //
+    // The two labels meet at the corner, so each is put on the side of its own leg that
+    // faces away from the other one: the across label on the far side of its rule from the
+    // zone leg, the zone label on the far side of its rule from the across leg. Which way
+    // each leg runs from the corner, on screen (0 when there is no such leg):
+    const zoneLabel = this.formatDistance(toZone);
+    const acrossLabel = this.formatDistance(across);
+    const towardsBoat = toZone > 0 ? Math.sign(sx(a) - sx(cornerA)) : 0;
+    const towardsLine = across > 0 ? Math.sign(sy(0) - sy(c)) : 0;
+    // A short leg has no room for its label in a break in the rule and takes it outside,
+    // past the corner. When both are short both labels want that same outside quarter,
+    // so the zone label moves round to the line's side of its rule: the across label has
+    // left the side of its own rule for the corner, and that is the room it frees.
+    const zoneShort = !this.legRoomy(Math.abs(sx(a) - sx(cornerA)), zoneLabel);
+    const acrossShort = !this.legRoomy(Math.abs(sy(0) - sy(c)), acrossLabel);
+    const zoneSide = towardsLine === 0 ? undefined
+      : zoneShort && acrossShort ? towardsLine : -towardsLine;
+    const acrossSide = towardsBoat === 0 ? undefined : -towardsBoat;
+
     if (toZone > 0) {
       scene.legs.push(this.buildLeg(
-        sx(a), sy(c), sx(cornerA), sy(c), true, this.formatDistance(toZone),
+        sx(a), sy(c), sx(cornerA), sy(c), true, zoneLabel,
         `Along the line to the start zone at `
-        + `${VMG_TITLE[parallelName].replace('Best VMG ', '')}`, W));
+        + `${VMG_TITLE[parallelName].replace('Best VMG ', '')}`, W, zoneSide));
     }
     // Only a leg with another after it leads; a lone leg has nothing to be ordered against.
     if (toZone > 0 && across > 0) scene.legs[0].leading = true;
     if (across > 0) {
       scene.legs.push(this.buildLeg(
-        sx(cornerA), sy(c), sx(cornerA), sy(0), false, this.formatDistance(across),
+        sx(cornerA), sy(c), sx(cornerA), sy(0), false, acrossLabel,
         `Across to the line at `
-        + `${VMG_TITLE[normalName].replace('Best VMG ', '')}`, W));
+        + `${VMG_TITLE[normalName].replace('Best VMG ', '')}`, W, acrossSide));
     }
+    if (scene.legs.length === 2) this.separateLegLabels(scene.legs[0], scene.legs[1], towardsLine);
 
     // Where the boat gets to by the gun, walked along those legs at those VMGs. Short of
     // the line is late, past it is over early - the same reading as the COG projection,
@@ -1407,9 +1451,23 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     };
   }
 
-  /** One leg of the approach, as a dimension line with end ticks and a labelled break. */
+  /**
+   * Whether a leg this long has room for its label in a break in the rule. The along-line
+   * leg is often very short, the boat being just outside the wedge.
+   */
+  private legRoomy(length: number, label: string): boolean {
+    return length > label.length * this.LEG_FONT * 0.6 + 16;
+  }
+
+  /**
+   * One leg of the approach, as a dimension line with end ticks and a labelled break.
+   *
+   * @param side Which side of the rule the label goes: for a horizontal leg -1 above and
+   *   1 below, for a vertical one -1 left and 1 right. Left out, a horizontal label goes
+   *   above a roomy leg and below a short one, and a vertical label to the right.
+   */
   private buildLeg(x1: number, y1: number, x2: number, y2: number, horizontal: boolean,
-    label: string, title: string, W: number): ISceneLeg {
+    label: string, title: string, W: number, side?: number): ISceneLeg {
     const tick = 5;
     const ticks = horizontal
       ? `M${x1},${y1 - tick} L${x1},${y1 + tick} M${x2},${y2 - tick} L${x2},${y2 + tick}`
@@ -1421,27 +1479,26 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     const charWidth = F * 0.6;
 
     // A dimension's value sits in a break in the rule, but a short leg has no room for
-    // one - and the along-line leg is often very short, the boat being just outside the
-    // wedge. Below that, the label goes outside the far tick instead, the way a drawing
-    // takes a dimension outside its own extension lines.
-    const length = Math.hypot(x2 - x1, y2 - y1);
-    const roomy = length > label.length * charWidth + 16;
+    // one. Then the label goes outside the far tick instead, the way a drawing takes a
+    // dimension outside its own extension lines.
+    const roomy = this.legRoomy(Math.hypot(x2 - x1, y2 - y1), label);
     let labelX: number, labelY: number, anchor: ISceneLeg['anchor'];
     if (horizontal) {
+      const below = (side ?? (roomy ? -1 : 1)) > 0;
+      labelY = (y1 + y2) / 2 + (below ? F * 1.13 : -F * 0.4);
       if (roomy) {
         labelX = (x1 + x2) / 2;
-        labelY = (y1 + y2) / 2 - F * 0.4;
         anchor = 'middle';
       } else {
-        // Out past the corner and below the rule: the boat sits on this leg's other end,
-        // and the across leg runs up from the corner, so this corner is the free quarter.
+        // Out past the corner: the boat sits on this leg's other end.
         labelX = x1 < x2 ? x2 + F * 0.53 : x2 - F * 0.53;
-        labelY = (y1 + y2) / 2 + F * 1.13;
         anchor = x1 < x2 ? 'start' : 'end';
       }
     } else {
-      labelX = x1 + F * 0.53;
-      anchor = 'start';
+      const right = (side ?? 1) > 0;
+      labelX = right ? x1 + F * 0.53 : x1 - F * 0.53;
+      anchor = right ? 'start' : 'end';
+      // Short, it goes out past the corner end, away from the line.
       labelY = roomy ? (y1 + y2) / 2 + F * 0.33
         : (y1 < y2 ? y1 - F * 0.53 : y1 + F * 0.93);
     }
@@ -1453,6 +1510,35 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     labelX = Math.min(Math.max(labelX, lead + 3), Math.max(W - trail - 3, lead + 3));
 
     return { x1, y1, x2, y2, ticks, label, title, labelX, labelY, anchor, leading: false };
+  }
+
+  /**
+   * The box a leg's label covers, from its anchor, text length and font size. An estimate -
+   * SVG text is not measured - on the same 0.6em character width the placement uses.
+   */
+  private legLabelBox(leg: ISceneLeg): { left: number; right: number; top: number; bottom: number } {
+    const F = this.LEG_FONT;
+    const width = leg.label.length * F * 0.6;
+    const left = leg.anchor === 'start' ? leg.labelX
+      : leg.anchor === 'end' ? leg.labelX - width : leg.labelX - width / 2;
+    return { left, right: left + width, top: leg.labelY - F * 0.75, bottom: leg.labelY + F * 0.25 };
+  }
+
+  /**
+   * The last word on the two labels not overlapping. Placing each on the side of its leg
+   * away from the other keeps them apart on its own, but holding a label inside the
+   * drawing can push it back across; then the across label slides on along its own leg,
+   * towards the line, until it is clear.
+   *
+   * @param towardsLine Which way the across leg runs from the corner on screen.
+   */
+  private separateLegLabels(zone: ISceneLeg, across: ISceneLeg, towardsLine: number): void {
+    const a = this.legLabelBox(zone), b = this.legLabelBox(across);
+    const gap = 2;
+    if (a.right + gap <= b.left || b.right + gap <= a.left
+      || a.bottom + gap <= b.top || b.bottom + gap <= a.top) return;
+    const shift = towardsLine < 0 ? b.bottom - a.top + gap : a.bottom - b.top + gap;
+    across.labelY += (towardsLine < 0 ? -1 : 1) * shift;
   }
 
   /**
@@ -1473,13 +1559,10 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    * The VMG the plugin would divide a leg by: the collected best, or the one the boat is
    * achieving right now if that is better - the same rule as the plugin's own
    * effectiveVmg. Only used against a plugin that does not publish that directly.
-   * Returned in metres per second, whatever unit the path is displayed in.
+   * In metres per second, as the collected bests arrive.
    */
   private deriveEffectiveVmg(name: TVmgName, lineBearingDeg: number): number {
-    const display = this.bestVmg()[name];
-    const unit = this.vmgUnit();
-    const perBaseUnit = this.units.convertToUnit(unit, 1) || 1;
-    let best = display == null ? 0 : display / perBaseUnit;
+    let best = this.bestVmg()[name] ?? 0;
 
     const cog = this.cog(), sog = this.sog();
     if (cog != null && sog != null) {
