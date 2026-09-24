@@ -9,6 +9,8 @@ import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
 import { States } from '../../core/interfaces/signalk-interfaces';
 
+const DEG = Math.PI / 180;
+
 /**
  * A compass with no heading must still show its rose, with no needle and a '--' readout — a needle
  * parked on north is indistinguishable from a real heading of 000.
@@ -43,8 +45,9 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
     };
   };
 
-  const update = (value: unknown): IPathUpdate =>
-    ({ data: { value, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
+  // The tests speak degrees; the widget takes its reading in rad.
+  const update = (deg: number | null): IPathUpdate =>
+    ({ data: { value: deg == null ? null : deg * DEG, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
 
   beforeEach(async () => {
     capturedNext = undefined;
@@ -58,7 +61,8 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
         // The real directive replays a BehaviorSubject, so a path holding a value delivers it
         // synchronously inside the same effect run as the clear.
         if (replayOnObserve) next(replayOnObserve);
-      }
+      },
+      useSiValues: () => undefined
     };
     const unitsFake = {
       getUnitDisplaySymbol: (measure: string | null | undefined): string => measure ?? '',
@@ -185,8 +189,6 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
   });
 });
 
-const DEG = Math.PI / 180;
-
 /**
  * What the compass shows for a set of SI inputs: the value handed to the gauge, the readout and the
  * unit label. Pins the output so a change of the unit the widget computes in cannot move anything
@@ -204,8 +206,7 @@ describe('WidgetGaugeNgCompassComponent output from SI inputs', () => {
 
   /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
   const feed = (rad: number | null): void => {
-    const legacy = rad == null ? null : rad / DEG;
-    next?.({ data: { value: legacy, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
+    next?.({ data: { value: rad, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
   };
   const feedDegrees = (deg: number): void => feed(deg * DEG);
 

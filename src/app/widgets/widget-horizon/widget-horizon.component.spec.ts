@@ -7,6 +7,8 @@ import { WidgetStreamsDirective } from '../../core/directives/widget-streams.dir
 import { IPathUpdate } from '../../core/services/data.service';
 import type { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 
+const DEG = Math.PI / 180;
+
 // The "Show Frame" checkbox binds directly to gauge.noFrameVisible (no inversion),
 // so noFrameVisible === true means "draw the frame". Two consumers must stay in
 // agreement: buildOptions().frameVisible (the steelseries gauge option) and
@@ -24,7 +26,7 @@ function mount(noFrameVisible: boolean) {
     imports: [WidgetHorizonComponent],
     providers: [
       { provide: WidgetRuntimeDirective, useValue: { options } },
-      { provide: WidgetStreamsDirective, useValue: { observe: vi.fn() } },
+      { provide: WidgetStreamsDirective, useValue: { observe: vi.fn(), useSiValues: vi.fn() } },
     ],
   });
   const fixture = TestBed.createComponent(WidgetHorizonComponent);
@@ -73,6 +75,7 @@ describe('WidgetHorizonComponent sub-field extraction', () => {
           provide: WidgetStreamsDirective,
           useValue: {
             observe: (pathName: string, _next: unknown, subField?: string) => calls.push({ pathName, subField }),
+            useSiValues: () => undefined,
           },
         },
       ],
@@ -87,8 +90,6 @@ describe('WidgetHorizonComponent sub-field extraction', () => {
     expect(calls).toContainEqual({ pathName: 'gaugeRollPath', subField: 'roll' });
   });
 });
-
-const DEG = Math.PI / 180;
 
 /**
  * The pitch and roll the widget hands the steelseries Horizon, which takes degrees, for a set of SI
@@ -106,8 +107,7 @@ describe('WidgetHorizonComponent output from SI inputs', () => {
   const feed = (pathKey: string, rad: number | null): void => {
     const callback = callbacks.get(pathKey);
     if (!callback) throw new Error(`${pathKey} is not observed`);
-    const legacy = rad == null ? null : rad / DEG;
-    callback({ data: { value: legacy, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
+    callback({ data: { value: rad, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
   };
   const feedDegrees = (pathKey: string, deg: number): void => feed(pathKey, deg * DEG);
 

@@ -5,6 +5,8 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { IPathUpdate } from '../../core/services/data.service';
 
+const DEG = Math.PI / 180;
+
 describe('WidgetHeelGaugeComponent', () => {
   let fixture: ComponentFixture<WidgetHeelGaugeComponent>;
   let component: WidgetHeelGaugeComponent;
@@ -49,6 +51,7 @@ describe('WidgetHeelGaugeComponent', () => {
             observe: (pathName: string, _next: unknown, subField?: string) => {
               observeCalls.push({ pathName, subField });
             },
+            useSiValues: () => undefined,
           },
         },
       ],
@@ -91,8 +94,6 @@ describe('WidgetHeelGaugeComponent', () => {
   });
 });
 
-const DEG = Math.PI / 180;
-
 /**
  * What the gauge shows for a set of SI roll inputs: the readout and side label, and where the fine
  * and coarse pointers sit on their arcs. Pins the output so a change of the unit the widget
@@ -113,8 +114,7 @@ describe('WidgetHeelGaugeComponent output from SI inputs', () => {
 
   /** An SI roll sample as the streams directive delivers it to this widget, with its presentation measure. */
   const feed = (rad: number | null): void => {
-    const legacy = rad == null ? null : rad / DEG;
-    next?.({ data: { value: legacy, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
+    next?.({ data: { value: rad, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
   };
   const feedDegrees = (deg: number): void => feed(deg * DEG);
 

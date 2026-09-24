@@ -7,6 +7,8 @@ import { WidgetStreamsDirective } from '../../core/directives/widget-streams.dir
 import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
 
+const DEG = Math.PI / 180;
+
 /**
  * The card is this component's own SVG, so these assert both the decisions behind the reading (what
  * the LCD says, what happens to a stale one) and the geometry the template renders from. Both host
@@ -36,8 +38,9 @@ describe('WidgetSteelCompassComponent', () => {
     return { ...dflt, paths: { gaugePath: { ...gaugePath, path } } };
   };
 
-  const update = (value: unknown): IPathUpdate =>
-    ({ data: { value, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
+  // The tests speak degrees; the widget takes its reading in rad.
+  const update = (deg: number): IPathUpdate =>
+    ({ data: { value: deg * DEG, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
 
   beforeEach(async () => {
     capturedNext = undefined;
@@ -45,7 +48,8 @@ describe('WidgetSteelCompassComponent', () => {
     const streamsFake = {
       observe(_pathName: string, next: (u: IPathUpdate) => void) {
         capturedNext = next;
-      }
+      },
+      useSiValues: () => undefined
     };
     await TestBed.configureTestingModule({
       imports: [WidgetSteelCompassComponent],
@@ -288,8 +292,6 @@ describe('shortestTurn', () => {
   });
 });
 
-const DEG = Math.PI / 180;
-
 /**
  * What the dial shows for a set of SI inputs, read from the rendered SVG: the card's rotation
  * attribute, the LCD digits and the reference letter. Pins the output so a change of the unit the
@@ -301,7 +303,7 @@ describe('WidgetSteelCompassComponent output from SI inputs', () => {
 
   /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
   const feed = (rad: number): void => {
-    next?.({ data: { value: rad / DEG, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
+    next?.({ data: { value: rad, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
     fixture.detectChanges();
   };
   const feedDegrees = (deg: number): void => feed(deg * DEG);

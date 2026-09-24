@@ -35,6 +35,8 @@ function rgbaToHex(rgba: string) {
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase() + alpha;
 }
 
+const RAD_TO_DEG = 180 / Math.PI;
+
 function convertNegToPortDegree(degree: number) {
   if (degree < 0) {
       degree = 360 + degree;
@@ -151,6 +153,7 @@ export class WidgetGaugeNgCompassComponent implements AfterViewInit {
   protected displayName = computed(() => this.runtime.options()?.displayName);
 
   constructor() {
+    this.streams.useSiValues();
     // Data effect
     effect(() => {
       const cfg = this.runtime.options();
@@ -168,14 +171,16 @@ export class WidgetGaugeNgCompassComponent implements AfterViewInit {
         const path = normalizeWidgetPath(pCfg?.path);
         if (!signature || !path) return;
         this.streams.observe('gaugePath', pkt => {
-        let raw = (pkt?.data?.value as number) ?? null;
+        const raw = (pkt?.data?.value as number) ?? null;
         this.dataAvailable.set(raw != null);
         if (raw == null) {
           this.value.set(0);
           this.textValue.set('--');
         } else {
-          if (this.negToPortPaths.includes(path)) raw = convertNegToPortDegree(raw);
-          const clamped = Math.min(Math.max(raw, 0), 360);
+          // The dial and the readout are in degrees; the reading arrives in rad.
+          let degrees = raw * RAD_TO_DEG;
+          if (this.negToPortPaths.includes(path)) degrees = convertNegToPortDegree(degrees);
+          const clamped = Math.min(Math.max(degrees, 0), 360);
           this.value.set(clamped);
           this.textValue.set(clamped.toFixed(0));
         }
