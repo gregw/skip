@@ -7,6 +7,8 @@ import { WidgetStreamsDirective } from '../../core/directives/widget-streams.dir
 import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
 
+const DEG = Math.PI / 180;
+
 /**
  * The card is this component's own SVG, so these assert both the decisions behind the reading (what
  * the LCD says, what happens to a stale one) and the geometry the template renders from. Both host
@@ -36,8 +38,9 @@ describe('WidgetSteelCompassComponent', () => {
     return { ...dflt, paths: { gaugePath: { ...gaugePath, path } } };
   };
 
-  const update = (value: unknown): IPathUpdate =>
-    ({ data: { value, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
+  // The tests speak degrees; the widget takes its reading in rad.
+  const update = (deg: number): IPathUpdate =>
+    ({ data: { value: deg * DEG, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
 
   beforeEach(async () => {
     capturedNext = undefined;
@@ -45,7 +48,8 @@ describe('WidgetSteelCompassComponent', () => {
     const streamsFake = {
       observe(_pathName: string, next: (u: IPathUpdate) => void) {
         capturedNext = next;
-      }
+      },
+      useSiValues: () => undefined
     };
     await TestBed.configureTestingModule({
       imports: [WidgetSteelCompassComponent],
@@ -285,5 +289,81 @@ describe('shortestTurn', () => {
     expect(shortestTurn(0, 180)).toBe(-180);
     expect(shortestTurn(180, 0)).toBe(-180);
     expect(shortestTurn(90, 270)).toBe(-180);
+  });
+});
+
+/**
+ * What the dial shows for a set of SI inputs, read from the rendered SVG: the card's rotation
+ * attribute, the LCD digits and the reference letter. Pins the output so a change of the unit the
+ * widget computes in cannot move anything on screen.
+ */
+describe('WidgetSteelCompassComponent output from SI inputs', () => {
+  let fixture: ComponentFixture<WidgetSteelCompassComponent>;
+  let next: ((u: IPathUpdate) => void) | undefined;
+
+  /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
+  const feed = (rad: number): void => {
+    next?.({ data: { value: rad, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
+    fixture.detectChanges();
+  };
+  const feedDegrees = (deg: number): void => feed(deg * DEG);
+
+  const shown = (): { card: string | null | undefined; lcd: string; unit: string } => {
+    const el = fixture.nativeElement as HTMLElement;
+    const card = el.querySelector('g.card')?.getAttribute('transform')
+      ?.replace(/-?\d+\.\d+/g, n => String(Number(Number(n).toFixed(6))));
+    return {
+      card,
+      lcd: (el.querySelector('.lcd-value')?.textContent ?? '').trim(),
+      unit: (el.querySelector('.lcd-unit')?.textContent ?? '').trim()
+    };
+  };
+
+  const render = (path: string): void => {
+    const dflt = WidgetSteelCompassComponent.DEFAULT_CONFIG;
+    const gaugePath = (dflt.paths as IPathArray)['gaugePath'];
+    TestBed.configureTestingModule({
+      imports: [WidgetSteelCompassComponent],
+      providers: [
+        { provide: WidgetRuntimeDirective, useValue: { options: signal<IWidgetSvcConfig | undefined>({ ...dflt, paths: { gaugePath: { ...gaugePath, path } } }) } },
+        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }, useSiValues: () => undefined } }
+      ]
+    });
+    fixture = TestBed.createComponent(WidgetSteelCompassComponent);
+    fixture.componentRef.setInput('id', 'steel-compass-si');
+    fixture.componentRef.setInput('type', 'widget-gauge-steel-compass');
+    fixture.componentRef.setInput('theme', { contrast: '#ffffff' });
+    fixture.detectChanges();
+  };
+
+  beforeEach(() => { next = undefined; });
+  afterEach(() => fixture?.destroy());
+
+  it('turns the card against the heading and prints it', () => {
+    render('self.navigation.headingMagnetic');
+    feedDegrees(87);
+    expect(shown()).toEqual({ card: 'rotate(-87 250 250)', lcd: '087', unit: '°M' });
+  });
+
+  it('turns the short way from 350° to 10°', () => {
+    render('self.navigation.headingTrue');
+    feedDegrees(350);
+    expect(shown()).toEqual({ card: 'rotate(10 250 250)', lcd: '350', unit: '°T' });
+    feedDegrees(10);
+    expect(shown()).toEqual({ card: 'rotate(-10 250 250)', lcd: '010', unit: '°T' });
+  });
+
+  it('puts a port-side wind angle on the card', () => {
+    render('self.environment.wind.angleApparent');
+    feedDegrees(-45);
+    expect(shown()).toEqual({ card: 'rotate(45 250 250)', lcd: '315', unit: '°' });
+  });
+
+  it('wraps an accumulated turn and rounds up to north', () => {
+    render('self.navigation.headingTrue');
+    feedDegrees(370);
+    expect(shown()).toEqual({ card: 'rotate(-10 250 250)', lcd: '010', unit: '°T' });
+    feedDegrees(359.7);
+    expect(shown()).toEqual({ card: 'rotate(0.3 250 250)', lcd: '000', unit: '°T' });
   });
 });

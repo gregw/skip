@@ -14,9 +14,12 @@ describe('SvgAutopilotComponent', () => {
     apModeValue: () => string;
   }
 
+  // The tests speak degrees; the component takes its angle inputs in rad.
+  const ANGLE_INPUTS = new Set(['autopilotTarget', 'compassHeading', 'appWindAngle', 'rudderAngle']);
   const set = (inputs: Record<string, unknown>) => {
     for (const [key, value] of Object.entries(inputs)) {
-      (fixture.componentRef.setInput.bind(fixture.componentRef) as (k: string, v: unknown) => void)(key, value);
+      const converted = ANGLE_INPUTS.has(key) && typeof value === 'number' ? value * Math.PI / 180 : value;
+      (fixture.componentRef.setInput.bind(fixture.componentRef) as (k: string, v: unknown) => void)(key, converted);
     }
     fixture.detectChanges();
   };

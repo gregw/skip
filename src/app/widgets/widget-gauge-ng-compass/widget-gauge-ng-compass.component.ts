@@ -18,6 +18,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective, widgetPathSignature, normalizeWidgetPath, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { ITheme } from '../../core/services/app-service';
 import { UnitsService } from '../../core/services/units.service';
+import { RAD_TO_DEG } from '../../core/utils/si-presentation.util';
 
 function rgbaToHex(rgba: string) {
   const match = rgba.match(/(\d+(\.\d+)?|\.\d+)/g);
@@ -151,6 +152,7 @@ export class WidgetGaugeNgCompassComponent implements AfterViewInit {
   protected displayName = computed(() => this.runtime.options()?.displayName);
 
   constructor() {
+    this.streams.useSiValues();
     // Data effect
     effect(() => {
       const cfg = this.runtime.options();
@@ -168,14 +170,16 @@ export class WidgetGaugeNgCompassComponent implements AfterViewInit {
         const path = normalizeWidgetPath(pCfg?.path);
         if (!signature || !path) return;
         this.streams.observe('gaugePath', pkt => {
-        let raw = (pkt?.data?.value as number) ?? null;
+        const raw = (pkt?.data?.value as number) ?? null;
         this.dataAvailable.set(raw != null);
         if (raw == null) {
           this.value.set(0);
           this.textValue.set('--');
         } else {
-          if (this.negToPortPaths.includes(path)) raw = convertNegToPortDegree(raw);
-          const clamped = Math.min(Math.max(raw, 0), 360);
+          // The dial and the readout are in degrees; the reading arrives in rad.
+          let degrees = raw * RAD_TO_DEG;
+          if (this.negToPortPaths.includes(path)) degrees = convertNegToPortDegree(degrees);
+          const clamped = Math.min(Math.max(degrees, 0), 360);
           this.value.set(clamped);
           this.textValue.set(clamped.toFixed(0));
         }

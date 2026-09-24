@@ -13,7 +13,7 @@ describe('WidgetRacerTimerComponent', () => {
   let fixture: ComponentFixture<WidgetRacerTimerComponent>;
 
   const runtimeMock = { options: () => WidgetRacerTimerComponent.DEFAULT_CONFIG };
-  const streamsMock = { observe: vi.fn() };
+  const streamsMock = { observe: vi.fn(), useSiValues: () => undefined };
   const requestResults = new Subject<skRequest>();
   const requestsMock = {
     subscribeRequest: () => requestResults.asObservable(),

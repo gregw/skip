@@ -5,6 +5,7 @@ import { SkipResizeObserverDirective } from '../../core/directives/skip-resize-o
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective, widgetPathSignature, normalizeWidgetPath, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { ITheme } from '../../core/services/app-service';
+import { RAD_TO_DEG } from '../../core/utils/si-presentation.util';
 
 /**
  * The slice of the steelseries global this widget paints with. The library is loaded from
@@ -72,7 +73,6 @@ interface ICardLabel { x: number; y: number; text: string; size: number; weight:
 const CX = 250;
 const CY = 250;
 const R_CARD = 188;
-
 function point(radius: number, angleDeg: number): [number, number] {
   const t = (angleDeg - 90) * Math.PI / 180;
   return [CX + radius * Math.cos(t), CY + radius * Math.sin(t)];
@@ -377,6 +377,7 @@ export class WidgetSteelCompassComponent implements OnDestroy {
   }
 
   constructor() {
+    this.streams.useSiValues();
     // Repaint on a resize or a material change; both are rare, and the card above is untouched.
     effect(() => {
       const side = this.side();
@@ -400,8 +401,9 @@ export class WidgetSteelCompassComponent implements OnDestroy {
         this.streams.observe('gaugePath', pkt => {
           const raw = (pkt?.data?.value as number) ?? null;
           // A non-numeric reading would otherwise print "NaN" on the LCD and leave the card where
-          // it was: a misconfigured source is a no-reading, the same as a null.
-          this.applyHeading(Number.isFinite(raw) ? toCompassDegrees(raw as number) : null);
+          // it was: a misconfigured source is a no-reading, the same as a null. The reading is in rad;
+          // the card and the LCD are in degrees.
+          this.applyHeading(Number.isFinite(raw) ? toCompassDegrees((raw as number) * RAD_TO_DEG) : null);
         });
       });
     });

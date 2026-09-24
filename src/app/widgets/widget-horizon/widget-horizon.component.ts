@@ -3,6 +3,7 @@ import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { ITheme } from '../../core/services/app-service';
+import { RAD_TO_DEG } from '../../core/utils/si-presentation.util';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare let steelseries: any; // 3rd party global (loaded via scripts bundle)
@@ -66,8 +67,8 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
     paths: {
       // pathType stays 'number' though the path is the whole navigation.attitude object: the
       // streams pipeline extracts the pitch/roll sub-field (observe below) BEFORE the number-type
-      // conversion runs, so it converts the scalar rad->deg. Switching to 'object' would skip that
-      // conversion and render radians. Both paths are fixed (isPathConfigurable:false) — no Paths tab.
+      // handling runs, so the scalar arrives in rad with 'deg' as its presentation measure.
+      // Both paths are fixed (isPathConfigurable:false) — no Paths tab.
       gaugePitchPath: {
         description: 'Attitude Pitch Data',
         path: 'self.navigation.attitude',
@@ -123,10 +124,12 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private gauge: any = null;
   // Structural options cache key removed – always rebuild on size / config change for simplicity
+  // Last readings in rad; the steelseries Horizon takes degrees.
   private latestPitch = 0;
   private latestRoll = 0;
 
   constructor() {
+    this.streams.useSiValues();
     // Observe pitch path
     effect(() => {
       const cfg = this.runtime.options(); if (!cfg) return;
@@ -137,7 +140,7 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
         this.latestPitch = v;
         if (this.gauge) {
           const inv = cfg.gauge?.invertPitch ? -v : v;
-          try { this.gauge.setPitchAnimated(inv); } catch { /* ignore */ }
+          try { this.gauge.setPitchAnimated(inv * RAD_TO_DEG); } catch { /* ignore */ }
         }
       }, 'pitch'));
     });
@@ -152,7 +155,7 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
         this.latestRoll = v;
         if (this.gauge) {
           const inv = cfg.gauge?.invertRoll ? -v : v;
-          try { this.gauge.setRollAnimated(inv); } catch { /* ignore */ }
+          try { this.gauge.setRollAnimated(inv * RAD_TO_DEG); } catch { /* ignore */ }
         }
       }, 'roll'));
     });
@@ -290,8 +293,8 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
 
   private applyInversions(cfg: IWidgetSvcConfig): void {
     if (!this.gauge) return;
-    try { this.gauge.setPitchAnimated(cfg.gauge?.invertPitch ? -this.latestPitch : this.latestPitch); } catch { /* ignore */ }
-    try { this.gauge.setRollAnimated(cfg.gauge?.invertRoll ? -this.latestRoll : this.latestRoll); } catch { /* ignore */ }
+    try { this.gauge.setPitchAnimated((cfg.gauge?.invertPitch ? -this.latestPitch : this.latestPitch) * RAD_TO_DEG); } catch { /* ignore */ }
+    try { this.gauge.setRollAnimated((cfg.gauge?.invertRoll ? -this.latestRoll : this.latestRoll) * RAD_TO_DEG); } catch { /* ignore */ }
   }
 
   ngOnDestroy(): void {

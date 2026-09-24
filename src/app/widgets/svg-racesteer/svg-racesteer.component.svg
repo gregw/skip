@@ -451,7 +451,7 @@
         class="wind-vmg-offset"
         [style.fill]="targetVMGOffsetRatioColor()"
         x="610"
-        y="890">{{ targetVMGOffset() }}<tspan style="font-weight:normal;font-size:30px;"> {{ vmgSpeedUnitSymbol() }}</tspan></text>
+        y="890">{{ targetVMGOffsetText() }}<tspan style="font-weight:normal;font-size:30px;"> {{ vmgSpeedUnitSymbol() }}</tspan></text>
     </g>
     <g id="waypointCounter">
       <text
@@ -475,7 +475,7 @@
         xml:space="preserve"
         class="waypoint-value"
         x="1060"
-        y="1165"><tspan class="tack-label">HDG: </tspan>{{ waypointAngle() }}<tspan style="font-weight:normal;">°<tspan style="font-weight:normal;font-size:30px;">T</tspan></tspan></text>
+        y="1165"><tspan class="tack-label">HDG: </tspan>{{ waypointAngleDeg() }}<tspan style="font-weight:normal;">°<tspan style="font-weight:normal;font-size:30px;">T</tspan></tspan></text>
     </g>
   </g>
   <g id="layerIndicators" style="display:inline">

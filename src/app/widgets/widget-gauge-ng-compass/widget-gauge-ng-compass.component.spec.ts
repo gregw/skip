@@ -9,6 +9,8 @@ import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
 import { States } from '../../core/interfaces/signalk-interfaces';
 
+const DEG = Math.PI / 180;
+
 /**
  * A compass with no heading must still show its rose, with no needle and a '--' readout — a needle
  * parked on north is indistinguishable from a real heading of 000.
@@ -43,8 +45,9 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
     };
   };
 
-  const update = (value: unknown): IPathUpdate =>
-    ({ data: { value, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
+  // The tests speak degrees; the widget takes its reading in rad.
+  const update = (deg: number | null): IPathUpdate =>
+    ({ data: { value: deg == null ? null : deg * DEG, timestamp: null }, state: 'normal' }) as unknown as IPathUpdate;
 
   beforeEach(async () => {
     capturedNext = undefined;
@@ -58,7 +61,8 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
         // The real directive replays a BehaviorSubject, so a path holding a value delivers it
         // synchronously inside the same effect run as the clear.
         if (replayOnObserve) next(replayOnObserve);
-      }
+      },
+      useSiValues: () => undefined
     };
     const unitsFake = {
       getUnitDisplaySymbol: (measure: string | null | undefined): string => measure ?? '',
@@ -182,5 +186,89 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
     expect(internals.dataAvailable()).toBe(true);
     expect(internals.value()).toBe(142);
     expect(internals.textValue()).toBe('142');
+  });
+});
+
+/**
+ * What the compass shows for a set of SI inputs: the value handed to the gauge, the readout and the
+ * unit label. Pins the output so a change of the unit the widget computes in cannot move anything
+ * on screen.
+ */
+describe('WidgetGaugeNgCompassComponent output from SI inputs', () => {
+  let fixture: ComponentFixture<WidgetGaugeNgCompassComponent>;
+  let next: ((u: IPathUpdate) => void) | undefined;
+
+  interface CompassOutput {
+    value: () => number | null | undefined;
+    textValue: () => string;
+    gaugeOptions: { minValue?: number; maxValue?: number; units?: string };
+  }
+
+  /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
+  const feed = (rad: number | null): void => {
+    next?.({ data: { value: rad, timestamp: null, measure: 'deg' }, state: 'normal' } as IPathUpdate);
+  };
+  const feedDegrees = (deg: number): void => feed(deg * DEG);
+
+  const shown = (): { value: number | null | undefined; text: string } => {
+    const c = fixture.componentInstance as unknown as CompassOutput;
+    const value = c.value();
+    return { value: value == null ? value : Number(value.toFixed(6)), text: c.textValue() };
+  };
+
+  const render = (path: string): void => {
+    const dflt = WidgetGaugeNgCompassComponent.DEFAULT_CONFIG;
+    const gaugePath = (dflt.paths as IPathArray)['gaugePath'];
+    TestBed.configureTestingModule({
+      imports: [WidgetGaugeNgCompassComponent],
+      providers: [
+        { provide: WidgetRuntimeDirective, useValue: { options: signal<IWidgetSvcConfig | undefined>({ ...dflt, paths: { gaugePath: { ...gaugePath, path } } }) } },
+        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }, useSiValues: () => undefined } },
+        { provide: UnitsService, useValue: { getUnitDisplaySymbol: (m: string | null | undefined) => m === 'deg' ? '°' : (m ?? '') } }
+      ]
+    });
+    fixture = TestBed.createComponent(WidgetGaugeNgCompassComponent);
+    fixture.componentRef.setInput('id', 'compass-si');
+    fixture.componentRef.setInput('type', 'widget-gauge-ng-compass');
+    fixture.componentRef.setInput('theme', {
+      contrast: 'rgba(255,255,255,1)', contrastDim: 'rgba(200,200,200,1)',
+      contrastDimmer: 'rgba(150,150,150,1)', cardColor: 'rgba(17,17,17,1)',
+      background: 'rgba(0,0,0,1)', zoneAlarm: 'rgba(255,0,0,1)',
+      zoneWarn: 'rgba(255,170,0,1)', zoneAlert: 'rgba(255,0,255,1)',
+      zoneEmergency: 'rgba(255,0,0,1)'
+    });
+    fixture.detectChanges();
+  };
+
+  beforeEach(() => { next = undefined; });
+
+  it('hands the gauge a heading in degrees on a 0..360 dial labelled in degrees', () => {
+    render('self.navigation.headingTrue');
+    feedDegrees(142.4);
+
+    const options = (fixture.componentInstance as unknown as CompassOutput).gaugeOptions;
+    expect({ ...shown(), min: options.minValue, max: options.maxValue, units: options.units })
+      .toEqual({ value: 142.4, text: '142', min: 0, max: 360, units: '°' });
+  });
+
+  it('turns a port-side wind angle into its 0..360 bearing', () => {
+    render('self.environment.wind.angleApparent');
+    feedDegrees(-30);
+    expect(shown()).toEqual({ value: 330, text: '330' });
+  });
+
+  it('clamps a reading outside the dial on a path with no port-side convention', () => {
+    render('self.navigation.headingTrue');
+    feedDegrees(-10);
+    expect(shown()).toEqual({ value: 0, text: '0' });
+    feedDegrees(370);
+    expect(shown()).toEqual({ value: 360, text: '360' });
+  });
+
+  it('parks the needle and shows the placeholder on a null', () => {
+    render('self.navigation.headingTrue');
+    feedDegrees(90);
+    feed(null);
+    expect(shown()).toEqual({ value: 0, text: '--' });
   });
 });
