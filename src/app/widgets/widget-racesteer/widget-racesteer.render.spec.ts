@@ -162,6 +162,24 @@ describe('WidgetRacesteerComponent rendering from SI inputs', () => {
     });
   });
 
+  it('colours the VMG readouts with the start colour while the target VMG is still zero', () => {
+    render(makeConfig());
+    feedSpeed('VMG', 0);
+    feedSpeed('targetVMG', 0);
+    settle();
+
+    expect(fill('.wind-vmg-offset')).toBe('rgb(50,152,255)');
+  });
+
+  it('wraps a relative waypoint bearing that rounds to 360° to 0°', () => {
+    render(makeConfig());
+    feedAngle('headingPath', 0);
+    feedAngle('nextWaypointBearing', 359.8);
+    settle();
+
+    expect(texts('.waypoint-value')[1]).toBe('HDG: 0°T');
+  });
+
   it('shows drift in the presentation unit and draws the speed bar from the polar speed ratio', () => {
     render(makeConfig());
     feed('drift', 0.5, 'knots');

@@ -58,7 +58,7 @@ export class SvgRacesteerComponent implements OnDestroy {
   private readonly optimalWindAngleDeg = computed(() => toDegrees(this.optimalWindAngle()));
   private readonly driftSetDeg = computed(() => toDegrees(this.driftSet()));
   /** Whole degrees: the waypoint readout shows it, and 0 hides the marker. */
-  protected readonly waypointAngleDeg = computed(() => { const a = this.waypointAngle(); return a == null ? undefined : Math.round(toDegrees(a)); });
+  protected readonly waypointAngleDeg = computed(() => { const a = this.waypointAngle(); return a == null ? undefined : Math.round(toDegrees(a)) % 360; });
   private readonly trueWindMinHistoricDeg = computed(() => toDegrees(this.trueWindMinHistoric()));
   private readonly trueWindMidHistoricDeg = computed(() => toDegrees(this.trueWindMidHistoric()));
   private readonly trueWindMaxHistoricDeg = computed(() => toDegrees(this.trueWindMaxHistoric()));

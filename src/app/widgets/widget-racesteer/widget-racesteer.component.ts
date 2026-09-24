@@ -98,7 +98,11 @@ export class WidgetRacesteerComponent implements OnDestroy {
   // the target's measure, which labels it; the ratio is unit-free.
   protected readonly targetVMGDisplay = computed(() => toTenths(presentationValue(this.unitsService, this.targetVmgUnit(), this.targetVMG())));
   protected readonly targetVMGOffset = computed(() => toTenths(presentationValue(this.unitsService, this.targetVmgUnit(), this.VMG() - this.targetVMG())));
-  protected readonly targetVMGRatio = computed(() => this.VMG() / this.targetVMG());
+  // Zero until a target arrives: VMG / 0 has no colour.
+  protected readonly targetVMGRatio = computed(() => {
+    const target = this.targetVMG();
+    return target === 0 ? 0 : this.VMG() / target;
+  });
   protected readonly vmgToWaypointDisplay = computed(() => {
     const vmg = this.vmgToWaypoint();
     return vmg == null ? null : toTenths(presentationValue(this.unitsService, this.vmgToWaypointUnit(), vmg));
