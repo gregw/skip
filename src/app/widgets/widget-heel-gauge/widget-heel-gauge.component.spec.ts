@@ -10,7 +10,7 @@ const DEG = Math.PI / 180;
 describe('WidgetHeelGaugeComponent', () => {
   let fixture: ComponentFixture<WidgetHeelGaugeComponent>;
   let component: WidgetHeelGaugeComponent;
-  let observeCalls: { pathName: string; subField?: string }[];
+  let observeCalls: { pathName: string; pointer?: string }[];
   let originalGetTotalLength: ((this: SVGElement) => number) | undefined;
   let originalGetPointAtLength: ((this: SVGElement, distance: number) => DOMPoint) | undefined;
 
@@ -48,8 +48,8 @@ describe('WidgetHeelGaugeComponent', () => {
         {
           provide: WidgetStreamsDirective,
           useValue: {
-            observe: (pathName: string, _next: unknown, subField?: string) => {
-              observeCalls.push({ pathName, subField });
+            observe: (pathName: string, _next: unknown, pointer?: string) => {
+              observeCalls.push({ pathName, pointer });
             },
           },
         },
@@ -86,10 +86,10 @@ describe('WidgetHeelGaugeComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Heel');
   });
 
-  it('observes the whole navigation.attitude leaf and extracts the roll sub-field', () => {
+  it('observes the whole navigation.attitude leaf and reads its /roll field', () => {
     fixture.detectChanges();
 
-    expect(observeCalls).toContainEqual({ pathName: 'angle', subField: 'roll' });
+    expect(observeCalls).toContainEqual({ pathName: 'angle', pointer: '/roll' });
   });
 });
 

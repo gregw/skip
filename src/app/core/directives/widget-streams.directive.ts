@@ -4,6 +4,9 @@ import { UnitsService } from '../services/units.service';
 import { IWidgetSvcConfig, DEFAULT_WIDGET_UPDATE_INTERVAL_MS } from '../interfaces/widgets-interface';
 import { Observable, Observer, Subject, delayWhen, filter, map, retryWhen, sampleTime, tap, throwError, timeout, timer, takeUntil, take, merge, combineLatest, distinctUntilChanged, Subscription } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { formatJsonPointer, type Path } from '@jsonjoy.com/json-pointer';
+import { States } from '../interfaces/signalk-interfaces';
+import { parsePointer, resolvePointer, splitPointerPath } from '../utils/pointer-path.util';
 
 /** Fixed stale-data TTL (ms) applied to every widget whose enableTimeout is on; not user-configurable. */
 const FIXED_DATA_TIMEOUT_MS = 5000;
@@ -17,10 +20,16 @@ interface IPathIdentity {
   suppressBootstrapNull?: boolean;
 }
 
-/** Trim a configured path to its canonical form; undefined when it is not a usable path. */
+/**
+ * Trim a configured path to its canonical form; undefined when it is not a usable path. Only the
+ * Signal K path before a `#` is trimmed, because `#/ ` addresses the key `" "`. A malformed pointer
+ * or a pointer with no path before it is not usable, so such a slot subscribes to nothing.
+ */
 export function normalizeWidgetPath(path: unknown): string | undefined {
-  const trimmed = typeof path === 'string' ? path.trim() : '';
-  return trimmed.length ? trimmed : undefined;
+  if (typeof path !== 'string') return undefined;
+  const split = splitPointerPath(path);
+  if (!split.valid || !split.basePath) return undefined;
+  return split.pointer ? split.basePath + path.slice(path.indexOf('#')) : split.basePath;
 }
 
 /**
@@ -107,7 +116,8 @@ export class WidgetRepointTracker {
  *   `convertUnitTo` for a structural slot. A widget converts only where it formats text, maps to a
  *   scale or sets an SVG attribute, with `UnitsService.convertToUnit(measure, value)`
  * - Optional stale-data timeout (gated by the enableTimeout flag; fixed 5s TTL) + retry handling
- * - Path validation: null/undefined/empty paths trigger cleanup
+ * - Path validation: null/undefined/empty paths, and paths with a malformed `#` pointer, trigger cleanup
+ * - Pointer paths (`path#/field`) acquire and time out on the Signal K path and deliver the field
  * - Signature tracking: per-path (path + pathType + convertUnitTo + source + bootstrap null policy); the widget-level update cadence lives in the root signature
  *
  * Usage Pattern:
@@ -123,7 +133,7 @@ export class WidgetStreamsDirective implements OnDestroy {
   private readonly destroyRef = inject(DestroyRef);
   // Base raw observables per logical path key
   private streams: Map<string, Observable<IPathUpdate>> | undefined;
-  private registrations: { pathName: string; next: (value: IPathUpdate) => void; subField?: string }[] = [];
+  private registrations: { pathName: string; next: (value: IPathUpdate) => void; pointer?: string }[] = [];
   // Active subscriptions per path (so we can surgically unsubscribe changed/removed paths)
   private subscriptions = new Map<string, { sub: Subscription; signature: string }>();
   // Track identity of the cached base observable (path + normalized source) per path key
@@ -182,22 +192,18 @@ export class WidgetStreamsDirective implements OnDestroy {
   }
 
   /**
-   * Extract a named sub-field from a whole compound-object value, so a numeric widget can read one
-   * field (e.g. `latitude`) of a Signal K compound leaf (e.g. `navigation.position`) that the server
-   * emits whole. A non-object value (a path pointed at a scalar) passes straight through, and a
-   * missing sub-field yields null — so the extraction never breaks a scalar path.
+   * The update for one field of the base path's value. The alarm state is reset: it comes from the
+   * base path's notification, and a field does not inherit the base path's zones either.
    */
-  private extractSubField(update: IPathUpdate, subField: string): IPathUpdate {
-    const value = update.data.value;
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return update;
-    const extracted = (value as Record<string, unknown>)[subField] ?? null;
-    return { data: { value: extracted, timestamp: update.data.timestamp }, state: update.state } as IPathUpdate;
+  private resolveField(update: IPathUpdate, pointer: Path): IPathUpdate {
+    return { data: { value: resolvePointer(update.data.value, pointer), timestamp: update.data.timestamp }, state: States.Normal };
   }
 
   /** Create (or reuse) base observable, assemble pipeline, and subscribe with diff-aware replacement. */
-  private buildAndSubscribe(pathName: string, next: (value: IPathUpdate) => void, cfg: IWidgetSvcConfig, pathCfg: { path: string; pathType: string; convertUnitTo?: string; showConvertUnitTo?: boolean; source?: string; suppressBootstrapNull?: boolean }, subField?: string): void {
+  private buildAndSubscribe(pathName: string, next: (value: IPathUpdate) => void, cfg: IWidgetSvcConfig, pathCfg: { path: string; pathType: string; convertUnitTo?: string; showConvertUnitTo?: boolean; source?: string; suppressBootstrapNull?: boolean }, observePointer?: string): void {
     const normalizedPath = this.normalizePath(pathCfg.path);
-    if (!normalizedPath) {
+    const split = normalizedPath ? splitPointerPath(normalizedPath) : null;
+    if (!normalizedPath || !split?.valid) {
       const existing = this.subscriptions.get(pathName);
       if (existing) existing.sub.unsubscribe();
       this.subscriptions.delete(pathName);
@@ -207,9 +213,15 @@ export class WidgetStreamsDirective implements OnDestroy {
       return;
     }
 
+    // Values, sources and timeouts belong to the Signal K path; a field is read out of its value.
+    // The configured pointer comes first, so observe()'s pointer addresses into the configured field.
+    const basePath = split.basePath;
+    const pointer = [...(split.pointer ?? []), ...(observePointer ? parsePointer(observePointer) ?? [] : [])];
+    const fieldPath = pointer.length ? `${basePath}#${formatJsonPointer(pointer)}` : basePath;
+
     // Build base observable if missing, or refresh when path/source changed
     this.ensureStreamsMap();
-    const baseKey = this.computeBaseKey(normalizedPath, pathCfg.source);
+    const baseKey = this.computeBaseKey(basePath, pathCfg.source);
     const effectiveSource = pathCfg.source?.trim() || 'default';
     const currentBaseKey = this.baseSignatures.get(pathName);
     if (!this.streams!.has(pathName) || currentBaseKey !== baseKey) {
@@ -217,7 +229,7 @@ export class WidgetStreamsDirective implements OnDestroy {
       // superseded (path, source) is not leaked. Never reached on a cadence/unit/timeout change —
       // those keep baseKey identical and only rebuild the RxJS pipeline downstream.
       this.releaseBase(pathName);
-      const handle = this.dataService.acquirePath(normalizedPath, effectiveSource);
+      const handle = this.dataService.acquirePath(basePath, effectiveSource);
       this.streams!.set(pathName, handle.data$);
       this.baseReleases.set(pathName, handle.release);
       this.baseSignatures.set(pathName, baseKey);
@@ -240,10 +252,10 @@ export class WidgetStreamsDirective implements OnDestroy {
     const structuralMeasure = pathCfg.convertUnitTo;
 
     let data$: Observable<IPathUpdate> = base$;
-    if (subField) {
-      // Extract the widget's sub-field from the whole compound value first, so bootstrap-null
-      // suppression and sampling operate on the extracted number.
-      data$ = data$.pipe(map(x => this.extractSubField(x, subField)));
+    if (pointer.length) {
+      // Resolve the field first, so bootstrap-null suppression and sampling operate on the field's
+      // value.
+      data$ = data$.pipe(map(x => this.resolveField(x, pointer)));
     }
     if (suppressBootstrapNull) {
       // Drop only the LEADING (bootstrap) null values. Once a real value has been seen, let
@@ -278,14 +290,14 @@ export class WidgetStreamsDirective implements OnDestroy {
         // subscription was built), so the value and the widget's unit label stay in lock-step.
         // combineLatest tears down with the outer pipeline, so no separate meta-subscription
         // bookkeeping is needed.
-        const measure$ = this.dataService.getPathMetaObservable(normalizedPath).pipe(
+        const measure$ = this.dataService.getPathMetaObservable(fieldPath).pipe(
           map(() => {
-            const resolved = this.unitsService.resolvePathMeasure(normalizedPath);
+            const resolved = this.unitsService.resolvePathMeasure(fieldPath);
             // Before any unit meta resolves, resolvePathMeasure returns 'unitless'. Tag the value with
             // the widget's stored unit until a real measure resolves, so its readout and scale are
             // presented in that unit instead of as bare SI.
             const measure = resolved === 'unitless' && structuralMeasure ? structuralMeasure : resolved;
-            return { measure, durationFormat: this.unitsService.resolvePathDurationFormat(normalizedPath) };
+            return { measure, durationFormat: this.unitsService.resolvePathDurationFormat(fieldPath) };
           }),
           distinctUntilChanged((a, b) => a.measure === b.measure && a.durationFormat === b.durationFormat)
         );
@@ -307,8 +319,8 @@ export class WidgetStreamsDirective implements OnDestroy {
         timeout({
           each: dataTimeout,
           with: () => throwError(() => {
-            console.log(timeoutErrorMsg + normalizedPath);
-            this.dataService.timeoutPathObservable(normalizedPath, effectiveSource, pathType, dataTimeout);
+            console.log(timeoutErrorMsg + basePath);
+            this.dataService.timeoutPathObservable(basePath, effectiveSource, pathType, dataTimeout);
           })
         }),
         retryWhen(error => error.pipe(
@@ -444,7 +456,7 @@ export class WidgetStreamsDirective implements OnDestroy {
         // Defer base observable creation/refresh to buildAndSubscribe(), which
         // will reuse the cached base when base identity (path+source) is unchanged.
         const reg = this.registrations.find(r => r.pathName === p);
-        if (reg) this.buildAndSubscribe(p, reg.next, cfg, normalizedCfg, reg.subField);
+        if (reg) this.buildAndSubscribe(p, reg.next, cfg, normalizedCfg, reg.pointer);
       }
     }
   }
@@ -494,18 +506,22 @@ export class WidgetStreamsDirective implements OnDestroy {
    *
    * @param pathName Logical path key from widget config (config.paths[pathName])
    * @param next Callback for processed updates (sampled; numbers in SI)
-   * @param subField Optional sub-field key to read out of a whole compound-object value (e.g.
-   *   'latitude' when the path is the canonical compound leaf 'navigation.position'). The widget
-   *   owns this — it is extracted before sampling; a scalar value passes through unchanged.
+   * @param pointer Optional RFC 6901 pointer (e.g. '/roll') to the field the widget reads out of the
+   *   configured path's value (e.g. 'self.navigation.attitude'). A configured path that already
+   *   carries a pointer is resolved first, then this one. The field is resolved before sampling; a
+   *   value without the field yields null.
    */
-  public observe(pathName: string, next: (value: IPathUpdate) => void, subField?: string): void {
-    // Capture previous registration before replacing it (callback + sub-field)
+  public observe(pathName: string, next: (value: IPathUpdate) => void, pointer?: string): void {
+    if (pointer !== undefined && !parsePointer(pointer)) {
+      throw new Error(`[WidgetStreamsDirective] observe() pointer '${pointer}' is not an RFC 6901 pointer such as '/roll'`);
+    }
+    // Capture previous registration before replacing it (callback + pointer)
     const prev = this.registrations.find(r => r.pathName === pathName);
     const prevReg = prev?.next;
-    const prevSubField = prev?.subField;
+    const prevPointer = prev?.pointer;
     // Replace any existing registration for this path (one callback per path)
     this.registrations = this.registrations.filter(r => r.pathName !== pathName);
-    this.registrations.push({ pathName, next, subField });
+    this.registrations.push({ pathName, next, pointer });
 
     const cfg = this._streamsConfig();
     if (!cfg || !cfg.paths?.[pathName]) {
@@ -540,11 +556,11 @@ export class WidgetStreamsDirective implements OnDestroy {
     const normalizedCfg = { ...pathCfg, path: normalizedPath };
     const sig = this.computePathSignature(normalizedCfg);
     const existing = this.subscriptions.get(pathName);
-    // If signature unchanged and neither the callback nor the sub-field changed, keep as-is;
-    // otherwise rebuild to swap the observer / sub-field extraction.
-    if (existing && existing.signature === sig && prevReg === next && prevSubField === subField) return;
+    // If signature unchanged and neither the callback nor the pointer changed, keep as-is;
+    // otherwise rebuild to swap the observer / field resolution.
+    if (existing && existing.signature === sig && prevReg === next && prevPointer === pointer) return;
 
-    this.buildAndSubscribe(pathName, next, cfg, normalizedCfg, subField);
+    this.buildAndSubscribe(pathName, next, cfg, normalizedCfg, pointer);
   }
 
   /**

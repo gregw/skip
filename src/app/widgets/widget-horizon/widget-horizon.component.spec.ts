@@ -55,11 +55,11 @@ describe('WidgetHorizonComponent frame visibility', () => {
   });
 });
 
-describe('WidgetHorizonComponent sub-field extraction', () => {
+describe('WidgetHorizonComponent field pointers', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
-  it('observes the whole navigation.attitude leaf and extracts pitch and roll', () => {
-    const calls: { pathName: string; subField?: string }[] = [];
+  it('observes the whole navigation.attitude leaf and reads its /pitch and /roll fields', () => {
+    const calls: { pathName: string; pointer?: string }[] = [];
     const options = signal<IWidgetSvcConfig | undefined>({
       gauge: { type: 'horizon' },
       paths: {
@@ -74,7 +74,7 @@ describe('WidgetHorizonComponent sub-field extraction', () => {
         {
           provide: WidgetStreamsDirective,
           useValue: {
-            observe: (pathName: string, _next: unknown, subField?: string) => calls.push({ pathName, subField }),
+            observe: (pathName: string, _next: unknown, pointer?: string) => calls.push({ pathName, pointer }),
           },
         },
       ],
@@ -85,8 +85,8 @@ describe('WidgetHorizonComponent sub-field extraction', () => {
     fixture.componentRef.setInput('theme', null);
     fixture.detectChanges();
 
-    expect(calls).toContainEqual({ pathName: 'gaugePitchPath', subField: 'pitch' });
-    expect(calls).toContainEqual({ pathName: 'gaugeRollPath', subField: 'roll' });
+    expect(calls).toContainEqual({ pathName: 'gaugePitchPath', pointer: '/pitch' });
+    expect(calls).toContainEqual({ pathName: 'gaugeRollPath', pointer: '/roll' });
   });
 });
 

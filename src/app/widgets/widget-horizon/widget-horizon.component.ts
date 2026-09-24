@@ -66,7 +66,7 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
     filterSelfPaths: true,
     paths: {
       // pathType stays 'number' though the path is the whole navigation.attitude object: the
-      // streams pipeline extracts the pitch/roll sub-field (observe below) BEFORE the number-type
+      // streams pipeline resolves the '/pitch' or '/roll' field (observe below) BEFORE the number-type
       // handling runs, so the scalar arrives in rad with 'deg' as its presentation measure.
       // Both paths are fixed (isPathConfigurable:false) — no Paths tab.
       gaugePitchPath: {
@@ -141,7 +141,7 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
           const inv = cfg.gauge?.invertPitch ? -v : v;
           try { this.gauge.setPitchAnimated(inv * RAD_TO_DEG); } catch { /* ignore */ }
         }
-      }, 'pitch'));
+      }, '/pitch'));
     });
 
     // Observe roll path
@@ -156,7 +156,7 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
           const inv = cfg.gauge?.invertRoll ? -v : v;
           try { this.gauge.setRollAnimated(inv * RAD_TO_DEG); } catch { /* ignore */ }
         }
-      }, 'roll'));
+      }, '/roll'));
     });
 
     // Config structural effect (independent from size changes)

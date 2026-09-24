@@ -625,7 +625,7 @@ export class WidgetSeaHorizonComponent {
     filterSelfPaths: true,
     paths: {
       // pathType stays 'number' though the path is the whole navigation.attitude object: the
-      // streams pipeline extracts the pitch/roll sub-field (observe below) BEFORE the number-type
+      // streams pipeline resolves the '/pitch' or '/roll' field (observe below) BEFORE the number-type
       // handling runs, so the scalar arrives in rad with 'deg' as its presentation measure.
       // Both paths are fixed (isPathConfigurable:false) — no Paths tab.
       gaugePitchPath: {
@@ -1009,7 +1009,7 @@ export class WidgetSeaHorizonComponent {
         // The callback is a stable class field: the streams directive rebuilds the whole pipeline
         // when it is handed a different function, so a fresh closure here would tear down and
         // re-subscribe both paths on every unrelated config edit (finish, damping, an invert flag).
-        this.streams.observe('gaugePitchPath', this.onPitch, 'pitch');
+        this.streams.observe('gaugePitchPath', this.onPitch, '/pitch');
       });
     });
 
@@ -1025,7 +1025,7 @@ export class WidgetSeaHorizonComponent {
           this.disarmTransitions();
         }
         if (!pathCfg?.path) return;
-        this.streams.observe('gaugeRollPath', this.onRoll, 'roll');
+        this.streams.observe('gaugeRollPath', this.onRoll, '/roll');
       });
     });
 
@@ -1056,13 +1056,13 @@ export class WidgetSeaHorizonComponent {
     this.destroyRef.onDestroy(() => observer.disconnect());
   }
 
-  /** Stream callback for the pitch sub-field: damp the sample, then settle the transition gate. */
+  /** Stream callback for the pitch field: damp the sample, then settle the transition gate. */
   private readonly onPitch = (pkt: IPathUpdate): void => {
     this.rawPitch.set(this.damp(this.rawPitch(), pkt?.data?.value as number | null | undefined, 'pitch'));
     this.settleTransitions();
   };
 
-  /** Stream callback for the roll sub-field: damp the sample, then settle the transition gate. */
+  /** Stream callback for the roll field: damp the sample, then settle the transition gate. */
   private readonly onRoll = (pkt: IPathUpdate): void => {
     this.rawRoll.set(this.damp(this.rawRoll(), pkt?.data?.value as number | null | undefined, 'roll'));
     this.settleTransitions();

@@ -83,7 +83,7 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
     filterSelfPaths: true,
     paths: {
       // pathType stays 'number' though the path is the whole navigation.attitude object: the
-      // streams pipeline extracts the 'roll' sub-field (observe below) BEFORE the number-type
+      // streams pipeline resolves the '/roll' field (observe below) BEFORE the number-type
       // handling runs, so the scalar arrives in rad with 'deg' as its presentation measure.
       // The path is fixed (isPathConfigurable:false) — no Paths tab.
       angle: {
@@ -118,7 +118,7 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
       const angleCfg = cfg.paths?.['angle'];
       if (!angleCfg?.path) return; // nothing to observe if path empty
       // Establish observation outside reactive tracking of angle updates. The path is the whole
-      // navigation.attitude compound leaf; the widget reads its 'roll' sub-field.
+      // navigation.attitude compound leaf; the widget reads its '/roll' field.
       untracked(() => this.streams.observe('angle', pkt => {
         const raw = (pkt?.data?.value as number | undefined);
         if (raw == null) {
@@ -127,7 +127,7 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
         }
         const inv = cfg.gauge?.invertAngle ? -raw : raw;
         this.angle.set(inv);
-      }, 'roll'));
+      }, '/roll'));
     });
 
     // Theme + color config effect

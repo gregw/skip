@@ -30,16 +30,19 @@ export function splitPointerPath(path: string | null | undefined): PointerPath {
   }
 
   const basePath = path.slice(0, hash).trim();
-  const pointer = path.slice(hash + 1);
-  if (!pointer || STRAY_TILDE.test(pointer)) {
-    return { valid: false, basePath };
-  }
+  const pointer = parsePointer(path.slice(hash + 1));
+  return pointer ? { valid: true, basePath, pointer } : { valid: false, basePath };
+}
+
+/** The tokens of a non-empty RFC 6901 pointer such as `/roll`, or null when it is not one. */
+export function parsePointer(pointer: string): Path | null {
+  if (!pointer || STRAY_TILDE.test(pointer)) return null;
   try {
     validateJsonPointer(pointer);
   } catch {
-    return { valid: false, basePath };
+    return null;
   }
-  return { valid: true, basePath, pointer: parseJsonPointer(pointer) };
+  return parseJsonPointer(pointer);
 }
 
 /** The value `pointer` addresses inside `value`, or null when there is none. */

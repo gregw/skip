@@ -184,25 +184,27 @@ describe('WidgetStreamsDirective', () => {
         subj.next({ data: { value: 'B', timestamp: new Date() }, state: 'normal' } as IPathUpdate);
     });
 
-    it('extracts the configured sub-field from a whole compound-object value', () => {
-        const cfg = makeCfg({ path: 'navigation.position', source: null, pathType: 'number', updateInterval: 50 });
-        directive.setStreamsConfig(cfg);
+    const attitude = (state: IPathUpdate['state'] = 'normal') =>
+        ({ data: { value: { roll: -0.0384, pitch: 0.0091, yaw: null }, timestamp: new Date() }, state } as IPathUpdate);
+
+    it('delivers a pointer path\'s field in its Signal K unit when the slot stores no unit', () => {
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'unitless');
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', pathType: 'number', updateInterval: 50 }));
 
         const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'latitude');
+        directive.observe('p', u => received.push(u?.data?.value));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
 
-        const subj = dataSvc.subjects.get('navigation.position|default')!;
-        subj.next({ data: { value: { latitude: 48.5, longitude: -123.25 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-
-        expect(received).toEqual([48.5]);
+        expect(dataSvc.calls).toEqual([{ path: 'self.navigation.attitude', source: 'default' }]);
+        expect(received).toEqual([-0.0384]);
     });
 
-    it('tags the extracted sub-field with the slot\'s measure, value in SI', () => {
+    it('tags the resolved field with the slot\'s measure, value in SI', () => {
         const cfg = makeCfg({ path: 'navigation.attitude', source: null, pathType: 'number', convertUnitTo: 'x10', showConvertUnitTo: false, updateInterval: 50 });
         directive.setStreamsConfig(cfg);
 
         const received: unknown[][] = [];
-        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]), 'roll');
+        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]), '/roll');
 
         const subj = dataSvc.subjects.get('navigation.attitude|default')!;
         subj.next({ data: { value: { roll: 0.2, pitch: 0.1 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
@@ -210,28 +212,149 @@ describe('WidgetStreamsDirective', () => {
         expect(received).toEqual([[0.2, 'x10']]);
     });
 
-    it('passes a scalar value straight through when a sub-field is configured (customised scalar path stays working)', () => {
-        const cfg = makeCfg({ path: 'steering.rudderAngle', source: null, pathType: 'number', updateInterval: 50 });
-        directive.setStreamsConfig(cfg);
+    it('tags a pointer path\'s field with the slot\'s stored unit and keeps the value in SI', () => {
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'unitless');
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', pathType: 'number', convertUnitTo: 'deg', updateInterval: 50 }));
 
-        const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'roll');
+        const received: unknown[][] = [];
+        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
 
-        const subj = dataSvc.subjects.get('steering.rudderAngle|default')!;
-        subj.next({ data: { value: 0.42, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-
-        expect(received).toEqual([0.42]);
+        expect(received).toEqual([[-0.0384, 'deg']]);
     });
 
-    it('emits null for a missing sub-field of a compound value', () => {
-        const cfg = makeCfg({ path: 'navigation.position', source: null, pathType: 'number', updateInterval: 50 });
-        directive.setStreamsConfig(cfg);
+    it('reads the measure of the field, not of the base path', () => {
+        unitsSvc.pathMeasures.set('self.navigation.attitude', 'x10');
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'deg');
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', pathType: 'number', updateInterval: 50 }));
 
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
+
+        expect(received[0].data.measure).toBe('deg');
+        expect(dataSvc.metaSubjects.has('self.navigation.attitude#/roll')).toBe(true);
+    });
+
+    it('acquires the base path once per slot, so #/latitude and #/longitude share one registration', () => {
+        directive.setStreamsConfig(makeMultiCfg([
+            { key: 'lat', path: 'self.navigation.position#/latitude' },
+            { key: 'lon', path: 'self.navigation.position#/longitude' }
+        ]));
+        const lat: unknown[] = [];
+        const lon: unknown[] = [];
+        directive.observe('lat', u => lat.push(u?.data?.value));
+        directive.observe('lon', u => lon.push(u?.data?.value));
+
+        dataSvc.subjects.get('self.navigation.position|default')!.next(
+            { data: { value: { latitude: 60.08, longitude: 21.97 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(dataSvc.calls.map(c => c.path)).toEqual(['self.navigation.position', 'self.navigation.position']);
+        expect([...dataSvc.subjects.keys()]).toEqual(['self.navigation.position|default']);
+        expect(lat).toEqual([60.08]);
+        expect(lon).toEqual([21.97]);
+    });
+
+    it('yields null for a field that is null or absent in the value', () => {
+        directive.setStreamsConfig(makeMultiCfg([
+            { key: 'yaw', path: 'self.navigation.attitude#/yaw' },
+            { key: 'heave', path: 'self.navigation.attitude#/heave' }
+        ]));
+        const yaw: unknown[] = [];
+        const heave: unknown[] = [];
+        directive.observe('yaw', u => yaw.push(u?.data?.value));
+        directive.observe('heave', u => heave.push(u?.data?.value));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
+
+        expect(yaw).toEqual([null]);
+        expect(heave).toEqual([null]);
+    });
+
+    it('suppresses a null field while bootstrapping, and passes a later one, as for a scalar path', async () => {
+        vi.useFakeTimers();
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/yaw', pathType: 'number', updateInterval: 30, suppressBootstrapNull: true }));
+        const yaw: unknown[] = [];
+        directive.observe('p', u => yaw.push(u?.data?.value));
+        const subj = dataSvc.subjects.get('self.navigation.attitude|default')!;
+
+        subj.next(attitude());
+        await vi.advanceTimersByTimeAsync(35);
+        expect(yaw).toEqual([]);
+
+        subj.next({ data: { value: { yaw: 1.5 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        expect(yaw).toEqual([1.5]);
+
+        subj.next(attitude());
+        await vi.advanceTimersByTimeAsync(35);
+        expect(yaw).toEqual([1.5, null]);
+    });
+
+    it('re-points #/roll to #/pitch by rebuilding the pipeline without re-acquiring the base path', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', updateInterval: 50 }));
         const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'altitude');
+        directive.observe('p', u => received.push(u?.data?.value));
+        const subj = dataSvc.subjects.get('self.navigation.attitude|default')!;
+        subj.next(attitude());
 
-        const subj = dataSvc.subjects.get('navigation.position|default')!;
-        subj.next({ data: { value: { latitude: 48.5, longitude: -123.25 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        directive.applyStreamsConfigDiff(makeCfg({ path: 'self.navigation.attitude#/pitch', updateInterval: 50 }));
+        subj.next(attitude());
+
+        expect(dataSvc.calls).toHaveLength(1);
+        expect(dataSvc.releases).toHaveLength(0);
+        expect(received).toEqual([-0.0384, 0.0091]);
+    });
+
+    it('resets the alarm state of a field, but keeps it on the whole value', () => {
+        directive.setStreamsConfig(makeMultiCfg([
+            { key: 'field', path: 'self.navigation.position#/latitude' },
+            { key: 'whole', path: 'self.navigation.position' }
+        ]));
+        const field: IPathUpdate[] = [];
+        const whole: IPathUpdate[] = [];
+        directive.observe('field', u => field.push(u));
+        directive.observe('whole', u => whole.push(u));
+
+        dataSvc.subjects.get('self.navigation.position|default')!.next(
+            { data: { value: { latitude: 60.08, longitude: 21.97 }, timestamp: new Date() }, state: 'alarm' } as IPathUpdate);
+
+        expect(field[0].state).toBe('normal');
+        expect(whole[0].state).toBe('alarm');
+    });
+
+    it('treats a stored path with a malformed pointer like an empty path', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.position#latitude' }));
+        const received: unknown[] = [];
+
+        expect(() => directive.observe('p', u => received.push(u))).not.toThrow();
+        expect(dataSvc.calls).toEqual([]);
+        expect(received).toEqual([]);
+    });
+
+    it('resolves an observe() pointer against the configured path\'s value', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude', pathType: 'number', convertUnitTo: 'x10', showConvertUnitTo: false, updateInterval: 50 }));
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u), '/roll');
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude('alarm'));
+
+        expect(received[0].data.value).toBe(-0.0384);
+        expect(received[0].data.measure).toBe('x10');
+        expect(received[0].state).toBe('normal');
+    });
+
+    it('resolves the configured pointer first, then the observe() pointer', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.a#/b' }));
+        const received: unknown[] = [];
+        directive.observe('p', u => received.push(u?.data?.value), '/c');
+        dataSvc.subjects.get('self.a|default')!.next({ data: { value: { b: { c: 5 }, c: 7 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received).toEqual([5]);
+    });
+
+    it('yields null when an observe() pointer meets a scalar value', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'steering.rudderAngle' }));
+        const received: unknown[] = [];
+        directive.observe('p', u => received.push(u?.data?.value), '/roll');
+        dataSvc.subjects.get('steering.rudderAngle|default')!.next({ data: { value: 0.42, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
         expect(received).toEqual([null]);
     });
@@ -247,6 +370,11 @@ describe('WidgetStreamsDirective', () => {
             .next({ data: { value: 1, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
         expect(received.map(u => [u.data.value, u.data.measure])).toEqual([[1, 'percent']]);
+    });
+
+    it('rejects an observe() pointer that is not an RFC 6901 pointer', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude' }));
+        expect(() => directive.observe('p', () => undefined, 'roll')).toThrow(/RFC 6901/);
     });
 
     it('resubscribes to DataService when source changes', async () => {
@@ -1141,6 +1269,33 @@ describe('WidgetStreamsDirective TTL value reset (#1069)', () => {
         vi.restoreAllMocks();
     });
 
+    it('times out on the base path, nulling a field slot and a whole-value slot alike', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'log');
+        directive.setStreamsConfig({
+            ...makeMultiCfg([
+                { key: 'lat', path: 'self.navigation.position#/latitude' },
+                { key: 'whole', path: 'self.navigation.position' }
+            ]),
+            enableTimeout: true
+        });
+        const lat: unknown[] = [];
+        const whole: unknown[] = [];
+        directive.observe('lat', u => lat.push(u?.data?.value));
+        directive.observe('whole', u => whole.push(u?.data?.value));
+
+        dataSvc.subjects.get('self.navigation.position|default')!.next(
+            { data: { value: { latitude: 60.08, longitude: 21.97 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        // The 5 s TTL counts from the 1 s sample of the value above; the reset null arrives on the
+        // resubscribe 5 s after that.
+        await vi.advanceTimersByTimeAsync(12000);
+
+        expect(dataSvc.timeoutCalls.map(c => c.path)).toContain('self.navigation.position');
+        expect(dataSvc.timeoutCalls.every(c => c.path === 'self.navigation.position')).toBe(true);
+        expect(lat.at(-1)).toBeNull();
+        expect(whole.at(-1)).toBeNull();
+    });
+
     it('resets the value to null after a TTL timeout even with suppressBootstrapNull enabled', async () => {
         vi.useFakeTimers();
         vi.spyOn(console, 'log'); // silence timeout/retry logs
@@ -1236,6 +1391,19 @@ describe('widgetPathSignature', () => {
         expect(normalizeWidgetPath('   ')).toBeUndefined();
         expect(normalizeWidgetPath(null)).toBeUndefined();
         expect(normalizeWidgetPath(42)).toBeUndefined();
+    });
+
+    it('normalizeWidgetPath trims only the Signal K path of a pointer path', () => {
+        expect(normalizeWidgetPath('  self.a.b #/c')).toBe('self.a.b#/c');
+        expect(normalizeWidgetPath('self.a#/ ')).toBe('self.a#/ ');
+        expect(normalizeWidgetPath('self.a#c')).toBeUndefined();
+        expect(normalizeWidgetPath('  #/c')).toBeUndefined();
+    });
+
+    it('widgetPathSignature tells two fields of one path apart', () => {
+        const sig = (path: string) => widgetPathSignature({ path, pathType: 'number' });
+        expect(sig('self.navigation.attitude#/roll')).not.toBe(sig('self.navigation.attitude#/pitch'));
+        expect(sig('self.navigation.attitude#latitude')).toBeNull();
     });
 });
 

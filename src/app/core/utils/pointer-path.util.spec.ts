@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolvePointer, splitPointerPath } from './pointer-path.util';
+import { parsePointer, resolvePointer, splitPointerPath } from './pointer-path.util';
 
 const pointerOf = (path: string) => {
   const parsed = splitPointerPath(path);
@@ -46,6 +46,17 @@ describe('splitPointerPath', () => {
 
   it.each([null, undefined])('reports an unset path (%s) as invalid instead of throwing', path => {
     expect(splitPointerPath(path)).toEqual({ valid: false, basePath: '' });
+  });
+});
+
+describe('parsePointer', () => {
+  it('parses a bare pointer into its tokens', () => {
+    expect(parsePointer('/roll')).toEqual(['roll']);
+    expect(parsePointer('/a~1b/m~0n')).toEqual(['a/b', 'm~n']);
+  });
+
+  it.each(['', 'roll', '/a~2b', '/a~'])('rejects %j', pointer => {
+    expect(parsePointer(pointer)).toBeNull();
   });
 });
 
