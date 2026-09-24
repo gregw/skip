@@ -421,10 +421,12 @@ export class WidgetRacerLineViewComponent {
    * nothing. The stream's own value lands on top of this a moment later.
    */
   protected selectLine(name: string): void {
-    this.signalk.putRequest('navigation.racing.setStartLineName',
-      { startLineName: name === 'Default' ? null : name }, this.id());
-    this.startLineName.set(name === 'Default' ? null : name);
-    this.browsed.set(name);
+    const selectedName = name === 'Default' ? null : name;
+    if (this.signalk.putRequest('navigation.racing.setStartLineName',
+      {startLineName: selectedName}, this.id()) != null) {
+      this.startLineName.set(selectedName);
+      this.browsed.set(name);
+    }
   }
 
   constructor() {

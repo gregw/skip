@@ -588,12 +588,14 @@
       "gauge.damping": "s",
       "gauge.highlightsWidth": "width in the gauge's own drawing units",
       "gauge.scaleStart": "deg (the dial start angle)",
+      "modeTimeout": "s",
       "nextDashboard": "dashboard index",
       "numDecimal": "count of decimals",
       "numInt": "count of integer digits",
       "period": "the unit named by the widget's timeScale",
       "timerLength": "s",
       "updateInterval": "ms",
+      "viewSmoothing": "percent of the drawing height the view may drift before it re-fits",
       "windSectorWindowSeconds": "s"
     }
   },
