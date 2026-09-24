@@ -92,7 +92,14 @@ export interface IRacerLineViewData {
   fixTime: number | null;
   heading: number | null; cog: number | null; sog: number | null;
   lineLength: number | null; lineBearing: number | null;
-  timeToStart: number | null; timerRunning: boolean;
+  timeToStart: number | null;
+  /**
+   * The start time as the plugin publishes it; null while no countdown is set. The plugin
+   * publishes it exactly while its timer is running - set on start, moved by an adjust or
+   * sync, left in place at the gun, nulled only by a reset - so its presence is what says
+   * the timer is running. A countdown sitting at a set 5:00 has none.
+   */
+  startTime: string | null;
   /** True wind direction, the bearing the wind blows FROM. */
   twd: number | null;
   boatLength: number | null;
@@ -310,7 +317,8 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   private readonly lineLength = computed(() => this.data().lineLength);
   private readonly lineBearing = computed(() => this.data().lineBearing);
   private readonly timeToStart = computed(() => this.data().timeToStart);
-  private readonly timerRunning = computed(() => this.data().timerRunning);
+  private readonly startTime = computed(() => this.data().startTime);
+  private readonly timerRunning = computed(() => this.startTime() != null);
   private readonly twd = computed(() => this.data().twd);
   private readonly boatLength = computed(() => this.data().boatLength);
   private readonly effVmgToLine = computed(() => this.data().effVmgToLine);
@@ -392,17 +400,17 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    * Latched rather than computed, because by the time it is worth showing, the thing it
    * describes is over: the plugin stops publishing timeToStart at the gun, and the
    * widget's own timeout nulls it a few seconds later, so nothing in the live data still
-   * says a clean start was made. It clears startTime at the gun as well - that path is
-   * only set while a countdown is running - so the timer no longer running is the normal
-   * state of a start that has just been made, and cannot be what ends this.
+   * says a clean start was made. The start time is left in place at the gun - still
+   * running, as far as the plugin is concerned - so nothing about the timer changes
+   * there that could end this either.
    *
-   * What ends it is the next countdown: the timer armed again, or a time to start with
-   * time still to run. Both say a new start is ahead, which is the only thing that makes
-   * the last one stale.
+   * What ends it is the next countdown: a new start time, or a time to start with time
+   * still to run. Both say a new start is ahead, which is the only thing that makes the
+   * last one stale.
    */
   private readonly startedClean = signal<boolean>(false);
-  /** Previous timerRunning, to catch the timer being armed again. See startedClean. */
-  private timerWasRunning = false;
+  /** The previous start time, to catch the timer being armed again. See startedClean. */
+  private lastStartTime: string | null = null;
   /**
    * Whether the countdown on hand has been seen running. A newly armed timer has not
    * counted down yet, and the time to start still on hand is the last countdown's - a
@@ -430,16 +438,23 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     // Watch the countdown through zero. Reading all three here makes this fire on every
     // countdown tick, every arm and every reset.
     effect(() => {
-      const running = this.timerRunning();
+      const startTime = this.startTime();
       const tts = this.timeToStart();
       const geo = this.geometry();
       untracked(() => {
-        const armed = running && !this.timerWasRunning;
-        this.timerWasRunning = running;
+        const running = startTime != null;
+        // Any new start time arms it, not only one after none: after a gun the plugin
+        // still holds the old one, so a new time set straight over it never passes
+        // through null. An adjust or sync of a running timer moves it too, which is
+        // harmless - its next tick is seen with time to run. Adjusting a stopped timer
+        // changes only the time to start, and arms nothing.
+        const armed = running && startTime !== this.lastStartTime;
+        this.lastStartTime = startTime;
         // The zero a timer is armed on top of belongs to the countdown that just ran, so
         // this one is not through its gun until it has been seen with time still to run.
         // Otherwise the first position update after arming - and every one after it,
-        // this effect reading the geometry - is taken for a second gun.
+        // this effect reading the geometry - is taken for a second gun. The two paths
+        // arrive separately, so the new start time can land before the new time to start.
         if (armed) this.countdownSeen = false;
         if (tts != null && tts > 0) this.countdownSeen = true;
         // Measured against a line that is gone, the side means nothing.
@@ -453,8 +468,9 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
           return;
         }
         if (!running || !this.countdownSeen) return;
-        // The gun. The plugin publishes 0 once before it stops the countdown, so this is
-        // seen exactly once per start.
+        // The gun: the countdown at zero, which it then stays at with the start time still
+        // set. A boat behind the line latches the green at once; one over it is judged
+        // again on every fix after, and latches it once it is back behind.
         if (tts != null && tts <= 0) {
           const last = this.lastBoatSide;
           const side = geo?.boat?.c

@@ -8,6 +8,7 @@ import {
   signal,
   untracked
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { SignalkRequestsService } from '../../core/services/signalk-requests.service';
@@ -288,7 +289,7 @@ export class WidgetRacerLineViewComponent {
     lat: null, lon: null, fixTime: null,
     heading: null, cog: null, sog: null,
     lineLength: null, lineBearing: null,
-    timeToStart: null, timerRunning: false, twd: null,
+    timeToStart: null, startTime: null, twd: null,
     boatLength: null, effVmgToLine: null, effVmgAlongLine: null,
     bestVmg: { ...NO_VMG }
   });
@@ -427,14 +428,35 @@ export class WidgetRacerLineViewComponent {
    * The name is set locally as well as sent, because the plugin republishes the line it
    * is working on only once it has changed it: waiting for that leaves the name still
    * reading as a button offering the line just chosen, which reads as a press that did
-   * nothing. The stream's own value lands on top of this a moment later.
+   * nothing. The stream's own value lands on top of this a moment later, and a switch
+   * the plugin refuses is taken back - see settleLineName.
    */
   protected selectLine(name: string): void {
     const selectedName = name === 'Default' ? null : name;
-    if (this.signalk.putRequest('navigation.racing.setStartLineName',
-      {startLineName: selectedName}, this.id()) != null) {
+    const previous = this.startLineName();
+    const requestId = this.signalk.putRequest('navigation.racing.setStartLineName',
+      {startLineName: selectedName}, this.id());
+    if (requestId != null) {
+      this.pendingLineName = { requestId, previous, shown: selectedName };
       this.startLineName.set(selectedName);
       this.browsed.set(name);
+    }
+  }
+
+  /**
+   * The line switch shown ahead of the plugin's answer. A switch the plugin refuses is
+   * never republished - nothing changed - so without taking the name back it would sit
+   * over the previous line's geometry for good.
+   */
+  private pendingLineName: { requestId: string; previous: string | null; shown: string | null } | null = null;
+
+  private settleLineName(requestId: string, statusCode: number | null): void {
+    const pending = this.pendingLineName;
+    if (!pending || pending.requestId !== requestId) return;
+    this.pendingLineName = null;
+    // Only undone while it is still what is showing: the stream may already have moved on.
+    if (statusCode !== 200 && this.startLineName() === pending.shown) {
+      this.startLineName.set(pending.previous);
     }
   }
 
@@ -509,6 +531,12 @@ export class WidgetRacerLineViewComponent {
         this.view.update(d => ({ ...d, bestVmg: { ...d.bestVmg, [name]: v } })));
     }
 
+    // 202 is held back by the service until the final answer, so every result seen here
+    // is settled.
+    this.signalk.subscribeRequest().pipe(takeUntilDestroyed()).subscribe(result => {
+      if (result.widgetUUID === this.id()) this.settleLineName(result.requestId, result.statusCode);
+    });
+
     effect(() => {
       if (!this.pathsRecord['startLineNamePath']?.path) return;
       untracked(() => this.streams.observe('startLineNamePath', pkt =>
@@ -532,7 +560,10 @@ export class WidgetRacerLineViewComponent {
     effect(() => {
       if (!this.pathsRecord['startTimePath']?.path) return;
       untracked(() => this.streams.observe('startTimePath', pkt =>
-        this.view.update(d => ({ ...d, timerRunning: !!pkt?.data?.value }))));
+        this.view.update(d => {
+          const value = pkt?.data?.value;
+          return { ...d, startTime: value ? String(value) : null };
+        })));
     });
   }
 }

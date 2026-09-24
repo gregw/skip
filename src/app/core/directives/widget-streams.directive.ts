@@ -47,8 +47,12 @@ export function widgetPathSignature(pathCfg: IPathIdentity | undefined | null): 
   const normalizedPath = normalizeWidgetPath(pathCfg?.path);
   if (!pathCfg || !normalizedPath) return null;
   const src = (pathCfg.source?.trim() || 'default');
+  // All three timeout settings differ: an omitted one defers to the widget-level flag, so
+  // omitted and `true` are not the same subscription. Omitted stays '' so the signature of
+  // every path that does not set it is unchanged.
+  const timeout = pathCfg.enableTimeout === false ? 'nott' : pathCfg.enableTimeout === true ? 'tt' : '';
   return [normalizedPath, pathCfg.pathType, pathCfg.convertUnitTo, src, pathCfg.suppressBootstrapNull ? '1' : '0',
-    pathCfg.enableTimeout === false ? 'nott' : ''].join('|');
+    timeout].join('|');
 }
 
 /**

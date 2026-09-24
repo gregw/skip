@@ -4,7 +4,8 @@ import { WidgetRacerLineViewComponent } from './widget-racer-line-view.component
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { UnitsService } from '../../core/services/units.service';
-import { SignalkRequestsService } from '../../core/services/signalk-requests.service';
+import { SignalkRequestsService, skRequest } from '../../core/services/signalk-requests.service';
+import { Subject } from 'rxjs';
 import { DashboardService } from '../../core/services/dashboard.service';
 import { signal } from '@angular/core';
 import { By } from '@angular/platform-browser';
@@ -26,9 +27,13 @@ describe('WidgetRacerLineViewComponent', () => {
   // The real service answers with the request id it sent under, and the widget treats a
   // null as the request never having gone out - so a mock returning undefined silently
   // turns off everything the widget does optimistically on a successful send.
+  // Results are pushed through here by a test, the way the service dispatches a PUT's
+  // final status to every subscriber.
+  const requestResults = new Subject<skRequest>();
   const requestsMock = {
     putRequest: vi.fn<(path: string, value: unknown, widgetUUID: string) => string | null>(
-      () => 'req-1')
+      () => 'req-1'),
+    subscribeRequest: () => requestResults.asObservable()
   };
   // Only the lock state is read, and a locked dashboard is the state the controls are
   // usable in; unlocked covers them with the drag overlay.
@@ -490,68 +495,103 @@ describe('WidgetRacerLineViewComponent', () => {
       expect(lineClasses()).toContain('ocs');
     });
 
+    /**
+     * The plugin (signalk-racer) leaves the start time in place at the gun and stops the
+     * countdown at zero: as far as it is concerned the timer is still running until the
+     * next reset or set. Crossing the line after that is just starting.
+     */
     it('goes green at the gun when the boat was behind, and holds it', () => {
       feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
       behind();
       feed({ ttsPath: 0 });
       expect(lineClasses()).toContain('started');
-      // The plugin stops publishing timeToStart at the gun and the widget's timeout
-      // nulls it; crossing the line afterwards is just starting.
-      feed({ ttsPath: null });
       over();
       expect(lineClasses()).toContain('started');
       expect(lineClasses()).not.toContain('ocs');
     });
 
-    /**
-     * The plugin only publishes startTime while a countdown is running, so it clears it
-     * at the gun — the moment the green is worth showing. A start that has been made is
-     * a stopped timer, so a stopped timer cannot be what takes the green away.
-     */
-    it('holds the green when the plugin clears the start time at the gun', () => {
-      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
-      behind();
-      feed({ ttsPath: 0 });
-      feed({ startTimePath: null, ttsPath: null });
-      expect(lineClasses()).toContain('started');
-      over();
-      expect(lineClasses()).toContain('started');
-      expect(lineClasses()).not.toContain('ocs');
-    });
-
-    it('lets go of it when the timer is armed for the next start', () => {
-      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
-      behind();
-      feed({ ttsPath: 0 });
-      feed({ startTimePath: null, ttsPath: null });
-      expect(lineClasses()).toContain('started');
-      feed({ startTimePath: '2026-01-01T10:30:00Z' });
-      expect(lineClasses()).not.toContain('started');
-    });
-
-    /**
-     * The zero the plugin fires the gun with is still on hand when the next timer is
-     * armed, and this effect reads the geometry — so every position update after arming
-     * would be taken for a second gun, going green on a start that has not happened.
-     */
-    it('does not take the last countdown\u2019s zero for the next one\u2019s gun', () => {
+    /** A plugin that does clear the start time at the gun must not take the green either. */
+    it('holds the green if the start time is cleared after the gun', () => {
       feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
       behind();
       feed({ ttsPath: 0 });
       feed({ startTimePath: null });
       expect(lineClasses()).toContain('started');
+      over();
+      expect(lineClasses()).toContain('started');
+    });
 
-      // Armed again, with the gun's zero still the latest time to start.
+    /**
+     * After the gun the old start time is still set, so a new one set straight over it
+     * never passes through null - the change itself is what arms the next countdown.
+     */
+    it('lets go of it when a new start time is set over the last one', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
+      behind();
+      feed({ ttsPath: 0 });
+      expect(lineClasses()).toContain('started');
       feed({ startTimePath: '2026-01-01T10:30:00Z' });
       expect(lineClasses()).not.toContain('started');
-      // A position update under the new countdown is not a start. It has to be a fresh
-      // position: the per-field signals gate on the value, so refeeding the same fix
-      // changes nothing and the effect would not run at all.
+    });
+
+    /**
+     * The new start time and the new time to start arrive on separate paths, so the start
+     * time can land first with the last gun's zero still on hand - and this effect reads
+     * the geometry, so the next position update would be taken for a second gun.
+     */
+    it('does not take the last countdown\u2019s zero for the next one\u2019s gun', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
+      over();
+      feed({ ttsPath: 0 });
+      expect(lineClasses()).not.toContain('started');
+
+      // Set again, straight over the old time, with the gun's zero still the latest.
+      feed({ startTimePath: '2026-01-01T10:30:00Z' });
+      // A fresh fix behind the line under the new countdown is not a start. It has to be
+      // fresh: the per-field signals gate on the value, so refeeding the same fix changes
+      // nothing and the effect would not run at all.
       aLine(0.00036, 0.00031);
       expect(lineClasses()).not.toContain('started');
       // And the real gun, once this countdown has actually run, still is.
       feed({ ttsPath: 5 });
       feed({ ttsPath: 0 });
+      expect(lineClasses()).toContain('started');
+    });
+
+    /**
+     * A countdown sitting at a set time is routinely adjusted before it is started. The
+     * plugin changes only the time to start then, never the start time, so none of it is
+     * a countdown running - let alone one reaching its gun.
+     */
+    it('takes no adjustment of a stopped timer for a countdown', () => {
+      behind();
+      feed({ startTimePath: null, ttsPath: 300 });
+      feed({ ttsPath: 600 });
+      feed({ ttsPath: 300 });
+      aLine(0.00036, 0.00031);
+      expect(lineClasses()).not.toContain('started');
+    });
+
+    /** Adjusting a running countdown moves its start time; its gun still counts. */
+    it('still goes green at the gun of a countdown adjusted while running', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 120 });
+      behind();
+      feed({ startTimePath: '2026-01-01T10:01:00Z', ttsPath: 180 });
+      feed({ ttsPath: 1 });
+      feed({ ttsPath: 0 });
+      expect(lineClasses()).toContain('started');
+    });
+
+    /**
+     * The countdown stays at zero with the start time set, so a boat over the line at the
+     * gun is judged again on each fix after, and goes green once it is back behind.
+     */
+    it('goes green once a boat over at the gun gets back behind the line', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
+      over();
+      feed({ ttsPath: 0 });
+      expect(lineClasses()).toContain('ocs');
+      behind();
       expect(lineClasses()).toContain('started');
     });
 
@@ -1030,6 +1070,57 @@ describe('WidgetRacerLineViewComponent', () => {
       expect(requestsMock.putRequest).toHaveBeenCalledWith(
         'navigation.racing.setStartLineName', { startLineName: null }, 'racer-line-view-test');
       // Default is a cleared name, not the literal word, and the control is now a label.
+      expect(svg()?.querySelector('.name-label')?.textContent?.trim()).toBe('Default');
+    });
+
+    /**
+     * The plugin only republishes the line when it changes, so a switch it refuses would
+     * leave the chosen name showing over the old line for good.
+     */
+    it('takes the name back when the plugin refuses the switch', () => {
+      aLine(0.00035, 0.00030);
+      feeds.get('linesPath')?.({ data: { value: [{ startLineName: 'Race 1' }] } });
+      feeds.get('startLineNamePath')?.({ data: { value: 'Race 1' } });
+      setMode(1);
+      press('Show the next named line');
+      press('Use the Default line');
+      expect(svg()?.querySelector('.name-label')?.textContent?.trim()).toBe('Default');
+
+      requestResults.next({ requestId: 'req-1', state: 'COMPLETED', statusCode: 400,
+        widgetUUID: 'racer-line-view-test' });
+      fixture.detectChanges();
+      expect(control('Use the Default line'), 'the refused line still reads as current').toBeTruthy();
+      press('Show the next named line');
+      expect(svg()?.querySelector('.name-label')?.textContent?.trim()).toBe('Race 1');
+    });
+
+    it('keeps the name when the plugin accepts the switch', () => {
+      aLine(0.00035, 0.00030);
+      feeds.get('linesPath')?.({ data: { value: [{ startLineName: 'Race 1' }] } });
+      feeds.get('startLineNamePath')?.({ data: { value: 'Race 1' } });
+      setMode(1);
+      press('Show the next named line');
+      press('Use the Default line');
+      requestResults.next({ requestId: 'req-1', state: 'COMPLETED', statusCode: 200,
+        widgetUUID: 'racer-line-view-test' });
+      fixture.detectChanges();
+      expect(svg()?.querySelector('.name-label')?.textContent?.trim()).toBe('Default');
+    });
+
+    it('lets the stream win over a refusal that arrives after it', () => {
+      aLine(0.00035, 0.00030);
+      feeds.get('linesPath')?.({ data: { value: [{ startLineName: 'Race 1' }, { startLineName: 'Race 2' }] } });
+      feeds.get('startLineNamePath')?.({ data: { value: 'Race 1' } });
+      setMode(1);
+      press('Show the next named line');
+      press('Use the Race 2 line');
+      // Someone else's switch lands first; the refusal of ours must not undo it.
+      feeds.get('startLineNamePath')?.({ data: { value: null } });
+      requestResults.next({ requestId: 'req-1', state: 'COMPLETED', statusCode: 400,
+        widgetUUID: 'racer-line-view-test' });
+      fixture.detectChanges();
+      // Browsed round to Default, it reads as the line in use: the stream's, not undone.
+      press('Show the next named line');
       expect(svg()?.querySelector('.name-label')?.textContent?.trim()).toBe('Default');
     });
 

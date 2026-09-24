@@ -1437,6 +1437,17 @@ describe('widgetPathSignature', () => {
         expect(widgetPathSignature({ ...base, suppressBootstrapNull: false })).not.toBe(sig);
     });
 
+    /**
+     * An omitted per-path timeout defers to the widget-level flag, so it is a third setting,
+     * not another spelling of `true`: flipping between any two has to rebuild the pipeline.
+     */
+    it('separates a per-path timeout that is on, off, or left to the widget', () => {
+        const on = widgetPathSignature({ ...base, enableTimeout: true });
+        const off = widgetPathSignature({ ...base, enableTimeout: false });
+        const omitted = widgetPathSignature(base);
+        expect(new Set([on, off, omitted]).size).toBe(3);
+    });
+
     it('normalizeWidgetPath yields undefined for anything that is not a usable path', () => {
         expect(normalizeWidgetPath('  a.b  ')).toBe('a.b');
         expect(normalizeWidgetPath('')).toBeUndefined();
