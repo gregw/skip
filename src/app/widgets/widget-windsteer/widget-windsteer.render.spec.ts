@@ -221,13 +221,16 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
     expect({
       polarRotation,
       polarDot,
-      vmc: pathSummary(attr('path.vmc-curve', 'd')),
+      vmc: pathSummary(attr('path.vmc-fill', 'd')),
+      vmcEdge: pathSummary(attr('path.vmc-edge', 'd')),
       vmcDot: Number(attr('circle.polar-dot', 'cy')).toFixed(3)
     }).toEqual({
       polarRotation: 'rotate(45 500 500)',
       polarDot: '249.234',
       vmc: '180 points, Σx 88685.4, Σy 79998.0',
+      vmcEdge: '59 points, Σx 28185.4, Σy 19498.0',
       vmcDot: '264.357'
     });
+    expect(attr('path.vmc-edge', 'd')).not.toContain('500.0,500.0');
   });
 });

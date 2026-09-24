@@ -10,7 +10,8 @@ import {
   polarSpeedProfile,
   speedToRadius,
   vmcCurve,
-  vmcDotRadius
+  vmcDotRadius,
+  vmcEdgeRuns
 } from './polar-overlay.util';
 import hurmaPolar from './polar-engine.hurma-polar.fixture.json';
 
@@ -333,6 +334,38 @@ describe('polar-overlay.util', () => {
         expectAllFinite(points);
         expect(points.every(point => point.r === 0)).toBe(true);
       }
+    });
+  });
+
+  describe('vmcEdgeRuns', () => {
+    const loop = (...radii: number[]): OverlayPoint[] => radii.map((r, index) => ({ angle: index, r }));
+    const angles = (runs: OverlayPoint[][]): number[][] => runs.map(run => run.map(point => point.angle));
+
+    it('splits the loop at zero-radius samples into one run per tack', () => {
+      expect(angles(vmcEdgeRuns(loop(0, 100, 100, 0, 100, 100)))).toEqual([[1, 2], [4, 5]]);
+    });
+
+    it('keeps a run that spans the end of the list whole', () => {
+      expect(angles(vmcEdgeRuns(loop(100, 0, 0, 100, 100)))).toEqual([[3, 4, 0]]);
+    });
+
+    it('drops a single-sample run, which would stroke nothing', () => {
+      expect(angles(vmcEdgeRuns(loop(0, 100, 0, 100, 100)))).toEqual([[3, 4]]);
+    });
+
+    it('treats a NaN radius as zero', () => {
+      expect(angles(vmcEdgeRuns(loop(100, 100, NaN, 100, 100)))).toEqual([[3, 4, 0, 1]]);
+    });
+
+    it('returns no runs when every sample is zero, and the closed loop when none is', () => {
+      expect(vmcEdgeRuns(loop(0, 0, 0))).toEqual([]);
+      expect(angles(vmcEdgeRuns(loop(100, 100, 100)))).toEqual([[0, 1, 2, 0]]);
+    });
+
+    it('outlines each tack of a beat to a waypoint dead upwind, with no sample at the center', () => {
+      const runs = vmcEdgeRuns(vmcCurve(polarSpeedProfile(synthetic, 6, 1), 0, 0, scaleFor(synthetic)));
+      expect(runs.length).toBe(2);
+      expect(runs.flat().every(point => point.r > 0)).toBe(true);
     });
   });
 
