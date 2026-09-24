@@ -77,7 +77,7 @@ describe('WidgetAutopilotComponent embedded route readouts', () => {
         { provide: WidgetRuntimeDirective, useValue: { options } },
         {
           provide: WidgetStreamsDirective,
-          useValue: { observe: () => undefined, unobserve: () => undefined, useSiValues: () => undefined }
+          useValue: { observe: () => undefined, unobserve: () => undefined }
         },
         { provide: SignalkRequestsService, useValue: { subscribeRequest: () => EMPTY, putRequest: vi.fn() } },
         { provide: HttpClient, useValue: { post: vi.fn(() => of({ statusCode: 200 })), put: vi.fn(() => of({ statusCode: 200 })), delete: vi.fn(() => of({ statusCode: 200 })) } },

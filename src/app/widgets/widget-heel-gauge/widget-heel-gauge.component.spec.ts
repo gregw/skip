@@ -51,7 +51,6 @@ describe('WidgetHeelGaugeComponent', () => {
             observe: (pathName: string, _next: unknown, subField?: string) => {
               observeCalls.push({ pathName, subField });
             },
-            useSiValues: () => undefined,
           },
         },
       ],
@@ -145,7 +144,7 @@ describe('WidgetHeelGaugeComponent output from SI inputs', () => {
         },
         {
           provide: WidgetStreamsDirective,
-          useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }, useSiValues: () => undefined }
+          useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; } }
         }
       ]
     });

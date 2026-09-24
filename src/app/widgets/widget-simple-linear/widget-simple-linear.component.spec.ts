@@ -40,7 +40,6 @@ describe('WidgetSimpleLinearComponent output from SI inputs', () => {
   let fixture: ComponentFixture<WidgetSimpleLinearComponent>;
   let next: ((u: IPathUpdate) => void) | undefined;
   let options: WritableSignal<IWidgetSvcConfig>;
-  let calls: string[];
   let metaScale: WritableSignal<ISkDisplayScale | undefined>;
   let metaObserved: string[];
 
@@ -87,7 +86,6 @@ describe('WidgetSimpleLinearComponent output from SI inputs', () => {
 
   beforeEach(async () => {
     next = undefined;
-    calls = [];
     metaScale = signal<ISkDisplayScale | undefined>(undefined);
     metaObserved = [];
     options = signal(makeConfig('celsius'));
@@ -105,8 +103,7 @@ describe('WidgetSimpleLinearComponent output from SI inputs', () => {
         {
           provide: WidgetStreamsDirective,
           useValue: {
-            observe: (_p: string, n: (u: IPathUpdate) => void) => { calls.push('observe'); next = n; },
-            useSiValues: () => { calls.push('useSiValues'); }
+            observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }
           }
         },
         { provide: WidgetMetadataDirective, useValue: {
@@ -122,11 +119,6 @@ describe('WidgetSimpleLinearComponent output from SI inputs', () => {
     fixture.componentRef.setInput('type', 'widget-simple-linear');
     fixture.componentRef.setInput('theme', theme);
     fixture.detectChanges();
-  });
-
-  it('opts in to SI values before observing its path', () => {
-    expect(calls[0]).toBe('useSiValues');
-    expect(calls).toContain('observe');
   });
 
   it('shows a reading in the stored unit on the stored scale', () => {

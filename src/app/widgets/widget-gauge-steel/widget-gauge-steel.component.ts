@@ -95,8 +95,6 @@ export class WidgetSteelGaugeComponent {
   protected readonly effectiveMaxValue = computed<number>(() => this.scaleBounds().upper);
 
   constructor() {
-    this.streams.useSiValues();
-
     // Data path effect
     effect(() => {
       const cfg = this.runtime.options();

@@ -111,7 +111,6 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
   };
 
   constructor() {
-    this.streams.useSiValues();
     // Observe angle path when config present
     effect(() => {
       const cfg = this.runtime.options();

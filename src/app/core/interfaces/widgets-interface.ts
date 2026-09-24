@@ -722,11 +722,12 @@ export interface IWidgetPath {
   /**
    * The measure the slot presents its value in. A structural slot (`showConvertUnitTo: false`)
    * always presents in this measure; a display slot follows the server's resolved measure and uses
-   * this one only until the path's unit meta arrives. `WidgetStreamsDirective` converts the value to
-   * the measure, or, for a widget in SI mode, delivers the SI value with the measure alongside.
+   * this one only until the path's unit meta arrives. `WidgetStreamsDirective` delivers the SI value
+   * with the measure alongside, and the widget converts where it presents the value.
    * Allowed values are defined in {@link unitConversionFunctions}.
    * Also used as a source to identify conversion group.
-   * Use null for no conversion.
+   * Use null on a structural slot to present its value in SI; a display slot with null still follows
+   * the server's resolved measure.
    *
    * @see units.service unitConversionFunctions()
    */

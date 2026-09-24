@@ -111,7 +111,6 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
   private pendingStartTimeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    this.streams.useSiValues();
     // Theme / palette effect
     effect(() => {
       const cfg = this.runtime.options();

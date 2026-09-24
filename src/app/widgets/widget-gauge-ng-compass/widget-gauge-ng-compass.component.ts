@@ -152,7 +152,6 @@ export class WidgetGaugeNgCompassComponent implements AfterViewInit {
   protected displayName = computed(() => this.runtime.options()?.displayName);
 
   constructor() {
-    this.streams.useSiValues();
     // Data effect
     effect(() => {
       const cfg = this.runtime.options();

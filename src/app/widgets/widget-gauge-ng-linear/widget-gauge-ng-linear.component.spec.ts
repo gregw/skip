@@ -88,7 +88,7 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
       imports: [WidgetGaugeNgLinearComponent],
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
-        { provide: WidgetStreamsDirective, useValue: { useSiValues: () => undefined, observe: (_p: string, next: (u: IPathUpdate) => void) => {
+        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, next: (u: IPathUpdate) => void) => {
           capturedNext = next;
           observeCount++;
           // The real directive replays a BehaviorSubject, so a path holding a value delivers it
@@ -335,8 +335,6 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
 describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
   let fixture: ComponentFixture<WidgetGaugeNgLinearComponent>;
   let next: ((u: IPathUpdate) => void) | undefined;
-  let siValues: boolean;
-  let siBeforeObserve: boolean | undefined;
   let metaObserved: string[];
 
   interface LinearOutput {
@@ -389,8 +387,7 @@ describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
         { provide: DataService, useValue: {} },
         { provide: WidgetRuntimeDirective, useValue: { options: signal(cfg) } },
         { provide: WidgetStreamsDirective, useValue: {
-          useSiValues: () => { siValues = true; },
-          observe: (_p: string, n: (u: IPathUpdate) => void) => { siBeforeObserve ??= siValues; next = n; }
+          observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }
         } },
         { provide: WidgetMetadataDirective, useValue: {
           zones: signal(temperatureZones),
@@ -399,8 +396,6 @@ describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
         } }
       ]
     });
-    siValues = false;
-    siBeforeObserve = undefined;
     fixture = TestBed.createComponent(WidgetGaugeNgLinearComponent);
     fixture.componentRef.setInput('id', 'gauge-1');
     fixture.componentRef.setInput('type', 'widget-gauge-ng-linear');
@@ -424,12 +419,6 @@ describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
 
   describe('with ticks', () => {
     beforeEach(() => render(true));
-
-    // Without the opt-in the directive hands over presentation values, and every pin below would
-    // read an already-converted number as SI.
-    it('opts in to SI values before observing its path', () => {
-      expect(siBeforeObserve).toBe(true);
-    });
 
     it('shows a reading in the stored measure on the stored scale, with its zones', () => {
       feed(KELVIN + 42.5, 'celsius');

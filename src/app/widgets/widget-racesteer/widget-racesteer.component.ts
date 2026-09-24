@@ -118,7 +118,6 @@ export class WidgetRacesteerComponent implements OnDestroy {
   private historicalWindDirection: IWindDirSample[] = [];
 
   constructor() {
-    this.streams.useSiValues();
     // Heading
     effect(() => {
       const cfg = this.runtime.options();

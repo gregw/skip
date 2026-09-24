@@ -84,8 +84,7 @@ describe('WidgetRacesteerComponent rendering from SI inputs', () => {
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
       observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      unobserve: (pathName: string) => { callbacks.delete(pathName); },
-      useSiValues: () => undefined
+      unobserve: (pathName: string) => { callbacks.delete(pathName); }
     };
     TestBed.configureTestingModule({
       imports: [WidgetRacesteerComponent],

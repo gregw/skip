@@ -45,7 +45,6 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
   let next: ((u: IPathUpdate) => void) | undefined;
   let options: WritableSignal<IWidgetSvcConfig>;
   let zones: WritableSignal<ISkZone[]>;
-  let calls: string[];
   let metaScale: WritableSignal<ISkDisplayScale | undefined>;
   let metaObserved: string[];
 
@@ -76,7 +75,6 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
 
   beforeEach(async () => {
     next = undefined;
-    calls = [];
     metaScale = signal<ISkDisplayScale | undefined>(undefined);
     metaObserved = [];
     options = signal(makeConfig('celsius'));
@@ -95,8 +93,7 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
         {
           provide: WidgetStreamsDirective,
           useValue: {
-            observe: (_p: string, n: (u: IPathUpdate) => void) => { calls.push('observe'); next = n; },
-            useSiValues: () => { calls.push('useSiValues'); }
+            observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }
           }
         },
         { provide: WidgetMetadataDirective, useValue: {
@@ -112,11 +109,6 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
     fixture.componentRef.setInput('type', 'widget-gauge-steel');
     fixture.componentRef.setInput('theme', null);
     fixture.detectChanges();
-  });
-
-  it('opts in to SI values before observing its path', () => {
-    expect(calls[0]).toBe('useSiValues');
-    expect(calls).toContain('observe');
   });
 
   it('shows a reading in the stored unit on the stored scale', () => {

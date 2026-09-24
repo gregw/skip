@@ -85,8 +85,7 @@ describe('WidgetWindComponent live compass-mode toggle (#73)', () => {
     callbacks = new Map<string, (u: IPathUpdate) => void>();
 
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
 
     TestBed.configureTestingModule({
@@ -136,8 +135,7 @@ describe('WidgetWindComponent true-wind sector source', () => {
     options = signal<IWidgetSvcConfig | undefined>(makeConfig());
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -193,8 +191,7 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -313,8 +310,7 @@ describe('WidgetWindComponent speed unit symbol source', () => {
     options = signal<IWidgetSvcConfig | undefined>(makeConfig());
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -369,8 +365,7 @@ describe('WidgetWindComponent waypoint presence (#441)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -420,8 +415,7 @@ describe('WidgetWindComponent rudder angle (#435)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG, ...cfg });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -504,8 +498,7 @@ describe('WidgetWindComponent speed-over-ground gating (#442)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -569,8 +562,7 @@ describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -739,7 +731,6 @@ describe('WidgetWindComponent polar overlay', () => {
     polarService = new FakeActivePolarService();
     const streamsMock = {
       observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      useSiValues: () => undefined,
       unobserve: (pathName: string) => { unobserved.push(pathName); callbacks.delete(pathName); }
     };
     TestBed.configureTestingModule({

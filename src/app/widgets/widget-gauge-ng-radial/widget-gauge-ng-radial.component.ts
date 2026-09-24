@@ -170,7 +170,6 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
   }
 
   constructor() {
-    this.streams.useSiValues();
     // Data subscription effect
     effect(() => {
       const cfg = this.runtime.options();

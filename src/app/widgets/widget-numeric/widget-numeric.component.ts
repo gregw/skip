@@ -167,7 +167,6 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   };
 
   constructor() {
-    this.stream.useSiValues();
     this.showMiniChart.set(this.runtime.options()?.showMiniChart ?? false);
     effect(() => {
       const theme = this.theme();

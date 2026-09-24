@@ -102,8 +102,10 @@ export class WidgetRepointTracker {
  *
  * Key Features:
  * - Fast first emission (take(1)) merged with sampled stream for immediate render
- * - Numeric paths in one of two per-widget modes: converted to the presentation measure via
- *   UnitsService (legacy), or delivered in SI with that measure alongside ({@link useSiValues})
+ * - Numeric paths delivered in SI, tagged with the measure they present in: the server-resolved
+ *   measure for a display slot (the stored `convertUnitTo` until meta resolves), the fixed
+ *   `convertUnitTo` for a structural slot. A widget converts only where it formats text, maps to a
+ *   scale or sets an SVG attribute, with `UnitsService.convertToUnit(measure, value)`
  * - Optional stale-data timeout (gated by the enableTimeout flag; fixed 5s TTL) + retry handling
  * - Path validation: null/undefined/empty paths trigger cleanup
  * - Signature tracking: per-path (path + pathType + convertUnitTo + source + bootstrap null policy); the widget-level update cadence lives in the root signature
@@ -132,9 +134,6 @@ export class WidgetStreamsDirective implements OnDestroy {
   // Root-level signature (timeout settings) to detect when all paths need pipeline rebuild
   private reset$ = new Subject<void>();
   private rootSignature: string | undefined;
-  private siValues = false;
-  // Set by the first observe(); the value mode is fixed from then on, even if every slot is later unobserved.
-  private observed = false;
 
   /** Build a simple Observer wrapper for a given path key. */
   private buildObserver(pathKey: string, next: ((value: IPathUpdate) => void)): Observer<IPathUpdate> {
@@ -186,8 +185,7 @@ export class WidgetStreamsDirective implements OnDestroy {
    * Extract a named sub-field from a whole compound-object value, so a numeric widget can read one
    * field (e.g. `latitude`) of a Signal K compound leaf (e.g. `navigation.position`) that the server
    * emits whole. A non-object value (a path pointed at a scalar) passes straight through, and a
-   * missing sub-field yields null — so the extraction never breaks a scalar path and slots into the
-   * pipeline BEFORE unit conversion, keeping convertUnitTo working on the extracted number.
+   * missing sub-field yields null — so the extraction never breaks a scalar path.
    */
   private extractSubField(update: IPathUpdate, subField: string): IPathUpdate {
     const value = update.data.value;
@@ -240,14 +238,11 @@ export class WidgetStreamsDirective implements OnDestroy {
     // resolved measure (which can change when displayUnits meta arrives after first subscribe).
     const isStructural = pathCfg.showConvertUnitTo === false;
     const structuralMeasure = pathCfg.convertUnitTo;
-    const siValues = this.siValues;
-    const convertWith = (measure: string | undefined, val: number): number | null =>
-      measure && !siValues ? this.unitsService.convertToUnit(measure, val) : val;
 
     let data$: Observable<IPathUpdate> = base$;
     if (subField) {
       // Extract the widget's sub-field from the whole compound value first, so bootstrap-null
-      // suppression, sampling and unit conversion all operate on the extracted number.
+      // suppression and sampling operate on the extracted number.
       data$ = data$.pipe(map(x => this.extractSubField(x, subField)));
     }
     if (suppressBootstrapNull) {
@@ -261,10 +256,7 @@ export class WidgetStreamsDirective implements OnDestroy {
         return seenNonNull;
       }));
     }
-    // Sample the RAW stream first, then convert units AFTER sampling. The unit conversion is a
-    // pure function of the value (and maps null -> null), so the emitted values are identical to
-    // converting upstream — but the conversion now runs only at the sampled rate (plus the fast
-    // first emission) instead of on every incoming delta.
+    // Fast first emission, then the latest value per sample interval.
     const initial$ = data$.pipe(take(1));
     const sampled$ = data$.pipe(sampleTime(sample));
     data$ = merge(initial$, sampled$);
@@ -273,7 +265,7 @@ export class WidgetStreamsDirective implements OnDestroy {
         data$ = data$.pipe(
           map(x => ({
             data: {
-              value: x.data.value == null ? null : convertWith(structuralMeasure, x.data.value as number),
+              value: x.data.value,
               timestamp: x.data.timestamp,
               measure: structuralMeasure
             },
@@ -289,10 +281,9 @@ export class WidgetStreamsDirective implements OnDestroy {
         const measure$ = this.dataService.getPathMetaObservable(normalizedPath).pipe(
           map(() => {
             const resolved = this.unitsService.resolvePathMeasure(normalizedPath);
-            // Before any unit meta resolves, resolvePathMeasure returns 'unitless' and the value would
-            // pass through as raw SI — mismatched against a widget's stored-unit scale/label (a gauge
-            // needle can peg for a frame). Fall back to the widget's stored unit until a real measure
-            // resolves, so the pre-meta value is converted in a unit that matches its scale and label.
+            // Before any unit meta resolves, resolvePathMeasure returns 'unitless'. Tag the value with
+            // the widget's stored unit until a real measure resolves, so its readout and scale are
+            // presented in that unit instead of as bare SI.
             const measure = resolved === 'unitless' && structuralMeasure ? structuralMeasure : resolved;
             return { measure, durationFormat: this.unitsService.resolvePathDurationFormat(normalizedPath) };
           }),
@@ -301,7 +292,7 @@ export class WidgetStreamsDirective implements OnDestroy {
         data$ = combineLatest([data$, measure$]).pipe(
           map(([x, { measure, durationFormat }]) => ({
             data: {
-              value: x.data.value == null ? null : convertWith(measure, x.data.value as number),
+              value: x.data.value,
               timestamp: x.data.timestamp,
               measure,
               durationFormat
@@ -341,23 +332,6 @@ export class WidgetStreamsDirective implements OnDestroy {
     this.subscriptions.set(pathName, { sub, signature });
   }
 
-  /**
-   * Deliver every number slot of this widget in SI, with the measure it presents in on
-   * `data.measure`: the server-resolved measure for a display slot (the stored `convertUnitTo` until
-   * meta resolves), the fixed `convertUnitTo` for a structural slot. The widget converts only where
-   * it formats text, maps to a scale or sets an SVG attribute, with
-   * `UnitsService.convertToUnit(measure, value)`.
-   *
-   * The mode belongs to the widget, not to a slot, because a widget computes across its slots
-   * (racesteer subtracts target VMG from VMG). Call it before the first `observe()`, typically from
-   * the constructor; switching once a slot is subscribed would leave that slot in the other unit.
-   */
-  public useSiValues(): void {
-    if (this.observed) {
-      throw new Error('[WidgetStreamsDirective] useSiValues() must be called before any path is observed');
-    }
-    this.siValues = true;
-  }
 
   /**
    * Programmatically set widget configuration for the streams directive.
@@ -505,7 +479,7 @@ export class WidgetStreamsDirective implements OnDestroy {
    * ```ts
    * // Single path numeric widget
    * this.streams.observe('speed', update => {
-   *   this.speed.set(update.data.value as number); // In update.data.measure, or SI after useSiValues()
+   *   this.speed.set(update.data.value as number); // SI; update.data.measure names its presentation unit
    * });
    *
    * // Multiple paths - call observe() once per path
@@ -519,13 +493,12 @@ export class WidgetStreamsDirective implements OnDestroy {
    * ```
    *
    * @param pathName Logical path key from widget config (config.paths[pathName])
-   * @param next Callback for processed updates (sampling, and unit conversion unless in SI mode, applied)
+   * @param next Callback for processed updates (sampled; numbers in SI)
    * @param subField Optional sub-field key to read out of a whole compound-object value (e.g.
    *   'latitude' when the path is the canonical compound leaf 'navigation.position'). The widget
-   *   owns this — it is extracted before unit conversion; a scalar value passes through unchanged.
+   *   owns this — it is extracted before sampling; a scalar value passes through unchanged.
    */
   public observe(pathName: string, next: (value: IPathUpdate) => void, subField?: string): void {
-    this.observed = true;
     // Capture previous registration before replacing it (callback + sub-field)
     const prev = this.registrations.find(r => r.pathName === pathName);
     const prevReg = prev?.next;

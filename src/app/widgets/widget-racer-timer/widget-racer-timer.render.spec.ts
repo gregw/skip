@@ -65,8 +65,7 @@ describe('WidgetRacerTimerComponent output from SI inputs', () => {
     drawText = vi.fn<CanvasService['drawText']>();
     const streamsMock = {
       observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
-      unobserve: (pathName: string) => { callbacks.delete(pathName); },
-      useSiValues: () => undefined
+      unobserve: (pathName: string) => { callbacks.delete(pathName); }
     };
     const canvasMock: Partial<CanvasService> = {
       clearCanvas: vi.fn(),

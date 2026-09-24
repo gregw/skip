@@ -24,10 +24,9 @@ interface IPathData {
   /** The value's timestamp Date Object (in Zulu time). */
   timestamp: Date | null;
   /**
-   * The Skip measure the value presents in (set by the streams directive): the value is already
-   * converted to it, or is SI when the widget uses SI mode. Lets a widget derive its unit symbol
-   * from the SAME source as the value, so label and conversion never drift once a display path
-   * follows the server's resolved unit. Absent on raw updates.
+   * The Skip measure the value presents in (set by the streams directive); the value itself is SI.
+   * Lets a widget convert and derive its unit symbol from the SAME source, so label and number
+   * never drift once a display path follows the server's resolved unit. Absent on raw updates.
    */
   measure?: string;
   /**

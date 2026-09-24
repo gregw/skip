@@ -64,17 +64,6 @@ class FakeDataService {
 class FakeUnitsService {
     /** Per-path resolved measure a display path follows; defaults to an identity measure ('kn'). */
     pathMeasures = new Map<string, string>();
-    convertToUnit(unit: string, value: number): number | string {
-        if (unit === 'x10')
-            return value * 10;
-        if (unit === 'knots')
-            return value * 3600 / 1852;
-        if (unit === 'deg')
-            return value * 180 / Math.PI;
-        if (unit === 'D HH:MM:SS')
-            return `0 00:00:${value}`;
-        return value;
-    }
     resolvePathMeasure(path: string): string {
         return this.pathMeasures.get(path) ?? 'kn';
     }
@@ -208,17 +197,17 @@ describe('WidgetStreamsDirective', () => {
         expect(received).toEqual([48.5]);
     });
 
-    it('applies unit conversion to the extracted sub-field (extraction precedes conversion)', () => {
+    it('tags the extracted sub-field with the slot\'s measure, value in SI', () => {
         const cfg = makeCfg({ path: 'navigation.attitude', source: null, pathType: 'number', convertUnitTo: 'x10', showConvertUnitTo: false, updateInterval: 50 });
         directive.setStreamsConfig(cfg);
 
-        const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'roll');
+        const received: unknown[][] = [];
+        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]), 'roll');
 
         const subj = dataSvc.subjects.get('navigation.attitude|default')!;
         subj.next({ data: { value: { roll: 0.2, pitch: 0.1 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
-        expect(received).toEqual([2]); // 0.2 extracted first, then the x10 conversion applied
+        expect(received).toEqual([[0.2, 'x10']]);
     });
 
     it('passes a scalar value straight through when a sub-field is configured (customised scalar path stays working)', () => {
@@ -245,6 +234,19 @@ describe('WidgetStreamsDirective', () => {
         subj.next({ data: { value: { latitude: 48.5, longitude: -123.25 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
         expect(received).toEqual([null]);
+    });
+
+    it('delivers every widget SI values: a ratio of 1 stays 1 when the server shows the path in percent', () => {
+        // A boolean-switch numeric slot reads 0/1, whatever unit the server shows the path in.
+        unitsSvc.pathMeasures.set('electrical.switches.bank.1.state', 'percent');
+        directive.setStreamsConfig(makeCfg({ path: 'electrical.switches.bank.1.state', pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('electrical.switches.bank.1.state|default')!
+            .next({ data: { value: 1, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received.map(u => [u.data.value, u.data.measure])).toEqual([[1, 'percent']]);
     });
 
     it('resubscribes to DataService when source changes', async () => {
@@ -377,12 +379,12 @@ describe('WidgetStreamsDirective', () => {
     });
 
     it('rewires pipeline on signature change (convertUnitTo) while reusing base stream', () => {
-        // Initial config: structural number path, no conversion (convertUnitTo drives the value).
+        // Initial config: structural number path without a fixed unit.
         const cfg1 = makeCfg({ path: 'env.rewire', source: null, pathType: 'number', showConvertUnitTo: false, updateInterval: 50 });
         directive.setStreamsConfig(cfg1);
 
-        const hits: number[] = [];
-        directive.observe('p', u => hits.push(u?.data?.value as number));
+        const hits: unknown[][] = [];
+        directive.observe('p', u => hits.push([u?.data?.value, u?.data?.measure]));
 
         // Single base subscription should be created
         expect(dataSvc.calls.length).toBe(1);
@@ -390,7 +392,7 @@ describe('WidgetStreamsDirective', () => {
 
         const subj = dataSvc.subjects.get('env.rewire|default')!;
         subj.next({ data: { value: 2, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-        expect(hits).toEqual([2]);
+        expect(hits).toEqual([[2, undefined]]);
 
         // Change only convertUnitTo (part of signature), keep base identity (path+source) the same
         const cfg2 = makeCfg({ path: 'env.rewire', source: null, pathType: 'number', convertUnitTo: 'x10', showConvertUnitTo: false, updateInterval: 50 });
@@ -399,9 +401,9 @@ describe('WidgetStreamsDirective', () => {
         // DataService should NOT have been called again (base reused)
         expect(dataSvc.calls.length).toBe(1);
 
-        // Next emission should reflect new pipeline (converted by x10)
+        // Next emission comes through the new pipeline, tagged with the new unit
         subj.next({ data: { value: 3, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-        expect(hits).toEqual([2, 30]);
+        expect(hits).toEqual([[2, undefined], [3, 'x10']]);
     });
 
     it('suppresses leading bootstrap null values when configured', async () => {
@@ -510,28 +512,27 @@ describe('WidgetStreamsDirective', () => {
         expect(dataSvc.timeoutCalls[0]).toEqual({ path: 'env.to', source: 'n2k-1', pathType: 'string', dataTimeoutMs: 5000 });
     });
 
-    it('applies a structural convertUnitTo to numeric values (initial + sampled)', async () => {
+    it('samples a structural slot (initial + latest) and tags it with its fixed unit', async () => {
         vi.useFakeTimers();
         const cfg = makeCfg({ path: 'env.units', source: null, pathType: 'number', updateInterval: 50, convertUnitTo: 'x10', showConvertUnitTo: false });
         directive.setStreamsConfig(cfg);
 
-        const hits: number[] = [];
-        directive.observe('p', u => hits.push(u?.data?.value as number));
+        const hits: unknown[][] = [];
+        directive.observe('p', u => hits.push([u?.data?.value, u?.data?.measure]));
 
         const subj = dataSvc.subjects.get('env.units|default')!;
-        // Initial should be converted immediately
+        // Initial is delivered immediately
         subj.next({ data: { value: 1, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
         // Next two quick emissions; only latest sampled should be delivered after tick
         subj.next({ data: { value: 2, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
         subj.next({ data: { value: 3, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
         await vi.advanceTimersByTimeAsync(60);
-        expect(hits).toEqual([10, 30]);
+        expect(hits).toEqual([[1, 'x10'], [3, 'x10']]);
     });
 
-    it('applies the server-resolved measure to a display path and tags the value with it', () => {
+    it('tags a display path with the server-resolved measure, not the stored one', () => {
         unitsSvc.pathMeasures.set('env.disp', 'x10');
-        // Stored convertUnitTo is ignored for a display path (no showConvertUnitTo:false); the
-        // server-resolved measure wins for BOTH the conversion and the value's measure tag.
+        // Stored convertUnitTo is ignored for a display path (no showConvertUnitTo:false).
         const cfg = makeCfg({ path: 'env.disp', source: null, pathType: 'number', convertUnitTo: 'noop', updateInterval: 50 });
         directive.setStreamsConfig(cfg);
 
@@ -540,26 +541,26 @@ describe('WidgetStreamsDirective', () => {
 
         dataSvc.subjects.get('env.disp|default')!.next({ data: { value: 4, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
-        expect(received.at(-1)?.data.value).toBe(40); // resolved 'x10', not stored 'noop'
+        expect(received.at(-1)?.data.value).toBe(4);
         expect(received.at(-1)?.data.measure).toBe('x10');
     });
 
-    it('re-emits the last value in the new unit when the resolved measure changes (late meta)', () => {
+    it('re-emits the last value with the new measure when the resolved measure changes (late meta)', () => {
         unitsSvc.pathMeasures.set('env.late', 'noop'); // starts as an identity measure
         const cfg = makeCfg({ path: 'env.late', source: null, pathType: 'number', updateInterval: 50 });
         directive.setStreamsConfig(cfg);
 
-        const values: unknown[] = [];
-        directive.observe('p', u => values.push(u?.data?.value));
+        const values: unknown[][] = [];
+        directive.observe('p', u => values.push([u?.data?.value, u?.data?.measure]));
 
         dataSvc.subjects.get('env.late|default')!.next({ data: { value: 5, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-        expect(values.at(-1)).toBe(5); // identity measure
+        expect(values.at(-1)).toEqual([5, 'noop']);
 
         // Server displayUnits meta arrives after subscribe -> resolved measure becomes 'x10'.
-        // No new data delta: the last value must re-emit, re-converted, so label and value agree.
+        // No new data delta: the last value must re-emit with it, so label and value agree.
         unitsSvc.pathMeasures.set('env.late', 'x10');
         dataSvc.metaSubjects.get('env.late')!.next({} as ISkMetadata);
-        expect(values.at(-1)).toBe(50);
+        expect(values.at(-1)).toEqual([5, 'x10']);
     });
 
     it('falls back to the stored unit for a display path while the resolved measure is still unitless', () => {
@@ -572,9 +573,9 @@ describe('WidgetStreamsDirective', () => {
 
         dataSvc.subjects.get('env.pre|default')!.next({ data: { value: 4, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
-        // Resolved 'unitless' -> convert with the stored 'x10' (not raw), and tag with that unit,
-        // so a pre-meta value matches the widget's stored-unit scale/label instead of raw SI.
-        expect(received.at(-1)?.data.value).toBe(40);
+        // Resolved 'unitless' -> tag with the stored 'x10', so a pre-meta value is presented in the
+        // widget's stored unit.
+        expect(received.at(-1)?.data.value).toBe(4);
         expect(received.at(-1)?.data.measure).toBe('x10');
     });
 
@@ -968,7 +969,7 @@ describe('WidgetStreamsDirective', () => {
     });
 });
 
-describe('WidgetStreamsDirective SI mode', () => {
+describe('WidgetStreamsDirective SI values', () => {
     let directive: WidgetStreamsDirective;
     let dataSvc: FakeDataService;
     let unitsSvc: FakeUnitsService;
@@ -984,7 +985,6 @@ describe('WidgetStreamsDirective SI mode', () => {
         directive = TestBed.inject(WidgetStreamsDirective);
         dataSvc = TestBed.inject(DataService) as unknown as FakeDataService;
         unitsSvc = TestBed.inject(UnitsService) as unknown as FakeUnitsService;
-        directive.useSiValues();
     });
 
     const emit = (key: string, value: unknown) =>
@@ -1073,42 +1073,6 @@ describe('WidgetStreamsDirective SI mode', () => {
 
         expect(received.map(u => u.data.value)).toEqual([null, null]);
         expect(received.map(u => u.data.measure)).toEqual(['kn', 'deg']);
-    });
-
-    it('refuses to switch modes once a slot is observed, so one widget never mixes units', () => {
-        const legacy = TestBed.runInInjectionContext(() => new WidgetStreamsDirective());
-        legacy.setStreamsConfig(makeCfg({ path: 'env.x', pathType: 'number' }));
-        legacy.observe('p', () => { });
-
-        expect(() => legacy.useSiValues()).toThrow();
-    });
-
-    it('keeps refusing after the last observed slot is unobserved', () => {
-        const legacy = TestBed.runInInjectionContext(() => new WidgetStreamsDirective());
-        legacy.setStreamsConfig(makeCfg({ path: 'env.x', pathType: 'number' }));
-        legacy.observe('p', () => { });
-        legacy.unobserve('p');
-
-        expect(() => legacy.useSiValues()).toThrow();
-    });
-
-    it('delivers the converted value to a legacy widget and the SI value to an SI widget on the same path', () => {
-        unitsSvc.pathMeasures.set('nav.sog', 'knots');
-        const legacy = TestBed.runInInjectionContext(() => new WidgetStreamsDirective());
-        const cfg = makeCfg({ path: 'nav.sog', pathType: 'number', updateInterval: 50 });
-        directive.setStreamsConfig(cfg);
-        legacy.setStreamsConfig(cfg);
-
-        const si: IPathUpdate[] = [];
-        const converted: IPathUpdate[] = [];
-        directive.observe('p', u => si.push(u));
-        legacy.observe('p', u => converted.push(u));
-        emit('nav.sog|default', 5.14);
-
-        expect(si.at(-1)?.data.value).toBe(5.14);
-        expect(converted.at(-1)?.data.value).toBeCloseTo(5.14 * 3600 / 1852, 10);
-        expect(si.at(-1)?.data.measure).toBe('knots');
-        expect(converted.at(-1)?.data.measure).toBe('knots');
     });
 });
 
@@ -1205,10 +1169,9 @@ describe('WidgetStreamsDirective TTL value reset (#1069)', () => {
         expect(hits[hits.length - 1]).toBeNull();
     });
 
-    it('resets an SI-mode value to null after a TTL timeout', async () => {
+    it('resets a structural slot\'s SI value to null after a TTL timeout', async () => {
         vi.useFakeTimers();
         vi.spyOn(console, 'log');
-        directive.useSiValues();
         directive.setStreamsConfig(makeCfg({
             path: 'env.ttl-si', source: null, pathType: 'number', updateInterval: 50,
             convertUnitTo: 'x10', showConvertUnitTo: false, enableTimeout: true
