@@ -15,7 +15,6 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { UnitsService } from '../../core/services/units.service';
 import { CanvasService } from '../../core/services/canvas.service';
 import type { ITheme } from '../../core/services/app-service';
-import { DataService } from '../../core/services/data.service';
 import { SignalKDeltaService } from '../../core/services/signalk-delta.service';
 import type { IMeta } from '../../core/interfaces/app-interfaces';
 
@@ -171,16 +170,13 @@ describe('WidgetDataGraphComponent', () => {
     expect(title).not.toContain('celsius');
   });
 
-  it('takes the measure of a pointer datachartPath from the field metadata', async () => {
+  it('resolves a pointer datachartPath through the field metadata, to unitless', async () => {
     const emissions$ = new Subject<IGraphDatapoint>();
     historyMock.getBackfillThenLive.mockReturnValue(emissions$);
     const metadataUpdates$ = new Subject<IMeta>();
-    // Stands in for UnitsService's measure resolution with the field's own units, read through the
-    // real, pointer-aware DataService.
-    const resolvePathMeasure = vi.fn((path: string) => TestBed.inject(DataService).getPathMeta(path)?.units ?? 'unitless');
 
     await setup(makeConfig({ datachartPath: 'self.navigation.attitude#/roll', numDecimal: 4 }), [
-      { provide: UnitsService, useValue: { ...unitsMock, resolvePathMeasure } },
+      { provide: UnitsService, useClass: UnitsService },
       {
         provide: SignalKDeltaService,
         useValue: {
@@ -191,6 +187,8 @@ describe('WidgetDataGraphComponent', () => {
         }
       }
     ]);
+    const units = TestBed.inject(UnitsService);
+    const resolveSpy = vi.spyOn(units, 'resolvePathMeasure');
 
     metadataUpdates$.next({
       context: 'self',
@@ -202,9 +200,12 @@ describe('WidgetDataGraphComponent', () => {
     emissions$.next({ timestamp: 1000, data: { value: -0.0384 } });
     fixture.detectChanges();
 
-    expect(resolvePathMeasure).toHaveBeenCalledWith('self.navigation.attitude#/roll');
-    // The field's rad, never the base path's own units.
-    expect(readTitle()).toBe('-0.0384 rad');
+    expect(resolveSpy).toHaveBeenCalledWith('self.navigation.attitude#/roll');
+    // The field's rad selects the Angle group, never the base path's own m.
+    expect(units.getConversionsForPath('self.navigation.attitude#/roll').conversions.map(g => g.group)).toEqual(['Angle']);
+    // A field carries no displayUnits, so the measure is unitless and the value stays in SI.
+    expect(resolveSpy).toHaveLastReturnedWith('unitless');
+    expect(readTitle()).toBe('-0.0384');
   });
 
   interface AxisState {
