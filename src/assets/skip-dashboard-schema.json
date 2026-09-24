@@ -2235,7 +2235,7 @@
           "ttsPath": {
             "convertUnitTo": "s",
             "description": "Time to the start in seconds",
-            "enableTimeout": true,
+            "enableTimeout": false,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToStart",
             "pathRequired": false,
@@ -2654,7 +2654,7 @@
           "ttsPath": {
             "convertUnitTo": "s",
             "description": "Time to the Start in seconds",
-            "enableTimeout": true,
+            "enableTimeout": false,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToStart",
             "pathRequired": false,

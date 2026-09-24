@@ -187,10 +187,16 @@ export class WidgetRacerLineViewComponent {
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false,
         pathSkUnitsFilter: 's',
-        // Published continuously while the plugin is computing it, so it takes the
-        // stale-data TTL: a frozen number here reads as a live one, and the drawing
-        // relies on the countdown nulling after the gun.
-        enableTimeout: true
+        // Not continuous, unlike the other two: the plugin publishes the time to start
+        // once when the timer is armed or reset - a 5:00 sitting there not counting - and
+        // then every second only while it actually runs. A TTL would blank that seeded
+        // countdown five seconds after a reset. The exemption has to be unanimous, since
+        // DataService's timeout cross-clears every registration on a silent path.
+        //
+        // Nothing here needs it to expire: the gun is read from the countdown running
+        // down to zero and the latch is cleared by the next countdown, not by this going
+        // null. See startedClean in the drawing.
+        enableTimeout: false
       },
       startTimePath: {
         // Cleared by the plugin whenever the timer is not counting down, so it

@@ -340,6 +340,14 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   private readonly DEFAULT_BOAT_METRES = 10;
   private readonly HULL_BEAM_RATIO = 0.36; // TODO lookup boat width
   private readonly MIN_HULL_DISPLAY_UNITS = 20;
+  /**
+   * How much of the line, in boat lengths, the fit keeps in frame before it will zoom in
+   * any further. Ten is about as much as places the boat along the line rather than just
+   * beside a mark; a line shorter than that is shown whole, and a longer one is not
+   * chased - past this the detail around the boat is worth more than the water at the
+   * far end.
+   */
+  private readonly LINE_IN_FRAME_LENGTHS = 10;
 
   // The line a placeholder stands in for. Nothing measures against it; it only gives the
   // end marks a scale to be drawn at.
@@ -388,6 +396,12 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
   private readonly startedClean = signal<boolean>(false);
   /** Previous timerRunning, to catch the timer being armed again. See startedClean. */
   private timerWasRunning = false;
+  /**
+   * Whether the countdown on hand has been seen running. A newly armed timer has not
+   * counted down yet, and the time to start still on hand is the last countdown's - a
+   * zero that has already been through its gun. See startedClean.
+   */
+  private countdownSeen = false;
 
   constructor() {
     // Keep the view frame up to date. Reading the geometry, width and mode here makes
@@ -409,13 +423,20 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
       untracked(() => {
         const armed = running && !this.timerWasRunning;
         this.timerWasRunning = running;
+        // The zero a timer is armed on top of belongs to the countdown that just ran, so
+        // this one is not through its gun until it has been seen with time still to run.
+        // Otherwise the first position update after arming - and every one after it,
+        // this effect reading the geometry - is taken for a second gun.
+        if (armed) this.countdownSeen = false;
+        if (tts != null && tts > 0) this.countdownSeen = true;
+
         if (this.startedClean()) {
           // Only the next countdown ends the state - see startedClean for why the timer
           // stopping does not.
           if (armed || (tts != null && tts > 0)) this.startedClean.set(false);
           return;
         }
-        if (!running) return;
+        if (!running || !this.countdownSeen) return;
         // The gun. The plugin publishes 0 once before it stops the countdown, so this is
         // seen exactly once per start.
         if (tts != null && tts <= 0) {
@@ -1150,9 +1171,16 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    * hundred metres of empty water away - is worth the scale it costs. So the along axis
    * is fitted to the boat and its nearer end, and the far one is allowed to leave.
    *
-   * It does not let the drawing zoom without limit: three boat lengths of line stay in
-   * frame, which is the shortest run of it that still shows where the boat is along the
-   * line rather than just beside a mark. A line shorter than that is shown whole.
+   * It does not let the drawing zoom without limit: showing a usable run of the line
+   * comes before zooming in, and LINE_IN_FRAME_LENGTHS boat lengths of it stay in frame
+   * whatever that costs in scale. A line shorter than that is shown whole; a longer one
+   * is not chased, which is what keeps a long line from zooming the boat away to nothing.
+   *
+   * What the far end leaves for is the scale it would cost - so when it costs nothing it
+   * stays. Standing off the line, the across axis is what sets the scale and the width is
+   * left holding far more along-distance than the span asked of it; centring that span
+   * then draws empty water either side of it while the line itself runs off the edge. The
+   * spare width goes to the line instead. See the growth below.
    */
   private fitFrame(geo: ILineGeometry, W: number): IViewFrame {
     const margin = this.VB_MARGIN;
@@ -1173,7 +1201,7 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     // Keep a usable run of the line itself in frame. Measured on the line rather than on
     // the span, because the span is mostly open water when the boat is standing off, and
     // a fit that satisfied the floor with water would still show a stub of line.
-    const wanted = Math.min(3 * this.boatReach(), geo.length);
+    const wanted = Math.min(this.LINE_IN_FRAME_LENGTHS * this.boatReach(), geo.length);
     const visibleLo = Math.max(minA, 0), visibleHi = Math.min(maxA, geo.length);
     if (visibleHi - visibleLo < wanted) {
       // Grown about what is already showing, then slid back inside the line's own ends:
@@ -1189,8 +1217,30 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     // Keep the across axis from collapsing when the boat is sitting on the line.
     const spanA = Math.max(maxA - minA, 1);
     const spanC = Math.max(maxC - minC, spanA * 0.35);
+    const scale = Math.min((W - 2 * margin) / spanA, (yMax - yMin) / spanC);
+
+    // Spend whatever width the chosen scale left over on the line, by growing the window
+    // towards the far end - as far as the room reaches and no further than the end
+    // itself, there being nothing past it to show. The scale is deliberately not
+    // recomputed from the grown window: this is room already bought and standing empty,
+    // not a reason to zoom out, so the boat and its end are drawn exactly as large as
+    // they were and the line simply reaches further across the frame.
+    //
+    // It needs no threshold and no state of its own. Closing on the line shrinks the
+    // across span, which raises the scale, which shrinks the spare room - so the window
+    // retracts of its own accord, and by the time the along axis is the binding one
+    // there is no spare left and this does nothing at all.
+    if (boat) {
+      const spare = (W - 2 * margin) / scale - (maxA - minA);
+      if (spare > 0) {
+        const far = this.nearestEnd(geo, boat.a) === 0 ? geo.length : 0;
+        if (far > maxA) maxA = Math.min(far, maxA + spare);
+        else if (far < minA) minA = Math.max(far, minA - spare);
+      }
+    }
+
     return {
-      scale: Math.min((W - 2 * margin) / spanA, (yMax - yMin) / spanC),
+      scale,
       midA: (minA + maxA) / 2,
       midC: (minC + maxC) / 2
     };

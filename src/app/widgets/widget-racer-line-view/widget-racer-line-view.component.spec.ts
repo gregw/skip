@@ -151,6 +151,16 @@ describe('WidgetRacerLineViewComponent', () => {
     for (const key of ['positionPath', 'headingPath', 'cogPath', 'sogPath', 'twdPath']) {
       expect(paths[key]?.enableTimeout, `${key} should keep the timeout`).toBeUndefined();
     }
+    // The readings the plugin computes on every position take the TTL on their own, the
+    // widget declaring no timeout of its own for them to inherit.
+    for (const key of ['ttlPath', 'ttbPath']) {
+      expect(paths[key]?.enableTimeout, `${key} would never go stale`).toBe(true);
+    }
+    // The countdown is the exception among the live readings: published once when the
+    // timer is armed or reset, then every second only while it runs, so a TTL blanks the
+    // seeded 5:00 a reset leaves standing.
+    expect(paths['ttsPath']?.enableTimeout,
+      'a reset countdown would blank five seconds later').toBe(false);
   });
 
   it('subscribes to every path its config declares', () => {
@@ -285,11 +295,11 @@ describe('WidgetRacerLineViewComponent', () => {
   });
 
   /**
-   * The zoom stops where the line stops being readable as a line: three boat lengths of
-   * it, measured on the line itself rather than on the fitted span, which is mostly open
-   * water when the boat is standing off.
+   * Showing a usable run of the line comes before zooming in: ten boat lengths of it stay
+   * in frame whatever that costs in scale. Measured on the line itself rather than on the
+   * fitted span, which is mostly open water when the boat is standing off.
    */
-  it('always keeps three boat lengths of the line in frame', () => {
+  it('always keeps ten boat lengths of the line in frame', () => {
     feed({ boatLengthPath: 12 });
     // Sitting on the starboard end, which is where the zoom would otherwise run away.
     aLine(0.00003, 0.00005);
@@ -300,8 +310,61 @@ describe('WidgetRacerLineViewComponent', () => {
     // Units per metre, from the line's own drawn length.
     const scale = Math.abs(stbX - portX) / 140;
     const onScreen = Math.min(Math.max(portX, stbX), width) - Math.max(Math.min(portX, stbX), 0);
-    expect(onScreen / scale, 'less than three boat lengths of line in frame')
-      .toBeGreaterThanOrEqual(36 - 0.5);
+    expect(onScreen / scale, 'less than ten boat lengths of line in frame')
+      .toBeGreaterThanOrEqual(120 - 0.5);
+  });
+
+  /**
+   * And it stops there rather than chasing the whole line: on a line far longer than the
+   * run it wants, the far end is still allowed to leave, which is what keeps the boat
+   * from being zoomed away to nothing on a half-kilometre line.
+   */
+  it('does not chase a line longer than that', () => {
+    feed({ boatLengthPath: 12 });
+    // A 560m line — four times the run the fit wants — with the boat at its starboard end.
+    feed({
+      portPath: { latitude: 0.00172, longitude: 0.00472 },
+      stbPath: { latitude: 0, longitude: 0 },
+      lineLengthPath: 560,
+      positionPath: { latitude: 0.00003, longitude: 0.00005 },
+      headingPath: 1.6, cogPath: 1.6, sogPath: 2.0
+    });
+    const line = svg()!.querySelector('.start-line')!;
+    const portX = Number(line.getAttribute('x1'));
+    const stbX = Number(line.getAttribute('x2'));
+    const width = Number(svg()!.getAttribute('viewBox')!.split(' ')[2]);
+    const scale = Math.abs(stbX - portX) / 560;
+    const onScreen = (Math.min(Math.max(portX, stbX), width)
+      - Math.max(Math.min(portX, stbX), 0)) / scale;
+    expect(onScreen, 'the whole line was chased into frame').toBeLessThan(560 * 0.75);
+  });
+
+  /**
+   * Standing off the line, the across axis is what sets the scale, and the width is left
+   * holding far more along-distance than the fitted span asks of it. Centring that span
+   * drew empty water either side of it while the line itself ran off the edge; the spare
+   * width goes to the line instead, at no cost in scale.
+   */
+  it('fills the spare width with the line when the boat is standing off it', () => {
+    // 59m off the line, abeam the starboard end of a 140m line: the whole span the fit
+    // needs is the boat and that one end, a fraction of the width available.
+    aLine(0.000499, -0.000181);
+    const line = svg()!.querySelector('.start-line')!;
+    const portX = Number(line.getAttribute('x1'));
+    const stbX = Number(line.getAttribute('x2'));
+    const width = Number(svg()!.getAttribute('viewBox')!.split(' ')[2]);
+    const scale = Math.abs(stbX - portX) / 140;
+    const onScreen = (Math.min(Math.max(portX, stbX), width)
+      - Math.max(Math.min(portX, stbX), 0)) / scale;
+    // 86m of it was on screen with the span centred, the rest of the width being water.
+    expect(onScreen, 'the spare width is not reaching the line').toBeGreaterThan(120);
+
+    // And the pan that buys it must not push the boat off the other edge.
+    const d = svg()!.querySelector('.boat')!.getAttribute('d') ?? '';
+    const xs = [...d.matchAll(/[ML,]\s*([\d.-]+),/g)].map(m => Number(m[1]));
+    expect(xs.length, 'no boat outline to check').toBeGreaterThan(0);
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(width);
   });
 
   it('keeps both ends when there is no boat to zoom towards', () => {
@@ -404,6 +467,32 @@ describe('WidgetRacerLineViewComponent', () => {
       expect(lineClasses()).toContain('started');
       feed({ startTimePath: '2026-01-01T10:30:00Z' });
       expect(lineClasses()).not.toContain('started');
+    });
+
+    /**
+     * The zero the plugin fires the gun with is still on hand when the next timer is
+     * armed, and this effect reads the geometry — so every position update after arming
+     * would be taken for a second gun, going green on a start that has not happened.
+     */
+    it('does not take the last countdown\u2019s zero for the next one\u2019s gun', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
+      behind();
+      feed({ ttsPath: 0 });
+      feed({ startTimePath: null });
+      expect(lineClasses()).toContain('started');
+
+      // Armed again, with the gun's zero still the latest time to start.
+      feed({ startTimePath: '2026-01-01T10:30:00Z' });
+      expect(lineClasses()).not.toContain('started');
+      // A position update under the new countdown is not a start. It has to be a fresh
+      // position: the per-field signals gate on the value, so refeeding the same fix
+      // changes nothing and the effect would not run at all.
+      aLine(0.00036, 0.00031);
+      expect(lineClasses()).not.toContain('started');
+      // And the real gun, once this countdown has actually run, still is.
+      feed({ ttsPath: 5 });
+      feed({ ttsPath: 0 });
+      expect(lineClasses()).toContain('started');
     });
 
     it('stays red rather than going green when the boat was over at the gun', () => {

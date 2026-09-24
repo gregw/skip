@@ -279,6 +279,19 @@ describe('WidgetRacerTimerComponent', () => {
     }
   });
 
+  /**
+   * The countdown sits still on screen between a reset and the start, the plugin having
+   * published it once; a stale-data TTL over it blanked that 5:00 five seconds later.
+   * The distance, which the plugin recomputes on every position, does take the TTL.
+   */
+  it('keeps the countdown out of the stale-data timeout, but not the distance', () => {
+    const paths = WidgetRacerTimerComponent.DEFAULT_CONFIG.paths ?? {};
+    expect(paths['ttsPath']?.enableTimeout,
+      'a reset countdown would blank five seconds later').toBe(false);
+    expect(paths['startTimePath']?.enableTimeout).toBe(false);
+    expect(paths['dtsPath']?.enableTimeout, 'a frozen distance would read as live').toBe(true);
+  });
+
   describe('the idle revert to the countdown', () => {
     const modeOf = () => (fixture.componentInstance as unknown as { mode: () => number }).mode();
     /** The host click handler is what arms it: every press restarts the idle countdown. */

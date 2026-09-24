@@ -62,10 +62,13 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
     nextDashboard: 0,
     playBeeps: true,
     filterSelfPaths: true,
-    // The countdown and the distance are published continuously while the plugin is
-    // running, so both take the stale-data TTL: a frozen number reads as a live one.
+    // The distance is published continuously while the plugin is computing it, so it
+    // takes the stale-data TTL: a frozen number reads as a live one. The time to start
+    // does not: the plugin publishes it once when the timer is armed or reset and then
+    // every second only while it runs, so a TTL blanks the 5:00 a reset leaves on screen
+    // five seconds later. The exemption has to be unanimous - see startTimePath below.
     paths: {
-      ttsPath: { description: 'Time to the Start in seconds', path: 'self.navigation.racing.timeToStart', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 's', enableTimeout: true },
+      ttsPath: { description: 'Time to the Start in seconds', path: 'self.navigation.racing.timeToStart', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 's', enableTimeout: false },
       // The start time is published once when the timer is set and not again, so the
       // stale-data TTL would null it five seconds later. The exemption has to be
       // unanimous: DataService's timeout cross-clears every registration on a silent
