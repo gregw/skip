@@ -145,8 +145,8 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
       cog: rotation('cogIndicator'),
       wpt: rotation('wptIndicator'),
       set: rotation('setIndicator'),
-      port: attr('#PortCloseHauledLine', 'd'),
-      stbd: attr('#StbdCloseHauledLine', 'd')
+      portTack: attr('#PortTackCloseHauledLine', 'd'),
+      stbdTack: attr('#StbdTackCloseHauledLine', 'd')
     }).toEqual({
       dial: 'rotate(10 500 500)',
       twa: 'rotate(40 500 500)',
@@ -154,8 +154,8 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
       cog: 'rotate(5 500 500)',
       wpt: 'rotate(20 500 500)',
       set: 'rotate(100 904 912)',
-      port: 'M 500,500 L 409,161',
-      stbd: 'M 500,500 L 838,409'
+      portTack: 'M 500,500 L 838,409',
+      stbdTack: 'M 500,500 L 409,161'
     });
   });
 
@@ -175,6 +175,39 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
     expect(text('driftUnit')).toBe('kn');
   });
 
+  it('places the close-hauled lines and the wind sectors at the polar beat angle, and the run lines at its run angle', () => {
+    render(makeConfig({ runLineEnable: true }));
+    feedAngle('headingPath', 0);
+    feed('polarTrueWindSpeed', 5, 'm/s');
+    feedAngle('trueWindAngle', 0);
+    vi.advanceTimersByTime(1000);
+    settle();
+
+    // Dial angle of a path's first point after the center, degrees clockwise from up.
+    const angleOf = (selector: string): number => {
+      const [x, y] = (attr(selector, 'd') ?? '').split(' L ')[1].split(' ')[0].split(',').map(Number);
+      return Math.round(((Math.atan2(x - 500, 500 - y) / DEG) + 360) % 360);
+    };
+    const beatDeg = Math.round((hurma.targetsAt({ tws: 5 }).value?.beat?.twa ?? NaN) / DEG);
+    const runDeg = Math.round((hurma.targetsAt({ tws: 5 }).value?.run?.twa ?? NaN) / DEG);
+    expect({
+      portTackLine: angleOf('#PortTackCloseHauledLine'),
+      stbdTackLine: angleOf('#StbdTackCloseHauledLine'),
+      portTackSector: angleOf('#PortTackSector'),
+      stbdTackSector: angleOf('#StbdTackSector'),
+      portTackRun: angleOf('#PortTackRunLine'),
+      stbdTackRun: angleOf('#StbdTackRunLine')
+    }).toEqual({
+      portTackLine: beatDeg,
+      stbdTackLine: 360 - beatDeg,
+      portTackSector: beatDeg,
+      stbdTackSector: 360 - beatDeg,
+      portTackRun: runDeg,
+      stbdTackRun: 360 - runDeg
+    });
+    expect(beatDeg).not.toBe(45);
+  });
+
   it('spans the wind sector across north without a 358° swing', () => {
     render(makeConfig());
     feedAngle('headingPath', 0);
@@ -189,8 +222,8 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
       .filter(d => d.includes(' A 350,350 '))
       .map(d => d.replace(/\d+\.\d+/g, n => Number(n).toFixed(1)));
     expect(sectors).toEqual([
-      'M 500,500 L 244.0,261.3 A 350,350 0 0 1 261.3,244.0 z',
-      'M 500,500 L 738.7,244.0 A 350,350 0 0 1 756.0,261.3 z'
+      'M 500,500 L 738.7,244.0 A 350,350 0 0 1 756.0,261.3 z',
+      'M 500,500 L 244.0,261.3 A 350,350 0 0 1 261.3,244.0 z'
     ]);
   });
 

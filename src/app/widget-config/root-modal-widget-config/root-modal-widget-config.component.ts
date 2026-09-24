@@ -31,7 +31,7 @@ import { VideoCameraSetupComponent } from '../video-camera-setup/video-camera-se
 import { MatTabsModule } from '@angular/material/tabs';
 import { ActivePolarService } from '../../core/services/active-polar.service';
 import { DataService } from '../../core/services/data.service';
-import { POLAR_OVERLAY_PATH_KEYS } from '../../core/utils/polar-overlay.util';
+import { POLAR_PATH_KEYS } from '../../core/utils/polar-overlay.util';
 import { UnitsService } from '../../core/services/units.service';
 import { pathOptionMeasure, presentationValue, presentedOption } from '../../core/utils/si-presentation.util';
 
@@ -214,7 +214,7 @@ export class RootModalWidgetConfigComponent implements OnInit {
    */
   private watchPolarOverlay(): void {
     this.activePolar.refreshIfFailed();
-    const slots = POLAR_OVERLAY_PATH_KEYS
+    const slots = POLAR_PATH_KEYS
       .map(key => effectivePathConfig(this.widgetConfig.paths, key))
       .filter((slot): slot is IWidgetPath & { path: string } => typeof slot?.path === 'string' && slot.path !== '');
     this.polarOverlayPaths = slots.map(slot => slot.path);
