@@ -8,7 +8,7 @@
  *
  * Three distinct version spaces (all from src/app/core/constants/config-versions.const.ts):
  *  - applicationData URL path segment 11 (REMOTE_CONFIG_FILE_VERSION)
- *  - app.configVersion 21 (LATEST_APP_CONFIG_VERSION)
+ *  - app.configVersion 22 (LATEST_APP_CONFIG_VERSION)
  *  - connectionConfig.configVersion 13 (CONNECTION_CONFIG_VERSION)
  */
 export const SELF_URN = 'vessels.urn:mrn:signalk:uuid:11111111-1111-4111-8111-111111111111';
@@ -22,12 +22,12 @@ const DEFAULT_NOTIF = {
 };
 
 export function appConfig(extra = {}) {
-  // configVersion at LATEST (21): a genuine current config, so the boot skips
+  // configVersion at LATEST (22): a genuine current config, so the boot skips
   // ConfigurationUpgradeService's migration toast/reload entirely inside the
   // measurement window. Bump this in lockstep with LATEST_APP_CONFIG_VERSION, or
   // the boot triggers an upgrade+reload and the boot-assert fails.
   return {
-    configVersion: 21, autoNightMode: false, redNightMode: false, nightModeBrightness: 0.27,
+    configVersion: 22, autoNightMode: false, redNightMode: false, nightModeBrightness: 0.27,
     widgetHistoryDisabled: false,
     notificationConfig: DEFAULT_NOTIF, browserTabTitle: 'Skip', ...extra,
   };
@@ -60,10 +60,12 @@ export function numericWidget({ path = 'self.navigation.speedOverGround', unit =
       displayName, filterSelfPaths: true, updateInterval,
       paths: { numericPath: { description: 'Numeric Data', path, source: 'default', pathType: 'number', isPathConfigurable: true, convertUnitTo: unit } },
       numDecimal, showMiniChart: miniChart, color: 'blue', enableTimeout: false, dataTimeout: 5, ignoreZones,
+      siVersion: 22,
     },
   });
 }
 
+// Gauge `scale` bounds are SI, as stored since config v22.
 export function steelGaugeWidget({ path = 'self.navigation.speedOverGround', unit = 'unitless', updateInterval = 500, displayName = 'Gauge', scale = { lower: 0, upper: 100 }, w = 4, h = 8, ignoreZones = true } = {}) {
   const uuid = uid('steel');
   return (x, y) => node(w, h, x, y, {
@@ -74,6 +76,7 @@ export function steelGaugeWidget({ path = 'self.navigation.speedOverGround', uni
       displayScale: { type: 'linear', ...scale },
       gauge: { type: 'steel', subType: 'radial', backgroundColor: 'carbon', faceColor: 'anthracite', radialSize: 'full', rotateFace: false, digitalMeter: false },
       numDecimal: 2, enableTimeout: false, dataTimeout: 5, ignoreZones,
+      siVersion: 22,
     },
   });
 }
@@ -88,6 +91,7 @@ export function simpleLinearWidget({ path = 'self.navigation.speedOverGround', u
       displayScale: { type: 'linear', ...scale },
       gauge: { type: 'simpleLinear', unitLabelFormat: 'full' },
       numDecimal: 1, color: 'blue', enableTimeout: false, dataTimeout: 5, ignoreZones,
+      siVersion: 22,
     },
   });
 }
@@ -100,8 +104,9 @@ export function radialGaugeWidget({ path = 'self.navigation.speedOverGround', un
       displayName: 'G', filterSelfPaths: true, updateInterval,
       paths: { gaugePath: { description: 'Gauge', path, source: 'default', pathType: 'number', isPathConfigurable: true, convertUnitTo: unit } },
       gauge: { type: 'ngRadial', subType: 'measuring' },
-      displayScale: { lower: 0, upper: 30, type: 'linear' }, numInt: 2, numDecimal: 1,
-      color: 'blue', enableTimeout: false, dataTimeout: 5,
+      // 0-30 kn, in m/s.
+      displayScale: { lower: 0, upper: 30 * 1852 / 3600, type: 'linear' }, numInt: 2, numDecimal: 1,
+      color: 'blue', enableTimeout: false, dataTimeout: 5, siVersion: 22,
     },
   });
 }

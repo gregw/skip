@@ -1053,6 +1053,37 @@ describe('ConfigurationUpgradeService', () => {
         mockStorage.getConfig.mockReset().mockResolvedValue(null);
     });
 
+    it('v21 upgrade converts scale bounds to SI, records the reset ones in the app config, and stamps v22', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 21 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', name: 'Engine', configuration: [
+                { input: { widgetProperties: { type: 'widget-gauge-steel', config: {
+                    displayName: 'RPM', paths: { gaugePath: { path: 'self.x', convertUnitTo: 'rpm' } }, displayScale: { lower: 0, upper: 3600 } } } } },
+                { input: { widgetProperties: { type: 'widget-numeric', config: {
+                    displayName: 'Tank', paths: { numericPath: { path: 'self.y', convertUnitTo: 'unitless' } }, yScaleMin: 0, yScaleMax: 10 } } } }
+            ] }]
+        });
+
+        await service.runUpgrade(21);
+
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        const written = mockStorage.setConfig.mock.calls[0][2];
+        expect(written.app.configVersion).toBe(22);
+        const [gauge, numeric] = written.dashboards[0].configuration.map((w: { input: { widgetProperties: { config: Record<string, unknown> } } }) => w.input.widgetProperties.config);
+        expect(gauge['displayScale']).toEqual({ lower: 0, upper: 60 });
+        expect(numeric).toMatchObject({ yScaleMin: null, yScaleMax: null, siVersion: 22 });
+        expect(written.app.siScaleResets).toEqual([{ dashboard: 'Engine', widget: 'Tank', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] }]);
+    });
+
+    it('v21 upgrade skips a slot that is not at version 21 (no re-stamp)', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 20 }, theme: { themeName: '' }, dashboards: [] });
+        await service.runUpgrade(21);
+        expect(mockStorage.setConfig).not.toHaveBeenCalled();
+    });
+
     it('startFresh retires BOTH global and user legacy configs via an awaited write before resetting', async () => {
         mockStorage.initConfig = null; // remote (Signal K) path
         mockStorage.listConfigs.mockResolvedValueOnce([
