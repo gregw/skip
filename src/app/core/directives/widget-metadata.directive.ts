@@ -158,7 +158,9 @@ export class WidgetMetadataDirective {
    *
    * Responsibilities:
    * - Tear down any existing metadata subscription
-   * - Subscribe to `DataService.getPathMetaObservable(path)` and write to {@link zones}
+   * - Subscribe to `DataService.getPathMetaObservable(path)` and write to {@link zones}. For a
+   *   `path#/field` slot that is the field's own metadata, so the base path's zones and
+   *   `supportsPut` never apply to it.
    * - Handle lifecycle cleanup via `takeUntil(this.reset$)` and `takeUntilDestroyed(this.destroyRef)`
    *
    * Important:
