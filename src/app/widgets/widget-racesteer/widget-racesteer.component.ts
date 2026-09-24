@@ -8,6 +8,7 @@ import { ITheme } from '../../core/services/app-service';
 import { UnitsService } from '../../core/services/units.service';
 import { normalizeRadians } from '../../core/utils/polar-overlay.util';
 import { interval, Subscription } from 'rxjs';
+import { presentationValue } from '../../core/utils/si-presentation.util';
 
 interface IWindDirSample { timestamp: number; windDirection: number; }
 
@@ -95,15 +96,15 @@ export class WidgetRacesteerComponent implements OnDestroy {
   protected readonly vmgToWaypointSpeedUnitSymbol = computed(() => this.unitsService.getUnitDisplaySymbol(this.vmgToWaypointUnit()));
   // Readouts in their presentation unit. The Wind VMG difference is taken in m/s and converted with
   // the target's measure, which labels it; the ratio is unit-free.
-  protected readonly targetVMGDisplay = computed(() => toTenths(this.toPresentation(this.targetVmgUnit(), this.targetVMG())));
-  protected readonly targetVMGOffset = computed(() => toTenths(this.toPresentation(this.targetVmgUnit(), this.VMG() - this.targetVMG())));
+  protected readonly targetVMGDisplay = computed(() => toTenths(presentationValue(this.unitsService, this.targetVmgUnit(), this.targetVMG())));
+  protected readonly targetVMGOffset = computed(() => toTenths(presentationValue(this.unitsService, this.targetVmgUnit(), this.VMG() - this.targetVMG())));
   protected readonly targetVMGRatio = computed(() => this.VMG() / this.targetVMG());
   protected readonly vmgToWaypointDisplay = computed(() => {
     const vmg = this.vmgToWaypoint();
-    return vmg == null ? null : toTenths(this.toPresentation(this.vmgToWaypointUnit(), vmg));
+    return vmg == null ? null : toTenths(presentationValue(this.unitsService, this.vmgToWaypointUnit(), vmg));
   });
-  protected readonly driftFlowDisplay = computed(() => this.toPresentation(this.driftMeasure(), this.driftFlow()));
-  protected readonly trueWindSpeedDisplay = computed(() => this.toPresentation(this.trueWindSpeedMeasure(), this.trueWindSpeed()));
+  protected readonly driftFlowDisplay = computed(() => presentationValue(this.unitsService, this.driftMeasure(), this.driftFlow()));
+  protected readonly trueWindSpeedDisplay = computed(() => presentationValue(this.unitsService, this.trueWindSpeedMeasure(), this.trueWindSpeed()));
   protected readonly gradianColor = signal<{ start: string; stop: string }>({ start: '#3298ff', stop: '#15af00' });
   protected readonly trueWindMinHistoric = signal<number>(0);
   protected readonly trueWindMidHistoric = signal<number>(0);
@@ -395,11 +396,6 @@ export class WidgetRacesteerComponent implements OnDestroy {
   private historicalCleanup(windowSeconds: number) {
     const n = Date.now() - (windowSeconds * 1000);
     this.historicalWindDirection = this.historicalWindDirection.filter(d => d.timestamp >= n);
-  }
-
-  // A speed readout in its presentation unit. An empty or unitless measure shows the m/s value.
-  private toPresentation(measure: string, speedMs: number): number {
-    return measure && measure !== 'unitless' ? (this.unitsService.convertToUnit(measure, speedMs) ?? speedMs) : speedMs;
   }
 
   ngOnDestroy() {

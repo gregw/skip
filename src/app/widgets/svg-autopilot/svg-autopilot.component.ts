@@ -1,11 +1,7 @@
 import { Component, ElementRef, input, viewChild, effect, computed, untracked, signal, NgZone, inject, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { animateRotation, animateRudderWidth, effectiveAnimationDuration } from '../../core/utils/svg-animate.util';
 import { TApMode } from '../../core/interfaces/signalk-autopilot-interfaces';
-
-/** An angle given in rad, in degrees; null stays null. */
-function toDegrees(rad: number | null): number | null {
-  return rad == null ? null : rad * 180 / Math.PI;
-}
+import { toDegrees } from '../../core/utils/si-presentation.util';
 
 @Component({
   selector: 'app-svg-autopilot',

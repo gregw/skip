@@ -1,13 +1,7 @@
 import { Component, ElementRef, input, viewChild, signal, effect, computed, untracked, OnDestroy, NgZone, inject, ChangeDetectionStrategy } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
 import { animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, type SectorAngles } from '../../core/utils/svg-animate.util';
-
-/** An angle given in rad, in degrees; undefined stays undefined. */
-function toDegrees(rad: number): number;
-function toDegrees(rad: number | undefined): number | undefined;
-function toDegrees(rad: number | undefined): number | undefined {
-  return rad == null ? undefined : rad * 180 / Math.PI;
-}
+import { toDegrees } from '../../core/utils/si-presentation.util';
 
 const angle = ([a,b],[c,d],[e,f]) => (Math.atan2(f-d,e-c)-Math.atan2(b-d,a-c)+3*Math.PI)%(2*Math.PI)-Math.PI;
 

@@ -4,12 +4,11 @@ import { getColors } from '../../core/utils/themeColors.utils';
 import { ITheme } from '../../core/services/app-service';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
+import { RAD_TO_DEG } from '../../core/utils/si-presentation.util';
 
 // Internal helper interfaces
 interface ITickPoint { x1: number; y1: number; x2: number; y2: number; major: boolean; }
 interface ILabelPoint { x: number; y: number; text: string; value: number; }
-
-const RAD_TO_DEG = 180 / Math.PI;
 
 @Component({
   selector: 'widget-heel-gauge',

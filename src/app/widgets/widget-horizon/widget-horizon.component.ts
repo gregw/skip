@@ -3,11 +3,10 @@ import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { ITheme } from '../../core/services/app-service';
+import { RAD_TO_DEG } from '../../core/utils/si-presentation.util';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare let steelseries: any; // 3rd party global (loaded via scripts bundle)
-
-const RAD_TO_DEG = 180 / Math.PI;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getSteelPointerColors(ss: any) {

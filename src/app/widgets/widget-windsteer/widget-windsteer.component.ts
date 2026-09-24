@@ -9,6 +9,7 @@ import { ITheme } from '../../core/services/app-service';
 import { UnitsService } from '../../core/services/units.service';
 import { ActivePolarService } from '../../core/services/active-polar.service';
 import { OverlayPoint, OverlayScale, POLAR_OVERLAY_PATH_KEYS, normalizeRadians, polarCurve, polarSpeedProfile, speedToRadius, vmcCurve, vmcDotRadius } from '../../core/utils/polar-overlay.util';
+import { presentationValue } from '../../core/utils/si-presentation.util';
 
 // Default rolling window (seconds) for the wind-sector history; the single
 // source of truth for both the default config and the missing-value fallback.
@@ -279,17 +280,17 @@ export class WidgetWindComponent implements OnDestroy {
   protected appWindAngle = signal(0);
   protected appWindSpeed = signal(0);
   private appWindSpeedMeasure = signal('');
-  protected appWindSpeedDisplay = computed(() => this.toPresentation(this.appWindSpeedMeasure(), this.appWindSpeed()));
+  protected appWindSpeedDisplay = computed(() => presentationValue(this.unitsService, this.appWindSpeedMeasure(), this.appWindSpeed()));
   protected appWindSpeedUnit = computed(() => this.speedUnitSymbol(this.appWindSpeedMeasure()));
   protected trueWindAngle = signal(0);
   protected trueWindFresh = signal(false);
   protected trueWindSpeed = signal(0);
   private trueWindSpeedMeasure = signal('');
-  protected trueWindSpeedDisplay = computed(() => this.toPresentation(this.trueWindSpeedMeasure(), this.trueWindSpeed()));
+  protected trueWindSpeedDisplay = computed(() => presentationValue(this.unitsService, this.trueWindSpeedMeasure(), this.trueWindSpeed()));
   protected trueWindSpeedUnit = computed(() => this.speedUnitSymbol(this.trueWindSpeedMeasure()));
   protected driftFlow = signal(0);
   private driftMeasure = signal('');
-  protected driftFlowDisplay = computed(() => this.toPresentation(this.driftMeasure(), this.driftFlow()));
+  protected driftFlowDisplay = computed(() => presentationValue(this.unitsService, this.driftMeasure(), this.driftFlow()));
   protected driftUnit = computed(() => this.speedUnitSymbol(this.driftMeasure()));
   // Evaluated on every raw sample, not the deduped driftFlow: the dedup step equals the band width.
   protected setArrowActive = signal(false);
@@ -759,12 +760,6 @@ export class WidgetWindComponent implements OnDestroy {
   // the label always matches the value.
   private speedUnitSymbol(measure: string): string {
     return measure && measure !== 'unitless' ? this.unitsService.getUnitDisplaySymbol(measure) : '';
-  }
-
-  // A speed readout in its presentation unit. An empty or unitless measure shows the m/s value, as
-  // the symbol stays blank for it.
-  private toPresentation(measure: string, speedMs: number): number {
-    return measure && measure !== 'unitless' ? (this.unitsService.convertToUnit(measure, speedMs) ?? speedMs) : speedMs;
   }
 
 }

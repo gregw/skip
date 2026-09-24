@@ -2,6 +2,7 @@ import { Component, ElementRef, input, viewChild, signal, computed, effect, untr
 import { animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
 import { DecimalPipe } from '@angular/common';
 import { OverlayPoint } from '../../core/utils/polar-overlay.util';
+import { toDegrees } from '../../core/utils/si-presentation.util';
 
 /** Polar overlay state the parent resolves: hidden, the polar curve, or the VMC curve. */
 export type PolarOverlayMode = 'hidden' | 'polar' | 'vmc';
@@ -9,13 +10,6 @@ export type PolarOverlayMode = 'hidden' | 'polar' | 'vmc';
 export const POLAR_OVERLAY_PEAK_RADIUS = 300;
 /** The dial radius, in viewBox units, and so the outer limit of the overlay. */
 export const POLAR_OVERLAY_DIAL_RADIUS = 350;
-
-/** An angle given in rad, in degrees; undefined stays undefined. */
-function toDegrees(rad: number): number;
-function toDegrees(rad: number | undefined): number | undefined;
-function toDegrees(rad: number | undefined): number | undefined {
-  return rad == null ? undefined : rad * 180 / Math.PI;
-}
 
 const angle = ([a, b], [c, d], [e, f]) => (Math.atan2(f - d, e - c) - Math.atan2(b - d, a - c) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
 

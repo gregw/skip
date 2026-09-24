@@ -18,6 +18,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective, widgetPathSignature, normalizeWidgetPath, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { ITheme } from '../../core/services/app-service';
 import { UnitsService } from '../../core/services/units.service';
+import { RAD_TO_DEG } from '../../core/utils/si-presentation.util';
 
 function rgbaToHex(rgba: string) {
   const match = rgba.match(/(\d+(\.\d+)?|\.\d+)/g);
@@ -34,8 +35,6 @@ function rgbaToHex(rgba: string) {
   // Convert RGB to HEX
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase() + alpha;
 }
-
-const RAD_TO_DEG = 180 / Math.PI;
 
 function convertNegToPortDegree(degree: number) {
   if (degree < 0) {
