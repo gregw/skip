@@ -2,6 +2,13 @@ import { Component, ElementRef, input, viewChild, signal, effect, computed, untr
 import { DecimalPipe } from '@angular/common';
 import { animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, type SectorAngles } from '../../core/utils/svg-animate.util';
 
+/** An angle given in rad, in degrees; undefined stays undefined. */
+function toDegrees(rad: number): number;
+function toDegrees(rad: number | undefined): number | undefined;
+function toDegrees(rad: number | undefined): number | undefined {
+  return rad == null ? undefined : rad * 180 / Math.PI;
+}
+
 const angle = ([a,b],[c,d],[e,f]) => (Math.atan2(f-d,e-c)-Math.atan2(b-d,a-c)+3*Math.PI)%(2*Math.PI)-Math.PI;
 
 interface ISVGRotationObject {
@@ -23,6 +30,7 @@ export class SvgRacesteerComponent implements OnDestroy {
   protected readonly setIndicator = viewChild.required<ElementRef<SVGGElement>>('setIndicator');
   protected readonly tackIndicator = viewChild.required<ElementRef<SVGGElement>>('tackIndicator');
 
+  // Angles are in rad, speeds are in their presentation unit.
   protected readonly compassHeading = input.required<number>();
   protected readonly updateInterval = input<number | undefined>(undefined);
   protected readonly tackTrue = input.required<number>();
@@ -32,7 +40,8 @@ export class SvgRacesteerComponent implements OnDestroy {
   protected readonly targetAngle = input.required<number | null>();
   protected readonly optimalWindAngle = input.required<number>();
   protected readonly targetVMG = input.required<number>();
-  protected readonly VMG = input.required<number>();
+  protected readonly targetVMGOffset = input.required<number>();
+  protected readonly targetVMGRatio = input.required<number>();
   protected readonly sailSetupEnabled = input.required<boolean>();
   protected readonly driftEnabled = input.required<boolean>();
   protected readonly driftSet = input<number | undefined>(undefined);
@@ -46,6 +55,19 @@ export class SvgRacesteerComponent implements OnDestroy {
   protected readonly gradianColor = input.required<{ start: string; stop: string }>();
   protected readonly vmgSpeedUnitSymbol = input<string>('');
   protected readonly waypointSpeedUnitSymbol = input<string>('');
+
+  // Angle inputs arrive in rad; the rotation attributes, dial geometry and readouts below work in degrees.
+  private readonly compassHeadingDeg = computed(() => toDegrees(this.compassHeading()));
+  private readonly tackTrueDeg = computed(() => Math.round(toDegrees(this.tackTrue())));
+  private readonly trueWindAngleDeg = computed(() => toDegrees(this.trueWindAngle()));
+  private readonly targetAngleDeg = computed(() => { const a = this.targetAngle(); return a == null ? null : toDegrees(a); });
+  private readonly optimalWindAngleDeg = computed(() => toDegrees(this.optimalWindAngle()));
+  private readonly driftSetDeg = computed(() => toDegrees(this.driftSet()));
+  /** Whole degrees: the waypoint readout shows it, and 0 hides the marker. */
+  protected readonly waypointAngleDeg = computed(() => { const a = this.waypointAngle(); return a == null ? undefined : Math.round(toDegrees(a)); });
+  private readonly trueWindMinHistoricDeg = computed(() => toDegrees(this.trueWindMinHistoric()));
+  private readonly trueWindMidHistoricDeg = computed(() => toDegrees(this.trueWindMidHistoric()));
+  private readonly trueWindMaxHistoricDeg = computed(() => toDegrees(this.trueWindMaxHistoric()));
 
   protected compass: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected twa: ISVGRotationObject = { oldValue: 0, newValue: 0 };
@@ -64,8 +86,8 @@ export class SvgRacesteerComponent implements OnDestroy {
   private trueWindHeading = 0;
 
   protected nextTargetDirection = computed(() => {
-    const hdg = this.compassHeading();
-    const targetDirection = this.tackTrue();
+    const hdg = this.compassHeadingDeg();
+    const targetDirection = this.tackTrueDeg();
     if (hdg == null || targetDirection == null) return 0;
     return this.unsignedAngleDelta(hdg, targetDirection);
   });
@@ -75,29 +97,17 @@ export class SvgRacesteerComponent implements OnDestroy {
     return trueWindSpeed.toFixed(1);
   });
   protected windAnglePerformanceRatioColor = computed(() => {
-    const optimal = this.optimalWindAngle();
-    const target = this.targetAngle();
+    const optimal = this.optimalWindAngleDeg();
+    const target = this.targetAngleDeg();
     const start = this.gradianColor().start;
     const stop = this.gradianColor().stop;
     if (optimal == null || target == null) return start;
     const ratio = 1 - Math.abs(optimal - target) / 180;
     return this.interpolateColor(start, stop, ratio);
   });
-  protected targetVMGOffset = computed(() => {
-    const VMG = this.VMG();
-    const targetVMG = this.targetVMG();
-    if (VMG == null || targetVMG == null) return "--";
-    return (VMG - targetVMG).toFixed(1);
-  });
-  protected targetVMGOffsetRatioColor = computed(() => {
-    const vmg = this.VMG();
-    const target = this.targetVMG();
-    const start = this.gradianColor().start;
-    const stop = this.gradianColor().stop;
-    if (vmg == null || target == null) return start;
-    const ratio = vmg / target;
-    return this.interpolateColor(start, stop, ratio);
-  });
+  protected targetVMGOffsetText = computed(() => this.targetVMGOffset().toFixed(1));
+  protected targetVMGOffsetRatioColor = computed(() =>
+    this.interpolateColor(this.gradianColor().start, this.gradianColor().stop, this.targetVMGRatio()));
   protected waypointActive = signal<boolean>(false);
   protected flow = computed(() => {
     const flow = this.driftFlow();
@@ -149,7 +159,7 @@ export class SvgRacesteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const raw = this.compassHeading();
+      const raw = this.compassHeadingDeg();
       const heading = Number.isFinite(raw) ? Math.round(raw as number) : null;
       if (heading == null) return;
 
@@ -175,7 +185,7 @@ export class SvgRacesteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const raw = this.targetAngle();
+      const raw = this.targetAngleDeg();
       // target angle path automatically switches between tack and Gybe angles calculations. No need to use dedicated beat and gybe angle paths
       const targetAngle = Number.isFinite(raw) ? Math.round(raw as number) : null;
       if (targetAngle == null) return;
@@ -201,7 +211,7 @@ export class SvgRacesteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const wptAngle = this.waypointAngle();
+      const wptAngle = this.waypointAngleDeg();
 
       untracked(() => {
         if (!wptAngle) {
@@ -233,9 +243,9 @@ export class SvgRacesteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const raw = this.trueWindAngle();
+      const raw = this.trueWindAngleDeg();
       const trueWindAngle = Number.isFinite(raw) ? Math.round(raw as number) : null;
-      const compassRaw = this.compassHeading();
+      const compassRaw = this.compassHeadingDeg();
       const compassHeading = Number.isFinite(compassRaw) ? Math.round(compassRaw as number) : null;
       if (trueWindAngle == null || compassHeading == null) return;
 
@@ -293,7 +303,7 @@ export class SvgRacesteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const raw = this.driftSet();
+      const raw = this.driftSetDeg();
       const driftSet = Number.isFinite(raw as number) ? Math.round(raw as number) : null;
       if (driftSet == null) return;
 
@@ -320,7 +330,7 @@ export class SvgRacesteerComponent implements OnDestroy {
   private updateLaylines(): void {
     if (!this.twaInitialized) return;
 
-    const raw = this.targetAngle();
+    const raw = this.targetAngleDeg();
     let targetAngle = Number.isFinite(raw) ? Math.round(raw as number) : null;
     if (targetAngle == null) return;
     targetAngle = targetAngle / 2;
@@ -368,24 +378,15 @@ export class SvgRacesteerComponent implements OnDestroy {
   }
 
   private updateWindSectors() {
-    if (
-      this.trueWindMinHistoric() == null ||
-      this.trueWindMidHistoric() == null ||
-      this.trueWindMaxHistoric() == null
-    ) {
+    const min = this.trueWindMinHistoricDeg();
+    const mid = this.trueWindMidHistoricDeg();
+    const max = this.trueWindMaxHistoricDeg();
+    if (min == null || mid == null || max == null) {
       return;
     }
 
-    const portNew: SectorAngles = {
-      min: this.trueWindMinHistoric() as number,
-      mid: this.trueWindMidHistoric() as number,
-      max: this.trueWindMaxHistoric() as number
-    };
-    const stbdNew: SectorAngles = {
-      min: this.trueWindMinHistoric() as number,
-      mid: this.trueWindMidHistoric() as number,
-      max: this.trueWindMaxHistoric() as number
-    };
+    const portNew: SectorAngles = { min, mid, max };
+    const stbdNew: SectorAngles = { min, mid, max };
 
     if (!this.windSectorsInitialized) {
       this.portSectorPrev = portNew;
@@ -518,9 +519,9 @@ export class SvgRacesteerComponent implements OnDestroy {
   }
 
   private setWindSectorPath(sector: SectorAngles, isPort: boolean): void {
-    const minAngle = this.addHeading(this.addHeading(sector.min, Number(this.compass.newValue) * -1), (this.targetAngle() ?? 0) / 2 * (isPort ? -1 : 1));
-    const midAngle = this.addHeading(this.addHeading(sector.mid, Number(this.compass.newValue) * -1), (this.targetAngle() ?? 0) / 2 * (isPort ? -1 : 1));
-    const maxAngle = this.addHeading(this.addHeading(sector.max, Number(this.compass.newValue) * -1), (this.targetAngle() ?? 0) / 2 * (isPort ? -1 : 1));
+    const minAngle = this.addHeading(this.addHeading(sector.min, Number(this.compass.newValue) * -1), (this.targetAngleDeg() ?? 0) / 2 * (isPort ? -1 : 1));
+    const midAngle = this.addHeading(this.addHeading(sector.mid, Number(this.compass.newValue) * -1), (this.targetAngleDeg() ?? 0) / 2 * (isPort ? -1 : 1));
+    const maxAngle = this.addHeading(this.addHeading(sector.max, Number(this.compass.newValue) * -1), (this.targetAngleDeg() ?? 0) / 2 * (isPort ? -1 : 1));
 
     const minX = this.RADIUS * Math.sin((minAngle * Math.PI) / 180) + this.CENTER_X;
     const minY = (this.RADIUS * Math.cos((minAngle * Math.PI) / 180) * -1) + this.CENTER_Y;

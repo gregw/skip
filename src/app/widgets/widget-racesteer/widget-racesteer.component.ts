@@ -6,9 +6,13 @@ import { WidgetStreamsDirective } from '../../core/directives/widget-streams.dir
 import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
 import { ITheme } from '../../core/services/app-service';
 import { UnitsService } from '../../core/services/units.service';
+import { normalizeRadians } from '../../core/utils/polar-overlay.util';
 import { interval, Subscription } from 'rxjs';
 
 interface IWindDirSample { timestamp: number; windDirection: number; }
+
+/** Rounds a readout to one decimal, as the Wind VMG and waypoint VMG readouts show it. */
+const toTenths = (value: number): number => Math.round(value * 10) / 10;
 
 @Component({
   selector: 'widget-racesteer',
@@ -62,7 +66,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
   private readonly streams = inject(WidgetStreamsDirective);
   private readonly unitsService = inject(UnitsService);
 
-  // Signals for display state
+  // Stream state in SI: angles in rad, speeds in m/s.
   protected readonly currentHeading = signal(0);
   protected readonly courseOverGroundAngle = signal(0);
   protected readonly appWindAngle = signal(0);
@@ -72,21 +76,34 @@ export class WidgetRacesteerComponent implements OnDestroy {
   protected readonly driftFlow = signal(0);
   protected readonly driftSet = signal(0);
   protected readonly waypointAngle = signal(0);
-  protected readonly vmgToWaypoint = signal<number | null>(null);
+  private readonly vmgToWaypoint = signal<number | null>(null);
   protected readonly tackTrue = signal(0);
   protected readonly polarSpeedRatio = signal(0);
   protected readonly targetAngle = signal<number | null>(0);
   protected readonly optimalWindAngle = signal(0);
-  protected readonly targetVMG = signal(0);
-  protected readonly VMG = signal(0);
+  private readonly targetVMG = signal(0);
+  private readonly VMG = signal(0);
   // Server-resolved measure tagged onto each speed path by the streams directive. Kept per readout
   // group so a path the server resolves to a different unit labels its own value instead of the last
   // writer clobbering a shared symbol. targetVMG's measure also labels the derived targetVMG offset.
   // '' is the boot placeholder: no symbol drawn until the first update carries a measure.
   private readonly targetVmgUnit = signal<string>('');
   private readonly vmgToWaypointUnit = signal<string>('');
+  private readonly driftMeasure = signal<string>('');
+  private readonly trueWindSpeedMeasure = signal<string>('');
   protected readonly targetVmgSpeedUnitSymbol = computed(() => this.unitsService.getUnitDisplaySymbol(this.targetVmgUnit()));
   protected readonly vmgToWaypointSpeedUnitSymbol = computed(() => this.unitsService.getUnitDisplaySymbol(this.vmgToWaypointUnit()));
+  // Readouts in their presentation unit. The Wind VMG difference is taken in m/s and converted with
+  // the target's measure, which labels it; the ratio is unit-free.
+  protected readonly targetVMGDisplay = computed(() => toTenths(this.toPresentation(this.targetVmgUnit(), this.targetVMG())));
+  protected readonly targetVMGOffset = computed(() => toTenths(this.toPresentation(this.targetVmgUnit(), this.VMG() - this.targetVMG())));
+  protected readonly targetVMGRatio = computed(() => this.VMG() / this.targetVMG());
+  protected readonly vmgToWaypointDisplay = computed(() => {
+    const vmg = this.vmgToWaypoint();
+    return vmg == null ? null : toTenths(this.toPresentation(this.vmgToWaypointUnit(), vmg));
+  });
+  protected readonly driftFlowDisplay = computed(() => this.toPresentation(this.driftMeasure(), this.driftFlow()));
+  protected readonly trueWindSpeedDisplay = computed(() => this.toPresentation(this.trueWindSpeedMeasure(), this.trueWindSpeed()));
   protected readonly gradianColor = signal<{ start: string; stop: string }>({ start: '#3298ff', stop: '#15af00' });
   protected readonly trueWindMinHistoric = signal<number>(0);
   protected readonly trueWindMidHistoric = signal<number>(0);
@@ -96,6 +113,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
   private historicalWindDirection: IWindDirSample[] = [];
 
   constructor() {
+    this.streams.useSiValues();
     // Heading
     effect(() => {
       const cfg = this.runtime.options();
@@ -132,6 +150,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       untracked(() => this.streams.observe('drift', pkt => {
         const v = pkt?.data?.value as number | null;
         this.driftFlow.set(v == null ? 0 : v);
+        this.driftMeasure.set(pkt?.data?.measure ?? '');
       }));
     });
 
@@ -144,8 +163,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('set', pkt => {
         const v = pkt?.data?.value as number | null;
-        const normalized = v == null ? 0 : v;
-        this.driftSet.set(this.addHeading(-this.currentHeading(), normalized));
+        this.driftSet.set(normalizeRadians((v ?? 0) - this.currentHeading()));
       }));
     });
 
@@ -158,10 +176,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('nextWaypointBearing', pkt => {
         const v = pkt?.data?.value as number | null;
-        if (v == null) { this.waypointAngle.set(0); return; }
-        const normalized = v < 0 ? 360 + v : v;
-        const relative = this.addHeading(-this.currentHeading(), normalized);
-        this.waypointAngle.set(Math.round(relative));
+        this.waypointAngle.set(v == null ? 0 : normalizeRadians(v - this.currentHeading()));
       }));
     });
 
@@ -174,13 +189,10 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('appWindAngle', pkt => {
         const raw = pkt?.data?.value as number | null;
-        let value = raw == null ? 0 : raw;
-        value = value < 0 ? 360 + value : value;
-        this.appWindAngle.set(value);
+        const value = raw == null ? 0 : raw;
+        this.appWindAngle.set(normalizeRadians(value));
         if (cfg.windSectorEnable) {
-          const heading = this.currentHeading();
-          const relative360 = this.addHeading(heading, raw == null ? 0 : raw);
-          this.addHistoricalWindDirection(relative360, cfg.windSectorWindowSeconds ?? 5);
+          this.addHistoricalWindDirection(normalizeRadians(this.currentHeading() + value), cfg.windSectorWindowSeconds ?? 5);
         }
       }));
     });
@@ -194,7 +206,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('tackTrue', pkt => {
         const v = pkt?.data?.value as number | null;
-        this.tackTrue.set(v == null ? 0 : Math.round(v));
+        this.tackTrue.set(v == null ? 0 : v);
       }));
     });
 
@@ -246,8 +258,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('targetVMG', pkt => {
         const v = pkt?.data?.value as number | null;
-        const rounded = v == null ? 0 : Math.round(v * 10) / 10;
-        this.targetVMG.set(rounded);
+        this.targetVMG.set(v == null ? 0 : v);
         this.targetVmgUnit.set(pkt?.data?.measure ?? '');
       }));
     });
@@ -261,8 +272,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('VMG', pkt => {
         const v = pkt?.data?.value as number | null;
-        const rounded = v == null ? 0 : Math.round(v * 10) / 10;
-        this.VMG.set(rounded);
+        this.VMG.set(v == null ? 0 : v);
       }));
     });
 
@@ -275,8 +285,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('vmgToWaypoint', pkt => {
         const v = pkt?.data?.value as number | null;
-        const rounded = v == null ? null : Math.round(v * 10) / 10;
-        this.vmgToWaypoint.set(rounded);
+        this.vmgToWaypoint.set(v);
         this.vmgToWaypointUnit.set(pkt?.data?.measure ?? '');
       }));
     });
@@ -313,6 +322,7 @@ export class WidgetRacesteerComponent implements OnDestroy {
       untracked(() => this.streams.observe('trueWindSpeed', pkt => {
         const v = pkt?.data?.value as number | null;
         this.trueWindSpeed.set(v == null ? 0 : v);
+        this.trueWindSpeedMeasure.set(pkt?.data?.measure ?? '');
       }));
     });
 
@@ -326,14 +336,9 @@ export class WidgetRacesteerComponent implements OnDestroy {
       if (!path) return;
       untracked(() => this.streams.observe('trueWindAngle', pkt => {
         const raw = pkt?.data?.value as number | null;
-        let value = raw == null ? 0 : raw;
-        if (path.includes('angleTrueWater') || path.includes('angleTrueGround')) {
-          const heading = this.currentHeading();
-          value = this.addHeading(heading, value);
-        } else {
-          value = value < 0 ? 360 + value : value;
-        }
-        this.trueWindAngle.set(value);
+        const value = raw == null ? 0 : raw;
+        const boatRelative = path.includes('angleTrueWater') || path.includes('angleTrueGround');
+        this.trueWindAngle.set(normalizeRadians(boatRelative ? this.currentHeading() + value : value));
       }));
     });
 
@@ -375,8 +380,8 @@ export class WidgetRacesteerComponent implements OnDestroy {
     const result = data.slice(1).reduce(
       (acc, theValue) => {
         let value = theValue;
-        while (value < acc.min - 180) value += 360;
-        while (value > acc.max + 180) value -= 360;
+        while (value < acc.min - Math.PI) value += 2 * Math.PI;
+        while (value > acc.max + Math.PI) value -= 2 * Math.PI;
         acc.min = Math.min(acc.min, value);
         acc.max = Math.max(acc.max, value);
         acc.mid = ((acc.max - acc.min) / 2) + acc.min;
@@ -392,10 +397,9 @@ export class WidgetRacesteerComponent implements OnDestroy {
     this.historicalWindDirection = this.historicalWindDirection.filter(d => d.timestamp >= n);
   }
 
-  private addHeading(h1: number, h2: number) {
-    let h3 = (h1 + h2) % 360;
-    if (h3 < 0) h3 += 360;
-    return h3;
+  // A speed readout in its presentation unit. An empty or unitless measure shows the m/s value.
+  private toPresentation(measure: string, speedMs: number): number {
+    return measure && measure !== 'unitless' ? (this.unitsService.convertToUnit(measure, speedMs) ?? speedMs) : speedMs;
   }
 
   ngOnDestroy() {

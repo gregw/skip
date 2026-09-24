@@ -41,8 +41,7 @@ describe('WidgetRacesteerComponent rendering from SI inputs', () => {
   const feed = (pathKey: string, si: number, measure: string): void => {
     const callback = callbacks.get(pathKey);
     if (!callback) throw new Error(`${pathKey} is not observed`);
-    const legacy = unitsServiceStub.convertToUnit(measure, si);
-    callback({ data: { value: legacy, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
+    callback({ data: { value: si, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
   };
   const feedAngle = (pathKey: string, deg: number): void => feed(pathKey, deg * DEG, 'deg');
   const feedSpeed = (pathKey: string, knots: number): void => feed(pathKey, knots / KNOTS_PER_MS, 'knots');
