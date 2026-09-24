@@ -38,7 +38,6 @@ const ZERO_C = 273.15;
  */
 describe('WidgetSimpleLinearComponent output from SI inputs', () => {
   let fixture: ComponentFixture<WidgetSimpleLinearComponent>;
-  let units: UnitsService;
   let next: ((u: IPathUpdate) => void) | undefined;
   let options: WritableSignal<IWidgetSvcConfig>;
   let calls: string[];
@@ -66,8 +65,7 @@ describe('WidgetSimpleLinearComponent output from SI inputs', () => {
 
   /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
   const feed = (si: number | null, measure: string, state: States = States.Normal): void => {
-    const legacy = si == null || !measure ? si : units.convertToUnit(measure, si);
-    next?.({ data: { value: legacy, timestamp: null, measure }, state } as unknown as IPathUpdate);
+    next?.({ data: { value: si, timestamp: null, measure }, state } as unknown as IPathUpdate);
     fixture.detectChanges();
   };
 
@@ -109,13 +107,17 @@ describe('WidgetSimpleLinearComponent output from SI inputs', () => {
         { provide: WidgetMetadataDirective, useValue: { zones: signal(zones), observe: () => undefined } }
       ]
     }).compileComponents();
-    units = TestBed.inject(UnitsService);
 
     fixture = TestBed.createComponent(WidgetSimpleLinearComponent);
     fixture.componentRef.setInput('id', 'linear-si');
     fixture.componentRef.setInput('type', 'widget-simple-linear');
     fixture.componentRef.setInput('theme', theme);
     fixture.detectChanges();
+  });
+
+  it('opts in to SI values before observing its path', () => {
+    expect(calls[0]).toBe('useSiValues');
+    expect(calls).toContain('observe');
   });
 
   it('shows a reading in the stored unit on the stored scale', () => {
