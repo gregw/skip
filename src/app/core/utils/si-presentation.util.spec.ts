@@ -33,6 +33,16 @@ describe('presentedOption', () => {
   it('keeps a value that has ten significant digits of its own', () => {
     expect(presentedOption(12.34567891)).toBe(12.34567891);
   });
+
+  it('shows the noise left of a zero that went through an offset conversion as zero', () => {
+    const zeroFahrenheit = (0 + 459.67) * 5 / 9;
+    expect(zeroFahrenheit * 9 / 5 - 459.67).not.toBe(0);
+    expect(presentedOption(zeroFahrenheit * 9 / 5 - 459.67)).toBe(0);
+  });
+
+  it('keeps a small value an SI option can hold', () => {
+    expect(presentedOption(5.555555556e-6)).toBe(5.555555556e-6);
+  });
 });
 
 describe('presentedBound', () => {

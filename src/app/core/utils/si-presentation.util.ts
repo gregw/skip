@@ -26,9 +26,14 @@ export function presentationValue(units: Pick<UnitsService, 'convertToUnit'>, me
 // unit round trip (120 °C through K and back shows 120, not 119.99999999999997; 30° through rad
 // shows 30, not 29.999999999999996).
 const SI_OPTION_DISPLAY_DIGITS = 10;
+// Significant digits cannot clean up a zero: an offset conversion leaves about offset × 2⁻⁵² of
+// noise (0 °F through K and back is -5.7e-14), which a scale would start a tick below zero for.
+// Presentation values are far larger than this, and the SI values an option can show are too.
+const ZERO_NOISE_LIMIT = 1e-9;
 
 /** An SI-stored option converted to its presentation unit, as the user entered it. */
 export function presentedOption(converted: number): number {
+  if (Math.abs(converted) < ZERO_NOISE_LIMIT) return 0;
   return Number(converted.toPrecision(SI_OPTION_DISPLAY_DIGITS));
 }
 
