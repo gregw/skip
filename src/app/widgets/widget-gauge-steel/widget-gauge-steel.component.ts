@@ -7,7 +7,7 @@ import { WidgetStreamsDirective } from '../../core/directives/widget-streams.dir
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
 import { ITheme } from '../../core/services/app-service';
-import { presentationValue } from '../../core/utils/si-presentation.util';
+import { presentationValue, presentedScaleBounds } from '../../core/utils/si-presentation.util';
 
 @Component({
   selector: 'widget-gauge-steel',
@@ -45,7 +45,7 @@ export class WidgetSteelGaugeComponent {
         convertUnitTo: 'unitless'
       }
     },
-    displayScale: { type: 'linear', lower: 0, upper: 100 },
+    displayScale: { type: 'linear', lower: null, upper: null },
     gauge: {
       type: 'steel',
       subType: 'radial',
@@ -59,7 +59,14 @@ export class WidgetSteelGaugeComponent {
     updateInterval: 500,
     enableTimeout: false,
     dataTimeout: 5,
-    ignoreZones: false
+    ignoreZones: false,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'displayScale.lower': 'SI unit of gaugePath',
+    'displayScale.upper': 'SI unit of gaugePath'
   };
 
   // Reactive state
@@ -72,21 +79,20 @@ export class WidgetSteelGaugeComponent {
   /** Measure the value is presented in (server-resolved for this display path). '' = boot placeholder. */
   protected readonly effectiveUnit = signal<string>('');
 
-  // displayScale bounds are stored in the user-picked convertUnitTo; re-express them in the effective
-  // (server-resolved) measure so the child gauge's scale lines up with the presented value.
-  protected readonly effectiveMinValue = computed<number>(() => {
-    const cfg = this.runtime.options();
-    const stored = cfg?.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-    const lower = cfg?.displayScale?.lower ?? 0;
-    return this.unitsService.convertBetweenMeasures(stored, this.effectiveUnit(), lower);
-  });
-  protected readonly effectiveMaxValue = computed<number>(() => {
-    const cfg = this.runtime.options();
-    const stored = cfg?.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-    const lower = cfg?.displayScale?.lower ?? 0;
-    const upper = cfg?.displayScale?.upper ?? lower + 100;
-    return this.unitsService.convertBetweenMeasures(stored, this.effectiveUnit(), upper);
-  });
+  /** Measure the scale is presented in: the tagged one, else the stored convertUnitTo before the first update. */
+  private readonly effectiveMeasure = computed<string>(() =>
+    this.effectiveUnit() || (this.runtime.options()?.paths?.['gaugePath']?.convertUnitTo ?? 'unitless')
+  );
+  /** The scale bounds in the presentation measure, which the clamp shares. */
+  private readonly scaleBounds = computed(() => presentedScaleBounds(
+    this.unitsService,
+    this.effectiveMeasure(),
+    this.runtime.options()?.displayScale,
+    this.metadata.displayScale(),
+    { lower: 0, upper: 100 }
+  ));
+  protected readonly effectiveMinValue = computed<number>(() => this.scaleBounds().lower);
+  protected readonly effectiveMaxValue = computed<number>(() => this.scaleBounds().upper);
 
   constructor() {
     this.streams.useSiValues();
@@ -104,12 +110,7 @@ export class WidgetSteelGaugeComponent {
           const si = (pkt?.data?.value as number) ?? null;
           const measure = pkt?.data?.measure ?? '';
           this.effectiveUnit.set(measure);
-          // Clamp in the presentation measure, against the stored displayScale bounds re-expressed in
-          // it, so the value and the reinterpreted scale share one unit space.
-          const stored = pathCfg.convertUnitTo ?? 'unitless';
-          const lowerBound = cfg.displayScale?.lower ?? 0;
-          const lower = this.unitsService.convertBetweenMeasures(stored, measure, lowerBound);
-          const upper = this.unitsService.convertBetweenMeasures(stored, measure, cfg.displayScale?.upper ?? lowerBound + 100);
+          const { lower, upper } = this.scaleBounds();
           if (si == null) {
             this.dataValue.set(lower);
           } else {
@@ -120,14 +121,10 @@ export class WidgetSteelGaugeComponent {
       });
     });
 
-    // Zones observation effect
+    // Metadata observation: zones, and the meta scale for bounds that are not set
     effect(() => {
       const cfg = this.runtime.options();
       if (!cfg) return;
-      if (cfg.ignoreZones) {
-        this.zones.set([]);
-        return;
-      }
       const pathCfg = cfg.paths?.['gaugePath'];
       if (!pathCfg?.path) {
         this.zones.set([]);
@@ -135,8 +132,7 @@ export class WidgetSteelGaugeComponent {
       }
       // Establish metadata subscription (idempotent internally)
       untracked(() => this.metadata.observe('gaugePath'));
-      // Mirror metadata directive zones
-      this.zones.set(this.metadata.zones());
+      this.zones.set(cfg.ignoreZones ? [] : this.metadata.zones());
     });
   }
 }
