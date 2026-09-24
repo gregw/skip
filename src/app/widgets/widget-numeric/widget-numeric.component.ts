@@ -12,7 +12,7 @@ import { ITheme } from '../../core/services/app-service';
 import { getColors } from '../../core/utils/themeColors.utils';
 import { States } from '../../core/interfaces/signalk-interfaces';
 
-/** Measures whose value arrives already formatted as a string, so it is drawn verbatim. */
+/** Measures whose conversion returns formatted text rather than a number, so it is drawn verbatim. */
 const PRE_FORMATTED_MEASURES = ['latitudeSec', 'latitudeMin', 'longitudeSec', 'longitudeMin', 'D HH:MM:SS'];
 /** Measures whose '%' this widget appends to the value text itself. */
 const PERCENT_MEASURES = ['percent', 'percentraw'];
@@ -80,6 +80,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   private foregroundBitmap: HTMLCanvasElement | null = null;
   private foregroundBitmapText: string | null = null;
 
+  /** The latest sample and its tracked extremes, in SI; each is converted to the measure when drawn. */
   private dataValue: number | null = null;
   private effectiveUnit = signal<string>('');
   private durationFormat = signal<TDurationFormat | undefined>(undefined);
@@ -144,6 +145,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   };
 
   constructor() {
+    this.stream.useSiValues();
     this.showMiniChart.set(this.runtime.options()?.showMiniChart ?? false);
     effect(() => {
       const theme = this.theme();
@@ -424,16 +426,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   private getValueText(): string {
     const dataValue = this.dataValue;
     if (dataValue === null) return "--";
-    const cfg = this.runtime.options();
-    // The format decision must follow the measure the value was actually converted to (the tagged
-    // effective measure), not the stored convertUnitTo: a display path's resolved measure can differ,
-    // and a position/duration format measure arrives as a pre-formatted string — testing the stored
-    // unit here would call toFixed() on that string (crash) or print a raw number for a format measure.
-    const measure = this.effectiveUnit();
-    if (PRE_FORMATTED_MEASURES.includes(measure)) {
-      return dataValue.toString();
-    }
-    return this.formatNumber(dataValue, cfg?.numDecimal);
+    return this.formatNumber(dataValue, this.runtime.options()?.numDecimal);
   }
 
   /** A duration-formatted value is read as a clock, not a number of seconds, so it carries no unit. */
@@ -441,9 +434,18 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     return this.durationFormat() ? '' : this.effectiveUnit();
   }
 
-  private formatNumber(value: number, numDecimal: number | undefined): string {
+  /**
+   * An SI value as text in the tagged measure, not the stored convertUnitTo: a display path's resolved
+   * measure can differ. A measure the converter does not know leaves nothing to show.
+   */
+  private formatNumber(si: number, numDecimal: number | undefined): string {
     const format = this.durationFormat();
-    return format ? this.unitsService.formatDuration(format, value) : this.applyDecorations(value.toFixed(numDecimal));
+    if (format) return this.unitsService.formatDuration(format, si);
+    const measure = this.effectiveUnit();
+    const presented = measure ? this.unitsService.convertToUnit(measure, si) : si;
+    if (presented === null) return '--';
+    if (PRE_FORMATTED_MEASURES.includes(measure)) return String(presented);
+    return this.applyDecorations(presented.toFixed(numDecimal));
   }
 
   private getMinMaxText(): string {
@@ -481,8 +483,8 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   private applyDecorations(txtValue: string): string {
-    // Percent decoration follows the applied measure, not the stored convertUnitTo — same reason as
-    // getValueText: a display path's value is scaled per the resolved measure, so the '%' must too.
+    // Percent decoration follows the tagged measure, which the value is scaled by, not the stored
+    // convertUnitTo.
     return PERCENT_MEASURES.includes(this.effectiveUnit()) ? `${txtValue}%` : txtValue;
   }
 

@@ -38,7 +38,6 @@ type MiniGraphInputs = Pick<MinigraphComponent,
  */
 describe('WidgetNumericComponent output from SI inputs', () => {
   let internals: NumericInternals;
-  let units: UnitsService;
   let options: WritableSignal<IWidgetSvcConfig | undefined>;
   let next: ((u: IPathUpdate) => void) | undefined;
   let streamCalls: string[];
@@ -57,9 +56,8 @@ describe('WidgetNumericComponent output from SI inputs', () => {
 
   /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
   const feed = (si: number | null, measure: string, durationFormat?: TDurationFormat): void => {
-    const legacy = si == null || !measure ? si : units.convertToUnit(measure, si);
     if (!next) throw new Error('numericPath is not observed');
-    next({ data: { value: legacy, timestamp: null, measure, durationFormat }, state: 'normal' } as IPathUpdate);
+    next({ data: { value: si, timestamp: null, measure, durationFormat }, state: 'normal' } as IPathUpdate);
   };
 
   const miniGraphInputs = (): MiniGraphInputs => {
@@ -96,7 +94,20 @@ describe('WidgetNumericComponent output from SI inputs', () => {
         UnitsService
       ]
     });
-    units = TestBed.inject(UnitsService);
+  });
+
+  it('asks for SI values before it observes its path', () => {
+    render(makeConfig());
+    expect(streamCalls).toEqual(['useSiValues', 'observe:numericPath']);
+  });
+
+  it('presents the tracked extremes in the measure current when they are drawn', () => {
+    render(makeConfig({ showMin: true, showMax: true }, 'knots'));
+    feed(5, 'knots');
+    feed(8, 'knots');
+    feed(6, 'kph');
+    expect({ value: internals.getValueText(), minMax: internals.getMinMaxText() })
+      .toEqual({ value: '21.6', minMax: 'Min: 18.0 Max: 28.8' });
   });
 
   it('renders the placeholder before any value arrives', () => {
@@ -181,6 +192,14 @@ describe('WidgetNumericComponent output from SI inputs', () => {
     render(makeConfig());
     feed(60.5125, 'latitudeSec');
     expect(internals.getValueText()).toBe('60° 30\' 45.00" N');
+  });
+
+  it('writes the extremes of a latitude in degrees, minutes and seconds too', () => {
+    render(makeConfig({ showMin: true, showMax: true }));
+    feed(60.5125, 'latitudeSec');
+    feed(60.25, 'latitudeSec');
+    feed(61, 'latitudeSec');
+    expect(internals.getMinMaxText()).toBe('Min: 60° 15\' 00.00" N Max: 61° 0\' 00.00" N');
   });
 
   it('writes a longitude in degrees and decimal minutes', () => {
@@ -304,7 +323,7 @@ describe('WidgetNumericComponent label row layout', () => {
     TestBed.configureTestingModule({
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
-        { provide: WidgetStreamsDirective, useValue: { observe: () => undefined } },
+        { provide: WidgetStreamsDirective, useValue: { observe: () => undefined, useSiValues: () => undefined } },
         { provide: UnitsService, useValue: unitsServiceStub },
         { provide: CanvasService, useValue: canvasFake }
       ]
