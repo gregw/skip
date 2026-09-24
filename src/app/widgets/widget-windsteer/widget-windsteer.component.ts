@@ -245,7 +245,7 @@ export class WidgetWindComponent implements OnDestroy {
     sailSetupEnable: false,
     rudderEnable: true,
     invertRudder: false,
-    polarOverlayEnable: false,
+    polarOverlayEnable: true,
     updateInterval: 1000,
     enableTimeout: false,
     dataTimeout: DEFAULT_DATA_TIMEOUT_SECONDS,
