@@ -32,7 +32,7 @@ The former **betterer ratchet** that migrated the codebase to zero file-by-file 
 
 ## TypeScript only
 
-Skip strives to be **100% TypeScript**. No new JavaScript source files are allowed, and any existing JavaScript source that a change touches must be converted to TypeScript as part of that same change — not left as JS with a follow-up promise. The one exception is tool/build config that is conventionally JavaScript (e.g. `eslint.config.js`); those may stay JS.
+Skip strives to be **100% TypeScript**. No new JavaScript source files are allowed, and any existing JavaScript source that a change touches must be converted to TypeScript as part of that same change — not left as JS with a follow-up promise. Two exceptions may stay JS: tool/build config that is conventionally JavaScript (e.g. `eslint.config.js`), and `perf-harness/`, a self-contained tool with its own `package.json` whose `.mjs` sources run under plain `node` (converting one file would need a TypeScript runner for the whole harness).
 
 ## Webapp-only (no bundled server plugin)
 
