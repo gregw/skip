@@ -438,7 +438,6 @@ describe('UnitsService', () => {
       'self.navigation.position#/longitude': 'deg',
       'self.navigation.position#/altitude': 'm',
       'self.navigation.courseGreatCircle.nextPoint.position#/latitude': 'deg',
-      'self.navigation.position.latitude': 'deg',
       'self.navigation.attitude#/roll': 'rad',
       'self.navigation.headingTrue': 'rad',
       'self.environment.sunlight.position#/elevation': 'deg',
@@ -462,7 +461,6 @@ describe('UnitsService', () => {
       'self.navigation.position#/latitude',
       'self.navigation.position#/longitude',
       'self.navigation.courseGreatCircle.nextPoint.position#/latitude',
-      'self.navigation.position.latitude',
     ])('offers only the Position group for %s', path => {
       expect(groups(setupWithUnits(), path)).toEqual(['Position']);
     });

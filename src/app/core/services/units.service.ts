@@ -227,16 +227,15 @@ export type TDurationFormat = keyof typeof DURATION_FORMATTERS;
 const isDurationFormat = (target: string): target is TDurationFormat => Object.hasOwn(DURATION_FORMATTERS, target);
 
 /**
- * Whether a path addresses the latitude or longitude of a position, as `….position#/latitude` or as
- * the dotted `….position.latitude` that unmigrated configs still carry. Their unit is `deg`, but
- * they take only the Position group: the Angle group's conversions assume a value in radians.
+ * Whether a path addresses the latitude or longitude of a position as `….position#/latitude`. Its
+ * unit is `deg`, but it takes only the Position group: the Angle group's conversions assume a value
+ * in radians.
  */
 function isPositionCoordinate(path: string): boolean {
   const split = splitPointerPath(path);
-  if (!split.valid) return false;
-  const segments = split.basePath.split('.');
-  const field = split.pointer ? (split.pointer.length === 1 ? String(split.pointer[0]) : undefined) : segments.pop();
-  return (field === 'latitude' || field === 'longitude') && segments.at(-1) === 'position';
+  if (!split.valid || split.pointer?.length !== 1) return false;
+  const field = String(split.pointer[0]);
+  return (field === 'latitude' || field === 'longitude') && split.basePath.split('.').at(-1) === 'position';
 }
 
 @Injectable()
