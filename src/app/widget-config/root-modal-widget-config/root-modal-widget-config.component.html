@@ -70,6 +70,7 @@
             [enableMinMaxScaleLimit]="enableMinMaxScaleLimitToControl"
             [yScaleMin]="yScaleMinToControl"
             [yScaleMax]="yScaleMaxToControl"
+            [yScaleUnit]="siUnitSymbol('yScaleMin') ?? ''"
             [numDecimal]="numDecimalToControl"
             [timeScale]="timeScaleControl"
             [period]="periodControl"
@@ -142,6 +143,8 @@
                 }
               }
               @if (formMaster.get('displayScale')) {
+                @let lowerUnit = siUnitSymbol('displayScale.lower');
+                @let upperUnit = siUnitSymbol('displayScale.upper');
                 <mat-form-field formGroupName="displayScale" appearance="outline">
                   <mat-label>Scale Start</mat-label>
                   <input
@@ -151,6 +154,12 @@
                     formControlName="lower"
                     placeholder="Enter number..."
                   />
+                  @if (lowerUnit) {
+                    <span matTextSuffix>{{ lowerUnit }}</span>
+                  }
+                  @if (lowerUnit !== null) {
+                    <mat-hint>Leave empty to use the path's own scale.</mat-hint>
+                  }
                 </mat-form-field>
                 <mat-form-field formGroupName="displayScale" appearance="outline">
                   <mat-label>Scale End</mat-label>
@@ -161,6 +170,12 @@
                     formControlName="upper"
                     placeholder="Enter number..."
                   />
+                  @if (upperUnit) {
+                    <span matTextSuffix>{{ upperUnit }}</span>
+                  }
+                  @if (upperUnit !== null) {
+                    <mat-hint>Leave empty to use the path's own scale.</mat-hint>
+                  }
                 </mat-form-field>
               }
               @if ((widgetConfig?.numInt !== undefined)) {
@@ -595,8 +610,11 @@
                     placeholder="Enter or select number..."
                     name="yScaleMin"
                     formControlName="yScaleMin"
-                    required
                   />
+                  @if (siUnitSymbol('yScaleMin'); as unit) {
+                    <span matTextSuffix>{{ unit }}</span>
+                  }
+                  <mat-hint>Leave empty to use the path's own scale.</mat-hint>
                 </mat-form-field>
               }
               @if ((widgetConfig?.yScaleMax !== undefined)) {
@@ -608,8 +626,11 @@
                     placeholder="Enter or select number..."
                     name="yScaleMax"
                     formControlName="yScaleMax"
-                    required
                   />
+                  @if (siUnitSymbol('yScaleMax'); as unit) {
+                    <span matTextSuffix>{{ unit }}</span>
+                  }
+                  <mat-hint>Leave empty to use the path's own scale.</mat-hint>
                 </mat-form-field>
               }
               @if ((widgetConfig?.inverseYAxis !== undefined)) {

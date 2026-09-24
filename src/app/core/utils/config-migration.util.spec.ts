@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ConfigTooOldError,
   SI_VERSION_KEY,
+  V22_MEASURE_TO_SI,
   applySiSteps,
   MIN_MIGRATABLE_APP_CONFIG_VERSION,
   MigrationMessageSink,
@@ -148,7 +149,7 @@ describe('migrateWidgetConfig (a single widget config through the chain)', () =>
   it('only runs steps that match the widget type', () => {
     const cfg = { paths: { windAngleTrueWater: { path: 'x' } } } as unknown as IWidgetSvcConfig;
 
-    const migrated = migrateWidgetConfig('widget-numeric', cfg, 18, recordingSink());
+    const migrated = migrateWidgetConfig('widget-text', cfg, 18, recordingSink());
 
     expect(migrated).toEqual(cfg);
   });
@@ -370,7 +371,7 @@ describe('v20 -> v21: Sea Horizon heel angles and AIS radar options in SI', () =
 
   it('migrateConfig carries a v19 Sea Horizon through both steps to rad', () => {
     const result = migrateConfig(configWith(19, [seaHorizon({ heelCautionAngle: 20 })]), recordingSink());
-    expect(result.config.app?.configVersion).toBe(21);
+    expect(result.config.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
     expect(widgetConfigs(result.config)[0]).toEqual({ gauge: { heelCautionAngle: 0.3490658503988659 }, [SI_VERSION_KEY]: 21 });
   });
 
@@ -390,5 +391,204 @@ describe('v20 -> v21: Sea Horizon heel angles and AIS radar options in SI', () =
       { type: 'widget-ais-radar', config: { ais: { cogVectorsSeconds: 600 }, [SI_VERSION_KEY]: 21 } }
     ]);
     expect(applySiSteps(config, recordingSink())).toBe(false);
+  });
+});
+
+describe('v21 -> v22: scale bounds in SI', () => {
+  const GAUGE_TYPES = ['widget-gauge-ng-radial', 'widget-gauge-ng-linear', 'widget-gauge-steel', 'widget-simple-linear'];
+  const gauge = (type: string, unit: string | undefined, lower: unknown, upper: unknown) => ({
+    type,
+    config: {
+      displayName: 'RPM',
+      paths: { gaugePath: unit === undefined ? { path: 'self.x' } : { path: 'self.x', convertUnitTo: unit } },
+      displayScale: { lower, upper, type: 'linear' }
+    }
+  });
+  const numeric = (unit: string, yScaleMin: unknown, yScaleMax: unknown) => ({
+    type: 'widget-numeric',
+    config: { displayName: 'SOG', paths: { numericPath: { path: 'self.x', convertUnitTo: unit } }, yScaleMin, yScaleMax }
+  });
+  const scale = (config: Record<string, unknown>) => config['displayScale'] as { lower: unknown; upper: unknown };
+  const resets = (config: IConfig) => (config.app as IAppConfig).siScaleResets;
+
+  it('pins a sample of the frozen measure table, which holds no string-format measure', () => {
+    expect(V22_MEASURE_TO_SI['rpm']).toEqual([0, 60]);
+    expect(V22_MEASURE_TO_SI['celsius']).toEqual([-273.15, 1]);
+    expect(V22_MEASURE_TO_SI['fahrenheit']).toEqual([-459.67, 1.8000000000000114]);
+    expect(V22_MEASURE_TO_SI['knots']).toEqual([0, 1.943844494119952]);
+    expect(V22_MEASURE_TO_SI['kPa']).toEqual([0, 0.001]);
+    expect(V22_MEASURE_TO_SI['bar']).toEqual([0, 0.00001]);
+    expect(V22_MEASURE_TO_SI['percent']).toEqual([0, 100]);
+    expect(V22_MEASURE_TO_SI['K']).toEqual([0, 1]);
+    for (const measure of ['D HH:MM:SS', 'latitudeMin', 'latitudeSec', 'longitudeMin', 'longitudeSec', 'unitless', '']) {
+      expect(Object.hasOwn(V22_MEASURE_TO_SI, measure), measure).toBe(false);
+    }
+    for (const [measure, [zero, perSi]] of Object.entries(V22_MEASURE_TO_SI)) {
+      expect(Number.isFinite(zero) && Number.isFinite(perSi) && perSi !== 0, measure).toBe(true);
+    }
+  });
+
+  for (const type of GAUGE_TYPES) {
+    it(`converts ${type} bounds from the stored unit: 0-3600 rpm to 0-60 Hz`, () => {
+      const migrated = migrateOneAppVersion(configWith(21, [gauge(type, 'rpm', 0, 3600)]), 21, recordingSink()) as IConfig;
+
+      expect(migrated.app?.configVersion).toBe(22);
+      const [config] = widgetConfigs(migrated);
+      expect(config['displayScale']).toEqual({ lower: 0, upper: 60, type: 'linear' });
+      expect(config[SI_VERSION_KEY]).toBe(22);
+      expect(resets(migrated)).toBeUndefined();
+    });
+  }
+
+  it('converts celsius bounds to kelvin and leaves kelvin bounds as they are', () => {
+    const migrated = migrateOneAppVersion(configWith(21, [
+      gauge('widget-gauge-ng-linear', 'celsius', 0, 120),
+      gauge('widget-gauge-ng-radial', 'K', 250, 400)
+    ]), 21, recordingSink()) as IConfig;
+
+    const [celsius, kelvin] = widgetConfigs(migrated).map(scale);
+    expect(celsius.lower).toBeCloseTo(273.15);
+    expect(celsius.upper).toBeCloseTo(393.15);
+    expect(kelvin).toEqual({ lower: 250, upper: 400, type: 'linear' });
+  });
+
+  it('converts numeric y bounds from the stored unit: 0-10 knots to 0-5.144 m/s', () => {
+    const migrated = migrateOneAppVersion(configWith(21, [numeric('knots', 0, 10)]), 21, recordingSink()) as IConfig;
+
+    const [config] = widgetConfigs(migrated);
+    expect(config['yScaleMin']).toBe(0);
+    expect(config['yScaleMax']).toBeCloseTo(5.144, 3);
+    expect(config[SI_VERSION_KEY]).toBe(22);
+  });
+
+  it('resets and lists bounds whose stored unit is empty, unitless, missing, unknown or a string format', () => {
+    const sink = recordingSink();
+    const migrated = migrateOneAppVersion(configWith(21, [
+      gauge('widget-gauge-steel', '', 0, 100),
+      gauge('widget-simple-linear', 'unitless', 0, 100),
+      gauge('widget-gauge-ng-radial', undefined, 0, 100),
+      gauge('widget-gauge-ng-linear', 'furlongs', 0, 100),
+      numeric('D HH:MM:SS', 0, 3600)
+    ]), 21, sink) as IConfig;
+
+    const configs = widgetConfigs(migrated);
+    for (const config of configs.slice(0, 4)) {
+      expect(config['displayScale']).toEqual({ lower: null, upper: null, type: 'linear' });
+      expect(config[SI_VERSION_KEY]).toBe(22);
+    }
+    expect(configs[4]).toMatchObject({ yScaleMin: null, yScaleMax: null, [SI_VERSION_KEY]: 22 });
+    expect(resets(migrated)).toEqual([
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-gauge-steel', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-simple-linear', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-gauge-ng-radial', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-gauge-ng-linear', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'SOG', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] }
+    ]);
+    expect(sink.infos.filter(m => /scale range/i.test(m))).toHaveLength(5);
+  });
+
+  it('resets and lists only the bounds that were numbers', () => {
+    const migrated = migrateOneAppVersion(configWith(21, [gauge('widget-gauge-steel', '', null, 100)]), 21, recordingSink()) as IConfig;
+
+    expect(scale(widgetConfigs(migrated)[0])).toEqual({ lower: null, upper: null, type: 'linear' });
+    expect(resets(migrated)?.[0].options).toEqual(['displayScale.upper']);
+  });
+
+  it('resets and lists any numeric data-chart y bound, which has no stored unit', () => {
+    const migrated = migrateOneAppVersion(configWith(21, [{
+      type: 'widget-data-chart',
+      config: { displayName: 'Pressure', convertUnitTo: 'mbar', yScaleMin: 990, yScaleMax: 1030, yScaleSuggestedMin: null, enableMinMaxScaleLimit: true }
+    }]), 21, recordingSink()) as IConfig;
+
+    expect(widgetConfigs(migrated)[0]).toEqual({
+      displayName: 'Pressure', convertUnitTo: 'mbar', yScaleMin: null, yScaleMax: null, yScaleSuggestedMin: null,
+      enableMinMaxScaleLimit: true, [SI_VERSION_KEY]: 22
+    });
+    expect(resets(migrated)).toEqual([{ dashboardId: 'd1', dashboard: '1', widget: 'Pressure', type: 'widget-data-chart', options: ['yScaleMin', 'yScaleMax'] }]);
+  });
+
+  it('only marks widgets without numeric bounds, adding no reset list', () => {
+    const migrated = migrateOneAppVersion(configWith(21, [
+      gauge('widget-gauge-steel', '', null, null),
+      { type: 'widget-numeric', config: { paths: { numericPath: { path: 'self.x', convertUnitTo: 'unitless' } } } },
+      { type: 'widget-data-chart', config: { yScaleMin: null } }
+    ]), 21, recordingSink()) as IConfig;
+
+    expect(widgetConfigs(migrated).map(c => c[SI_VERSION_KEY])).toEqual([22, 22, 22]);
+    expect(migrated.app && 'siScaleResets' in migrated.app).toBe(false);
+  });
+
+  it('names the dashboard by its name, else its position, and the widget by its displayName, else its type', () => {
+    const config = {
+      app: { configVersion: 21, siScaleResets: [{ dashboardId: 'old', dashboard: 'Old', widget: 'Old', type: 'widget-numeric', options: ['yScaleMin'] }] },
+      theme: { themeName: '' },
+      dashboards: [
+        { id: 'd1', name: 'Engine', configuration: [
+          { id: 'w1', selector: 'widget-host2', input: { widgetProperties: { type: 'widget-numeric', uuid: 'w1', config: { displayName: 'Oil', yScaleMin: 0, yScaleMax: 5 } } } }
+        ] },
+        { id: 'd2', configuration: [
+          { id: 'w2', selector: 'widget-host2', input: { widgetProperties: { type: 'widget-data-chart', uuid: 'w2', config: { yScaleMax: 5 } } } }
+        ] }
+      ]
+    } as unknown as IConfig;
+
+    const migrated = migrateOneAppVersion(config, 21, recordingSink()) as IConfig;
+
+    expect(resets(migrated)).toEqual([
+      { dashboardId: 'old', dashboard: 'Old', widget: 'Old', type: 'widget-numeric', options: ['yScaleMin'] },
+      { dashboardId: 'd1', dashboard: 'Engine', widget: 'Oil', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] },
+      { dashboardId: 'd2', dashboard: '2', widget: 'widget-data-chart', type: 'widget-data-chart', options: ['yScaleMax'] }
+    ]);
+  });
+
+  it('leaves other widgets, and widget-slider, alone', () => {
+    const migrated = migrateOneAppVersion(configWith(21, [
+      { type: 'widget-slider', config: { displayScale: { lower: 0, upper: 100 } } },
+      { type: 'widget-gauge-ng-compass', config: { displayScale: { lower: 0, upper: 360 } } }
+    ]), 21, recordingSink()) as IConfig;
+    expect(widgetConfigs(migrated)).toEqual([{ displayScale: { lower: 0, upper: 100 } }, { displayScale: { lower: 0, upper: 360 } }]);
+  });
+
+  it('refuses a config that is not at v21', () => {
+    const sink = recordingSink();
+    expect(migrateOneAppVersion(configWith(20, []), 21, sink)).toBeNull();
+    expect(sink.errors).toHaveLength(1);
+  });
+
+  it('v20 -> v21 does not run the v22 steps', () => {
+    const migrated = migrateOneAppVersion(configWith(20, [gauge('widget-gauge-steel', 'rpm', 0, 3600)]), 20, recordingSink()) as IConfig;
+    expect(scale(widgetConfigs(migrated)[0])).toEqual({ lower: 0, upper: 3600, type: 'linear' });
+  });
+
+  it('gives identical results when migrated twice, and a rerun on marked widgets changes nothing', () => {
+    const input = () => configWith(21, [gauge('widget-gauge-steel', 'rpm', 0, 3600), gauge('widget-gauge-steel', '', 0, 100), numeric('knots', 0, 10)]);
+    const first = migrateOneAppVersion(input(), 21, recordingSink()) as IConfig;
+    const second = migrateOneAppVersion(input(), 21, recordingSink()) as IConfig;
+    expect(second).toEqual(first);
+
+    const expected = structuredClone(first);
+    // A tab on an older build lowered the stamp but kept the migrated widgets.
+    first.app!.configVersion = 21;
+    const again = migrateOneAppVersion(first, 21, recordingSink()) as IConfig;
+    expect(widgetConfigs(again)).toEqual(widgetConfigs(expected));
+    expect(resets(again)).toEqual(resets(expected));
+    expect(applySiSteps(again, recordingSink())).toBe(false);
+  });
+
+  it('converts unmarked configs an older build wrote back under the current stamp', () => {
+    const config = configWith(LATEST_APP_CONFIG_VERSION, [gauge('widget-gauge-ng-radial', 'rpm', 0, 3600), gauge('widget-gauge-steel', 'unitless', 0, 100)]);
+
+    expect(applySiSteps(config, recordingSink())).toBe(true);
+    expect(widgetConfigs(config).map(scale)).toEqual([
+      { lower: 0, upper: 60, type: 'linear' },
+      { lower: null, upper: null, type: 'linear' }
+    ]);
+    expect(resets(config)).toHaveLength(1);
+  });
+
+  it('migrateConfig carries a v21 config to v22', () => {
+    const result = migrateConfig(configWith(21, [gauge('widget-gauge-ng-radial', 'rpm', 0, 3600)]), recordingSink());
+    expect(result.config.app?.configVersion).toBe(22);
+    expect(widgetConfigs(result.config)[0]).toMatchObject({ displayScale: { lower: 0, upper: 60 }, [SI_VERSION_KEY]: 22 });
   });
 });

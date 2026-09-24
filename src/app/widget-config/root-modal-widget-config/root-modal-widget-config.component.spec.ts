@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { UntypedFormArray, UntypedFormControl, UntypedFormGroup, Validators } from '@angular/forms';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RootModalWidgetConfigComponent } from './root-modal-widget-config.component';
 import { IConversionPathList, UnitsService } from '../../core/services/units.service';
 import { AppService } from '../../core/services/app-service';
@@ -16,6 +16,11 @@ import { WidgetSeaHorizonComponent } from '../../widgets/widget-sea-horizon/widg
 import { WidgetWindComponent } from '../../widgets/widget-windsteer/widget-windsteer.component';
 import { WidgetRacesteerComponent } from '../../widgets/widget-racesteer/widget-racesteer.component';
 import { WidgetAisRadarComponent } from '../../widgets/widget-ais-radar/widget-ais-radar.component';
+import { WidgetGaugeNgRadialComponent } from '../../widgets/widget-gauge-ng-radial/widget-gauge-ng-radial.component';
+import { WidgetNumericComponent } from '../../widgets/widget-numeric/widget-numeric.component';
+import { WidgetDataGraphComponent } from '../../widgets/widget-data-graph/widget-data-graph.component';
+import { WidgetSliderComponent } from '../../widgets/widget-slider/widget-slider.component';
+import type { ISkMetadata } from '../../core/interfaces/signalk-interfaces';
 import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
 import { DataService, IPathUpdate } from '../../core/services/data.service';
 import { signal } from '@angular/core';
@@ -810,5 +815,248 @@ describe('ModalWidgetComponent polar overlay status', () => {
     const fixture = open(windsteer());
     fixture.destroy();
     expect(released.sort()).toEqual([TWS, WATER_TWA, STW].sort());
+  });
+});
+
+describe('ModalWidgetComponent scale bounds stored in SI', () => {
+  const TEMPERATURE = 'self.propulsion.main.temperature';
+  const RPM = 'self.propulsion.main.revolutions';
+  const SPEED = 'self.navigation.speedThroughWater';
+  const DEPTH = 'self.environment.depth.belowTransducer';
+  const meta = (units: string, targetUnit?: string, displayScale?: ISkMetadata['displayScale']): ISkMetadata =>
+    ({ description: '', properties: {}, units, ...(targetUnit ? { displayUnits: { targetUnit } } : {}), ...(displayScale ? { displayScale } : {}) });
+
+  let metas: Map<string, BehaviorSubject<ISkMetadata | null>>;
+  const metaOf = (path: string): BehaviorSubject<ISkMetadata | null> => {
+    let subject = metas.get(path);
+    if (!subject) {
+      subject = new BehaviorSubject<ISkMetadata | null>(null);
+      metas.set(path, subject);
+    }
+    return subject;
+  };
+
+  function open(type: string, config: IWidgetSvcConfig): ComponentFixture<RootModalWidgetConfigComponent> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        UnitsService,
+        { provide: AppService, useValue: { configurableThemeColors: [] } },
+        { provide: MAT_DIALOG_DATA, useValue: { ...config, widgetName: 'Widget', widgetType: type } },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+        { provide: ActivePolarService, useValue: { status: signal({ kind: 'loading' }), message: signal(null), refreshIfFailed: () => undefined } }
+      ]
+    });
+    ensureTestIconsReady();
+    const data = TestBed.inject(DataService);
+    vi.spyOn(data, 'getPathUnitType').mockImplementation(path => metaOf(path).value?.units ?? null);
+    vi.spyOn(data, 'getPathDisplayUnits').mockImplementation(path => metaOf(path).value?.displayUnits);
+    vi.spyOn(data, 'getPathMeta').mockImplementation(path => metaOf(path).value);
+    vi.spyOn(data, 'getPathMetaObservable').mockImplementation(path => metaOf(path).asObservable());
+    vi.spyOn(data, 'getPathObject').mockImplementation(path =>
+      metaOf(path).value ? { path, pathValue: null, pathTimestamp: '', type: 'number', state: 'normal', sources: {}, meta: metaOf(path).value! } as ReturnType<DataService['getPathObject']> : null);
+    const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
+    fixture.detectChanges();
+    return fixture;
+  }
+  const lastSaved = (): IWidgetSvcConfig => {
+    const calls = (TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>).mock.calls;
+    return calls[calls.length - 1][0] as IWidgetSvcConfig;
+  };
+  const suffix = (fixture: ComponentFixture<RootModalWidgetConfigComponent>, name: string): string | null => {
+    fixture.detectChanges();
+    const field = (fixture.nativeElement.querySelector(`input[name="${name}"]`) as HTMLElement | null)?.closest('mat-form-field');
+    return field?.querySelector('[matTextSuffix]')?.textContent?.trim() ?? null;
+  };
+
+  /** A slider on `path`; its slot is structural and has no convertUnitTo, as the slider's defaults. */
+  const slider = (path: string): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetSliderComponent.DEFAULT_CONFIG);
+    config.paths = { gaugePath: { ...(config.paths as Record<string, IWidgetPath>)['gaugePath'], path } };
+    return config;
+  };
+
+  const gauge = (path: string | null, convertUnitTo: string, lower: number | null, upper: number | null): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetGaugeNgRadialComponent.DEFAULT_CONFIG);
+    config.paths = { gaugePath: { ...(config.paths as Record<string, IWidgetPath>)['gaugePath'], path, convertUnitTo } };
+    config.displayScale = { ...config.displayScale!, lower, upper } as IWidgetSvcConfig['displayScale'];
+    return config;
+  };
+  const numeric = (path: string | null, convertUnitTo: string, yScaleMin: number | null, yScaleMax: number | null): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetNumericComponent.DEFAULT_CONFIG);
+    config.paths = { numericPath: { ...(config.paths as Record<string, IWidgetPath>)['numericPath'], path, convertUnitTo } };
+    return { ...config, yScaleMin, yScaleMax } as IWidgetSvcConfig;
+  };
+  const scale = (fixture: ComponentFixture<RootModalWidgetConfigComponent>) =>
+    fixture.componentInstance.formMaster.get('displayScale') as UntypedFormGroup;
+  const slot = (fixture: ComponentFixture<RootModalWidgetConfigComponent>, name: string) =>
+    fixture.componentInstance.formMaster.get(['paths', name]) as UntypedFormGroup;
+
+  beforeEach(() => {
+    metas = new Map();
+  });
+
+  it('shows gauge bounds stored in K in the unit the server shows the path in', () => {
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', 273.15, 393.15));
+    expect(scale(fixture).get('lower')?.value).toBe(0);
+    expect(scale(fixture).get('upper')?.value).toBe(120);
+    expect(suffix(fixture, 'lower')).toBe('°C');
+    expect(suffix(fixture, 'upper')).toBe('°C');
+  });
+
+  it('shows the bounds in the stored unit when the server sets none, and in SI without either', () => {
+    metaOf(TEMPERATURE).next(meta('K'));
+    const stored = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'fahrenheit', 273.15, 393.15));
+    expect(scale(stored).get('lower')?.value).toBe(32);
+    expect(scale(stored).get('upper')?.value).toBe(248);
+
+    const si = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', 273.15, 393.15));
+    expect(scale(si).get('upper')?.value).toBe(393.15);
+    expect(suffix(si, 'upper')).toBe('K');
+  });
+
+  it('leaves the SI bounds bit-identical when saved without edits', () => {
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const lower = 273.15 + 1 / 3;
+    const upper = 393.15 + Math.PI;
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', lower, upper));
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().displayScale?.lower).toBe(lower);
+    expect(lastSaved().displayScale?.upper).toBe(upper);
+  });
+
+  it('stores numeric bounds entered in knots in m/s', () => {
+    metaOf(SPEED).next(meta('m/s', 'knots'));
+    const fixture = open('widget-numeric', numeric(SPEED, 'knots', null, null));
+    const form = fixture.componentInstance.formMaster;
+    form.get('yScaleMin')?.setValue(0);
+    form.get('yScaleMax')?.setValue(20);
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().yScaleMin).toBe(0);
+    expect(lastSaved().yScaleMax).toBeCloseTo(10.2889, 3);
+    expect(suffix(fixture, 'yScaleMax')).toBe('kn');
+  });
+
+  it('shows an unset bound as an empty field and saves it unset, and does not require one', () => {
+    metaOf(SPEED).next(meta('m/s', 'knots'));
+    const fixture = open('widget-numeric', numeric(SPEED, 'knots', null, 5.144));
+    const form = fixture.componentInstance.formMaster;
+    const input = fixture.nativeElement.querySelector('input[name="yScaleMin"]') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(form.get('yScaleMin')?.valid).toBe(true);
+
+    form.get('yScaleMax')?.setValue(null);
+    expect(form.valid).toBe(true);
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().yScaleMin).toBeNull();
+    expect(lastSaved().yScaleMax).toBeNull();
+  });
+
+  it("hints that an empty scale field uses the path's own scale", () => {
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', null, null));
+    const field = (fixture.nativeElement.querySelector('input[name="lower"]') as HTMLElement).closest('mat-form-field') as HTMLElement;
+    expect(field.querySelector('mat-hint')?.textContent).toMatch(/empty.*path's own scale/i);
+  });
+
+  it('re-resolves the unit once when the meta arrives, for a field the user has not edited', () => {
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', 273.15, 393.15));
+    expect(scale(fixture).get('lower')?.value).toBe(273.15);
+    scale(fixture).get('upper')?.setValue(400);
+
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    expect(scale(fixture).get('lower')?.value).toBe(0);
+    expect(suffix(fixture, 'lower')).toBe('°C');
+    // The edited field keeps the unit it was entered in.
+    expect(scale(fixture).get('upper')?.value).toBe(400);
+
+    metaOf(TEMPERATURE).next(meta('K', 'fahrenheit'));
+    expect(scale(fixture).get('lower')?.value).toBe(0);
+
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().displayScale?.lower).toBe(273.15);
+    expect(lastSaved().displayScale?.upper).toBe(400);
+  });
+
+  describe('with the path picker', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    const pick = async (fixture: ComponentFixture<RootModalWidgetConfigComponent>, slotName: string, path: string) => {
+      const control = slot(fixture, slotName).get('path')!;
+      control.markAsDirty();
+      control.setValue(path);
+      await vi.advanceTimersByTimeAsync(400);
+    };
+
+    it('re-points a gauge from a celsius path to an rpm path: meta scale in rpm, saved in Hz', async () => {
+      metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+      metaOf(RPM).next(meta('Hz', 'rpm', { lower: 0, upper: 60, type: 'linear' }));
+      const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'celsius', 273.15, 393.15));
+      await pick(fixture, 'gaugePath', RPM);
+      expect(scale(fixture).get('lower')?.value).toBe(0);
+      expect(scale(fixture).get('upper')?.value).toBe(3600);
+      expect(suffix(fixture, 'upper')).toBe('rpm');
+
+      fixture.componentInstance.submitConfig();
+      // 0 °C was 273.15 K; the new lower bound is 0 rpm.
+      expect(lastSaved().displayScale?.lower).toBe(0);
+      expect(lastSaved().displayScale?.upper).toBeCloseTo(60, 9);
+    });
+
+    it("fills a re-pointed slider's scale in SI, the unit the slider works in", async () => {
+      metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+      metaOf(RPM).next(meta('Hz', 'rpm', { lower: 0, upper: 60, type: 'linear' }));
+      const fixture = open('widget-slider', slider(TEMPERATURE));
+      await pick(fixture, 'gaugePath', RPM);
+      expect(scale(fixture).get('upper')?.value).toBe(60);
+
+      fixture.componentInstance.submitConfig();
+      expect(lastSaved().displayScale?.lower).toBe(0);
+      expect(lastSaved().displayScale?.upper).toBe(60);
+    });
+
+    it('re-points a numeric to a path without meta scale: same numbers, new unit', async () => {
+      metaOf(SPEED).next(meta('m/s', 'knots'));
+      metaOf(DEPTH).next(meta('m', 'feet'));
+      const fixture = open('widget-numeric', numeric(SPEED, 'knots', 0, 5.144));
+      const shown = fixture.componentInstance.formMaster.get('yScaleMax')?.value as number;
+      await pick(fixture, 'numericPath', DEPTH);
+      expect(fixture.componentInstance.formMaster.get('yScaleMax')?.value).toBe(shown);
+      expect(suffix(fixture, 'yScaleMax')).toBe('ft');
+
+      fixture.componentInstance.submitConfig();
+      expect(lastSaved().yScaleMax).toBeCloseTo(shown * 0.3048, 6);
+    });
+  });
+
+  it("converts a data graph's y bounds with the unit of its path, also after a path change", () => {
+    metaOf(SPEED).next(meta('m/s', 'knots'));
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const config = { ...structuredClone(WidgetDataGraphComponent.DEFAULT_CONFIG), datachartPath: SPEED,
+      yScaleMin: 0, yScaleMax: 5.144, yScaleSuggestedMin: null, yScaleSuggestedMax: 2.572 } as unknown as IWidgetSvcConfig;
+    const fixture = open('widget-data-chart', config);
+    const form = fixture.componentInstance.formMaster;
+    expect(form.get('yScaleMax')?.value).toBeCloseTo(10, 2);
+    expect(form.get('yScaleSuggestedMax')?.value).toBeCloseTo(5, 2);
+    expect(form.get('yScaleSuggestedMin')?.value).toBeNull();
+    expect(suffix(fixture, 'yScaleSuggestedMax')).toBe('kn');
+
+    form.get('datachartPath')?.setValue(TEMPERATURE);
+    expect(suffix(fixture, 'yScaleMin')).toBe('°C');
+    form.get('yScaleMax')?.setValue(100);
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().yScaleMin).toBeCloseTo(273.15, 9);
+    expect(lastSaved().yScaleMax).toBeCloseTo(373.15, 9);
+    expect(lastSaved().yScaleSuggestedMin).toBeNull();
+  });
+
+  it("leaves a slider's scale, which is already SI, as it is", () => {
+    metaOf(RPM).next(meta('Hz', 'rpm'));
+    const fixture = open('widget-slider', slider(RPM));
+    expect(scale(fixture).get('upper')?.value).toBe(1);
+    expect(suffix(fixture, 'upper')).toBeNull();
   });
 });

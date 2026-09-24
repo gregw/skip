@@ -151,6 +151,16 @@ describe('WidgetHost2Component', () => {
         expect(dialogServiceMock.openWidgetOptions).not.toHaveBeenCalled();
     });
 
+    it('tells the options dialog which widget type it edits', () => {
+        dashboard.isDashboardStatic.set(false);
+
+        component.openWidgetOptions(new Event('dblclick'));
+
+        expect(dialogServiceMock.openWidgetOptions).toHaveBeenCalledWith(expect.objectContaining({
+            config: expect.objectContaining({ widgetType: 'widget-numeric', displayName: 'STW' })
+        }));
+    });
+
     it('opens the action menu on single-tap when the dashboard is unlocked', () => {
         dashboard.isDashboardStatic.set(false);
         const openMenu = vi.spyOn(component as unknown as { openActionMenu: (x: number, y: number) => void }, 'openActionMenu').mockImplementation(() => undefined);

@@ -18,6 +18,7 @@ import { SignalKConnectionService } from '../../core/services/signalk-connection
 import { IDynamicControl } from '../../core/interfaces/widgets-interface';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { IPathSlotRequirements, pathRequiredValidator, pathSlotWarning } from '../../core/utils/path-validators.util';
+import { pathOptionMeasure, presentationValue, presentedOption } from '../../core/utils/si-presentation.util';
 
 @Component({
     selector: 'path-control-config',
@@ -237,12 +238,12 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
     const pathObject = this._data.getPathObject(path);
     if (pathObject != null) {
       const pathFormGroup = this.pathFormGroup();
-      if (pathFormGroup.controls['pathType'].value == 'number') { // convertUnitTo control not present unless pathType is number
+      if (pathFormGroup.controls['pathType'].value == 'number') { // the dialog builds a convertUnitTo control only for a number slot that stores one
         this.unitList = this._units.getConversionsForPath(pathFormGroup.controls['path'].value); // array of Group or Groups: "angle", "speed", etc...
         if (setValues) {
-          pathFormGroup.controls['convertUnitTo'].setValue(this.unitList.base, {onlySelf: true});
+          pathFormGroup.controls['convertUnitTo']?.setValue(this.unitList.base, {onlySelf: true});
         }
-        pathFormGroup.controls['convertUnitTo'].enable({onlySelf: false});
+        pathFormGroup.controls['convertUnitTo']?.enable({onlySelf: false});
       }
 
       // 'default' (shown as "Any") always leads the list: it reads the server's
@@ -263,11 +264,11 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
       const pathFormGroup = this.pathFormGroup();
       if (pathFormGroup.controls['pathType'].value == 'number') {
         if (setValues) {
-          pathFormGroup.controls['convertUnitTo'].setValue('', {onlySelf: true});
+          pathFormGroup.controls['convertUnitTo']?.setValue('', {onlySelf: true});
         }
         // Enable regardless, so the control's state depends only on whether a path is configured —
         // an earlier disablePathFields() would otherwise leave it disabled for this path alone.
-        pathFormGroup.controls['convertUnitTo'].enable({onlySelf: false});
+        pathFormGroup.controls['convertUnitTo']?.enable({onlySelf: false});
       }
       if (setValues) {
         pathFormGroup.controls['source'].setValue('default', {onlySelf: true});
@@ -283,9 +284,9 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
     this.pathFormGroup().controls['source'].reset('', {onlySelf: true});
     this.pathFormGroup().controls['source'].disable({onlySelf: false});
     const pathFormGroup = this.pathFormGroup();
-    if (pathFormGroup.controls['pathType'].value == 'number') { // convertUnitTo control not present unless pathType is number
-      pathFormGroup.controls['convertUnitTo'].reset('', {onlySelf: true});
-      pathFormGroup.controls['convertUnitTo'].disable({onlySelf: false});
+    if (pathFormGroup.controls['pathType'].value == 'number') { // the dialog builds a convertUnitTo control only for a number slot that stores one
+      pathFormGroup.controls['convertUnitTo']?.reset('', {onlySelf: true});
+      pathFormGroup.controls['convertUnitTo']?.disable({onlySelf: false});
     }
   }
 
@@ -298,6 +299,11 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
     }
   }
 
+  /**
+   * Fills the widget's scale from the new path's meta scale, which is SI, in the unit the options
+   * dialog shows the new path's scale in; the dialog switches the fields to that unit. Without a
+   * meta scale the fields keep their numbers, and the dialog saves them from the new unit.
+   */
   private updatePathMetaBoundDisplayScale(path: string) {
     const pathFormGroup = this.pathFormGroup();
     if (!pathFormGroup.parent?.parent?.value || !Object.prototype.hasOwnProperty.call(pathFormGroup.parent.parent.value, 'displayScale')) { return; }
@@ -306,13 +312,17 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
     if (meta?.displayScale) {
       const displayScale = pathFormGroup.parent.parent.get('displayScale') as FormGroup | null;
       if (!displayScale) { return; }
-      const unit = pathFormGroup.controls['convertUnitTo'].value;
+      // A structural slot presents in its fixed unit, or in SI when it has none (the slider); only a
+      // display slot follows the server's measure for the path.
+      const structural = pathFormGroup.controls['showConvertUnitTo']?.value === false;
+      const unit = pathOptionMeasure(this._units, structural ? null : path, pathFormGroup.controls['convertUnitTo']?.value);
+      const shown = (si: number) => presentedOption(presentationValue(this._units, unit, si));
 
       if (meta.displayScale.lower !== null && meta.displayScale.lower !== undefined) {
-        displayScale.controls['lower'].setValue(this._units.convertToUnit(unit, meta.displayScale.lower));
+        displayScale.controls['lower'].setValue(shown(meta.displayScale.lower));
       }
       if (meta.displayScale.upper !== null && meta.displayScale.upper !== undefined) {
-        displayScale.controls['upper'].setValue(this._units.convertToUnit(unit, meta.displayScale.upper));
+        displayScale.controls['upper'].setValue(shown(meta.displayScale.upper));
       }
       if (meta.displayScale.type !== null && meta.displayScale.type !== undefined){
         displayScale.controls['type'].setValue(meta.displayScale.type);

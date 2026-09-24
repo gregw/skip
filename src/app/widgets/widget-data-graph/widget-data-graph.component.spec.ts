@@ -276,6 +276,38 @@ describe('WidgetDataGraphComponent', () => {
     }
   });
 
+  describe('y range', () => {
+    interface RangeState { min?: number; max?: number; suggestedMin?: number; suggestedMax?: number }
+    const KNOTS_PER_MS = 3600 / 1852;
+    // The value axis is x on a vertical graph and y otherwise.
+    const readRange = (axis: 'x' | 'y'): RangeState =>
+      (fixture.componentInstance.lineChartOptions.scales as unknown as Record<string, RangeState>)[axis];
+
+    beforeEach(() => {
+      vi.spyOn(unitsMock, 'convertToUnit').mockImplementation((unit: string, value: number) =>
+        unit === 'knots' ? value * KNOTS_PER_MS : value);
+    });
+
+    it('presents a fixed SI range in the measure the path resolves to', async () => {
+      await setup(makeConfig({ enableMinMaxScaleLimit: true, yScaleMin: 0, yScaleMax: 10 / KNOTS_PER_MS }));
+      const y = readRange('y');
+      expect(y.min).toBe(0);
+      expect(y.max).toBeCloseTo(10);
+    });
+
+    it('presents suggested SI bounds the same way, on the value axis of a vertical graph too', async () => {
+      await setup(makeConfig({ verticalChart: true, yScaleSuggestedMin: 1 / KNOTS_PER_MS, yScaleSuggestedMax: 20 / KNOTS_PER_MS }));
+      const x = readRange('x');
+      expect(x.suggestedMin).toBeCloseTo(1);
+      expect(x.suggestedMax).toBeCloseTo(20);
+    });
+
+    it('auto-scales a bound that is not set', async () => {
+      await setup(makeConfig({ enableMinMaxScaleLimit: true, yScaleMin: null, yScaleMax: null }));
+      expect(readRange('y')).toMatchObject({ min: undefined, max: undefined });
+    });
+  });
+
   it('draws the value line with a hair of tension so it avoids the fast pixel-bucketing path', async () => {
     await setup(makeConfig());
 

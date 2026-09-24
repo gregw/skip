@@ -211,9 +211,9 @@ export interface IWidgetSvcConfig {
   /** This object provides information regarding the recommended type and extent of the scale used for displaying values. NOTE: This property can be overwritten by metadata. */
   displayScale?: {
     /** The lower bound of the scale. This is the minimum value that can be represented on the display. NOTE: This property can be overwritten by metadata. */
-    lower?: number;
+    lower?: number | null;
     /** The upper bound of the scale. This is the maximum value that can be represented on the display. NOTE: This property can be overwritten by metadata. */
-    upper?: number;
+    upper?: number | null;
     /** The type of scale to use. This can be 'linear', 'logarithmic', 'squareRoot', 'power' or null if no scale is used (Skip only support linear for now). NOTE: This property can be overwritten by metadata. */
     type: TScaleType;
     /** If scale type is 'power', the power value to use of the display scale */
@@ -460,17 +460,17 @@ export interface IWidgetSvcConfig {
   /** Display graph y scale */
   showYScale?: boolean;
   /** Graph y scale suggested minimum. Scale will extend beyond this number automatically if values are below */
-  yScaleSuggestedMin?: number;
+  yScaleSuggestedMin?: number | null;
   /** Graph y scale suggested maximum. Scale will extend beyond this number automatically if values are above */
-  yScaleSuggestedMax?: number;
+  yScaleSuggestedMax?: number | null;
   /** Graph y scale suggested minimum is zero */
   startScaleAtZero?: boolean;
   /** Limit graph value axis (y) scale to min and max value */
   enableMinMaxScaleLimit?: boolean;
   /** Graph y scale minimum */
-  yScaleMin?: number;
+  yScaleMin?: number | null;
   /** Graph y scale maximum */
-  yScaleMax?: number;
+  yScaleMax?: number | null;
   /** Inverse graph Y axis */
   inverseYAxis?: boolean;
   /** Graph data flow direction. True = vertical (top to bottom), False = horizontal (left to right) */

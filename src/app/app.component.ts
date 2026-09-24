@@ -75,6 +75,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   private upgradeMessagesRef = viewChild<ElementRef<HTMLUListElement> | undefined>('upgradeMessages');
   private _upgradeShown = false;
+  private _siScaleResetsShown = false;
 
   // Exposed for the shell template.
   protected readonly dashboardStatic = this._dashboard.isDashboardStatic;
@@ -129,6 +130,20 @@ export class AppComponent implements AfterViewInit, OnDestroy {
           }
         }
       }
+    });
+
+    // The SI migration's list of widgets whose scale range it reset. Only a session that can clear it
+    // shows it, and not before the persistent upgrade that may still add to it has finished.
+    effect(() => {
+      const resets = this.settings.siScaleResets();
+      if (!resets.length || this._siScaleResetsShown) return;
+      if (skipsPersistentUpgrade(this._embedMode, this._storage) || this.settings.configUpgrade() || this.upgrade.upgrading()) return;
+      this._siScaleResetsShown = true;
+      untracked(() => this._dialog.openSiScaleResetsDialog(resets))
+        .pipe(takeUntilDestroyed(this._destroyRef))
+        .subscribe(dismissed => {
+          if (dismissed) this.settings.dismissSiScaleResets();
+        });
     });
 
     effect(() => {

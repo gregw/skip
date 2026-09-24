@@ -5,7 +5,7 @@
  * runs the same steps persistently over the stored slots.
  */
 import { cloneDeep, has, unset } from 'lodash-es';
-import type { IAppConfig, IConfig } from '../interfaces/app-settings.interfaces';
+import type { IAppConfig, IConfig, ISiScaleReset } from '../interfaces/app-settings.interfaces';
 import type { Dashboard } from '../services/dashboard.service';
 import { DEFAULT_WIDGET_UPDATE_INTERVAL_MS, IWidgetSvcConfig } from '../interfaces/widgets-interface';
 import { LATEST_APP_CONFIG_VERSION } from '../constants/config-versions.const';
@@ -30,6 +30,7 @@ export const V18_MIGRATION_OUTPUT_VERSION = 18;
 export const V19_MIGRATION_OUTPUT_VERSION = 19;
 export const V20_MIGRATION_OUTPUT_VERSION = 20;
 export const V21_MIGRATION_OUTPUT_VERSION = 21;
+export const V22_MIGRATION_OUTPUT_VERSION = 22;
 
 /**
  * The per-widget SI marker: the version of the last SI step whose shape a widget config is in.
@@ -46,8 +47,11 @@ type WidgetConfigRecord = Record<string, unknown>;
 interface SiStep {
   version: number;
   types: ReadonlySet<string>;
-  /** Converts an unmarked widget config in place. */
-  convert(config: WidgetConfigRecord): void;
+  /**
+   * Converts an unmarked widget config in place. Returns the options it reset to `null` because it
+   * had no unit to convert them from, as dotted paths from the config root, if any.
+   */
+  convert(config: WidgetConfigRecord): readonly string[] | void;
   /**
    * Pre-SI keys an older build can merge back into a marked config; deleted without being read.
    * Each is a property path from the widget config root, dotted for a nested option.
@@ -125,7 +129,192 @@ const V21_AIS_RADAR_SI_STEP: SiStep = {
   }
 };
 
-const SI_STEPS: readonly SiStep[] = [V20_WINDSTEER_SI_STEP, V21_SEA_HORIZON_SI_STEP, V21_AIS_RADAR_SI_STEP];
+/**
+ * Frozen for the v22 steps: for each affine numeric measure, `[zero, perSi]` such that a value in
+ * that measure is `zero + perSi * si`, so `si = (value - zero) / perSi`. Evaluated once from the
+ * renderer's conversion functions at 0 and 1, the same way it re-expressed stored bounds, and
+ * committed as literals so what the step writes cannot drift with that table. String formats
+ * (positions, `D HH:MM:SS`) and `unitless` have no entry.
+ */
+export const V22_MEASURE_TO_SI: Readonly<Record<string, readonly [zero: number, perSi: number]>> = Object.freeze({
+  // Speed
+  knots: [0, 1.943844494119952],
+  kph: [0, 3.5999999971200003],
+  mph: [0, 2.2369362920544025],
+  'm/s': [0, 1],
+  // Flow
+  'm3/s': [0, 1],
+  'l/min': [0, 60000],
+  'l/h': [0, 3599999.9999999995],
+  'g/min': [0, 15850.323074493506],
+  'g/h': [0, 951019.3844696104],
+  'gal-imp/h': [0, 791889.2938767159],
+  // Fuel Distance
+  'm/m3': [0, 1],
+  'nm/l': [0, 5.399568034557235e-7],
+  'nm/g': [0, 0.0000020439588552915765],
+  'km/l': [0, 0.000001],
+  mpg: [0, 0.000002352145843275272],
+  // Energy Distance
+  'm/J': [0, 1],
+  'nm/J': [0, 0.0005399568034557236],
+  'km/J': [0, 1],
+  'nm/kWh': [0, 1943.8444924406049],
+  'km/kWh': [0, 3600],
+  // Temperature
+  K: [0, 1],
+  celsius: [-273.15, 1],
+  fahrenheit: [-459.67, 1.8000000000000114],
+  // Length
+  m: [0, 1],
+  mm: [0, 1000],
+  fathom: [0, 0.5467468562055768],
+  nm: [0, 0.0005399568034557236],
+  km: [0, 0.001],
+  mi: [0, 0.0006213711922373339],
+  feet: [0, 3.280839895013123],
+  inch: [0, 39.37007874015748],
+  // Volume
+  liter: [0, 1000],
+  m3: [0, 1],
+  gallon: [0, 264.17205124155845],
+  'gallon-imp': [0, 219.96924829908778],
+  // Current
+  A: [0, 1],
+  mA: [0, 1000],
+  // Potential
+  V: [0, 1],
+  mV: [0, 1000],
+  // Charge
+  C: [0, 1],
+  Ah: [0, 0.0002777777777777778],
+  // Power
+  W: [0, 1],
+  mW: [0, 1000],
+  // Energy
+  J: [0, 1],
+  kWh: [0, 2.7777777777777776e-7],
+  btu: [0, 0.0009478169879134378],
+  // Resistance
+  ohm: [0, 1],
+  kiloohm: [0, 0.001],
+  // Pressure
+  Pa: [0, 1],
+  kPa: [0, 0.001],
+  hPa: [0, 0.01],
+  mbar: [0, 0.01],
+  bar: [0, 0.00001],
+  psi: [0, 0.0001450376807894691],
+  mmHg: [0, 0.007500616850729803],
+  inHg: [0, 0.00029529987601298443],
+  // Mass
+  kg: [0, 1],
+  lbs: [0, 2.2046226218487757],
+  // Area
+  m2: [0, 1],
+  sqft: [0, 10.763910416709722],
+  // Density
+  'kg/m3': [0, 1],
+  // Time
+  s: [0, 1],
+  Minutes: [0, 0.016666666666666666],
+  Hours: [0, 0.0002777777777777778],
+  Days: [0, 0.000011574074074074073],
+  // Angular Velocity
+  'rad/s': [0, 1],
+  'deg/s': [0, 57.29577951308231],
+  'deg/min': [0, 3437.7467707849396],
+  // Angle
+  rad: [0, 1],
+  deg: [0, 57.29577951308231],
+  grad: [0, 63.66197723675812],
+  // Frequency
+  rpm: [0, 60],
+  Hz: [0, 1],
+  KHz: [0, 0.001],
+  MHz: [0, 0.000001],
+  GHz: [0, 1e-9],
+  // Ratio
+  percent: [0, 100],
+  percentraw: [0, 1],
+  ratio: [0, 1],
+  // Position
+  pdeg: [0, 1],
+});
+
+const nonEmptyString = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+/**
+ * Converts the listed options of `holder` from `measure` to SI, or, when `measure` is not in the
+ * frozen table, resets the numeric ones to `null`. Returns the reset options, prefixed by `prefix`.
+ */
+function boundsToSi(holder: WidgetConfigRecord, keys: readonly string[], measure: unknown, prefix = ''): string[] {
+  const factors = typeof measure === 'string' && Object.hasOwn(V22_MEASURE_TO_SI, measure) ? V22_MEASURE_TO_SI[measure] : undefined;
+  const reset: string[] = [];
+  for (const key of keys) {
+    const value = holder[key];
+    if (!isFiniteNumber(value)) continue;
+    if (factors) {
+      holder[key] = (value - factors[0]) / factors[1];
+    } else {
+      holder[key] = null;
+      reset.push(prefix + key);
+    }
+  }
+  return reset;
+}
+
+/** The stored `convertUnitTo` of a widget's path slot, the unit its bounds were entered in. */
+function slotUnit(config: WidgetConfigRecord, slot: string): unknown {
+  const paths = config['paths'];
+  const path = isRecord(paths) ? paths[slot] : undefined;
+  return isRecord(path) ? path['convertUnitTo'] : undefined;
+}
+
+/**
+ * v22: gauge `displayScale` bounds are stored in SI instead of the unit of the gauge path's stored
+ * `convertUnitTo`. Bounds without a known unit are reset, so the gauge takes its path's own scale.
+ */
+const V22_GAUGE_SI_STEP: SiStep = {
+  version: V22_MIGRATION_OUTPUT_VERSION,
+  types: new Set(['widget-gauge-ng-radial', 'widget-gauge-ng-linear', 'widget-gauge-steel', 'widget-simple-linear']),
+  staleKeys: [],
+  convert(config) {
+    const scale = config['displayScale'];
+    if (!isRecord(scale)) return;
+    return boundsToSi(scale, ['lower', 'upper'], slotUnit(config, 'gaugePath'), 'displayScale.');
+  }
+};
+
+/** v22: the numeric's minigraph y bounds are stored in SI, like the gauges' (see V22_GAUGE_SI_STEP). */
+const V22_NUMERIC_SI_STEP: SiStep = {
+  version: V22_MIGRATION_OUTPUT_VERSION,
+  types: new Set(['widget-numeric']),
+  staleKeys: [],
+  convert(config) {
+    return boundsToSi(config, ['yScaleMin', 'yScaleMax'], slotUnit(config, 'numericPath'));
+  }
+};
+
+/**
+ * v22: data-chart y bounds are stored in SI. They were entered in whatever unit the chart showed,
+ * which the config does not record, so they are all reset and the chart auto-scales.
+ */
+const V22_DATA_CHART_SI_STEP: SiStep = {
+  version: V22_MIGRATION_OUTPUT_VERSION,
+  types: new Set(['widget-data-chart']),
+  staleKeys: [],
+  convert(config) {
+    return boundsToSi(config, ['yScaleMin', 'yScaleMax', 'yScaleSuggestedMin', 'yScaleSuggestedMax'], undefined);
+  }
+};
+
+const SI_STEPS: readonly SiStep[] = [
+  V20_WINDSTEER_SI_STEP, V21_SEA_HORIZON_SI_STEP, V21_AIS_RADAR_SI_STEP,
+  V22_GAUGE_SI_STEP, V22_NUMERIC_SI_STEP, V22_DATA_CHART_SI_STEP
+];
 
 /**
  * v17 -> v18 target shape for the wind-family widgets' swept paths, keyed by runtime widget `type`
@@ -278,8 +467,9 @@ export function applySiSteps(config: IConfig, sink: MigrationMessageSink, upToVe
   if (!Array.isArray(config.dashboards)) return false;
   let converted = 0;
   let cleaned = 0;
-  for (const dash of config.dashboards) {
-    if (!dash || !Array.isArray(dash.configuration)) continue;
+  const resets: ISiScaleReset[] = [];
+  config.dashboards.forEach((dash, index) => {
+    if (!dash || !Array.isArray(dash.configuration)) return;
     for (const widget of dash.configuration) {
       const wp = (widget as { input?: { widgetProperties?: { type?: unknown; config?: unknown } } })?.input?.widgetProperties;
       if (!wp || typeof wp.type !== 'string' || !wp.config || typeof wp.config !== 'object') continue;
@@ -288,7 +478,18 @@ export function applySiSteps(config: IConfig, sink: MigrationMessageSink, upToVe
         if (step.version > upToVersion || !step.types.has(wp.type)) continue;
         const marker = cfg[SI_VERSION_KEY];
         if (typeof marker !== 'number' || marker < step.version) {
-          step.convert(cfg);
+          const reset = step.convert(cfg);
+          if (reset?.length) {
+            const entry: ISiScaleReset = {
+              dashboardId: String(dash.id),
+              dashboard: nonEmptyString(dash.name) ?? String(index + 1),
+              widget: nonEmptyString(cfg['displayName']) ?? wp.type,
+              type: wp.type,
+              options: [...reset]
+            };
+            resets.push(entry);
+            sink.info(`[Upgrade] The scale range of "${entry.widget}" on dashboard "${entry.dashboard}" had no known unit and was reset; set it again in the widget's options.`);
+          }
           cfg[SI_VERSION_KEY] = step.version;
           converted++;
         }
@@ -300,6 +501,10 @@ export function applySiSteps(config: IConfig, sink: MigrationMessageSink, upToVe
         }
       }
     }
+  });
+  if (resets.length && isRecord(config.app)) {
+    const app = config.app as IAppConfig;
+    app.siScaleResets = [...(app.siScaleResets ?? []), ...resets];
   }
   if (converted) sink.info(`[Upgrade] Converted ${converted} widget config(s) to SI units.`);
   if (cleaned) sink.info(`[Upgrade] Removed ${cleaned} pre-SI option(s) from widget configs.`);
@@ -345,6 +550,7 @@ export function migrateOneAppVersion(config: IConfig, fromVersion: number, sink:
     case 18: return upgradeConfigV18toV19(config, sink);
     case 19: return upgradeConfigV19toV20(config, sink);
     case 20: return upgradeConfigV20toV21(config, sink);
+    case 21: return upgradeConfigV21toV22(config, sink);
     default: return null;
   }
 }
@@ -865,6 +1071,28 @@ function upgradeConfigV20toV21(config: IConfig, sink: MigrationMessageSink): ICo
     return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
   } catch (error) {
     sink.error(`[Upgrade Service] Error upgrading v20->v21: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * v21 -> v22: the SI steps for the gauges', numeric's and data-chart's scale bounds (see
+ * V22_GAUGE_SI_STEP, V22_NUMERIC_SI_STEP and V22_DATA_CHART_SI_STEP).
+ */
+function upgradeConfigV21toV22(config: IConfig, sink: MigrationMessageSink): IConfig | null {
+  try {
+    const appConfig = config.app;
+    if (!appConfig || appConfig.configVersion !== 21) {
+      sink.error(`[Upgrade Service] Config version ${appConfig?.configVersion} is not an upgradable v21 config. Skipping...`);
+      return null;
+    }
+
+    applySiSteps(config, sink, V22_MIGRATION_OUTPUT_VERSION);
+
+    appConfig.configVersion = V22_MIGRATION_OUTPUT_VERSION;
+    return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
+  } catch (error) {
+    sink.error(`[Upgrade Service] Error upgrading v21->v22: ${(error as Error).message}`);
     return null;
   }
 }

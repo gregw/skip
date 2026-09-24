@@ -33,7 +33,8 @@ const RATE_SI = 2e-6;
 
 // Every tile carries the stored unit a widget gets when it is configured before any unit meta has
 // resolved, so the probe also proves the server preference wins over it.
-const tile = { path: SELF_PATH, displayName: 'Fuel rate', unit: 'unitless', scale: { lower: 0, upper: 20 } };
+// The scale is 0-20 L/h, stored in m³/s.
+const tile = { path: SELF_PATH, displayName: 'Fuel rate', unit: 'unitless', scale: { lower: 0, upper: 20 / 3.6e6 } };
 const tiles = () => [steelGaugeWidget(tile), simpleLinearWidget(tile), numericWidget({ ...tile, h: 8, unit: 'unitless', ignoreZones: true })];
 
 const server = await startServer({ publicDir, base: '/@halos-org/skip/', port });

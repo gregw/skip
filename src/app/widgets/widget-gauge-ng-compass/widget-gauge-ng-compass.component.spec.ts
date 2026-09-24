@@ -65,8 +65,7 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
       useSiValues: () => undefined
     };
     const unitsFake = {
-      getUnitDisplaySymbol: (measure: string | null | undefined): string => measure ?? '',
-      convertBetweenMeasures: (_from: string, _to: string, value: number): number => value
+      getUnitDisplaySymbol: (measure: string | null | undefined): string => measure ?? ''
     };
 
     await TestBed.configureTestingModule({

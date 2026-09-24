@@ -95,6 +95,9 @@
               <input matInput type="number"
                 name="yScaleSuggestedMin"
                 [formControl]="yScaleSuggestedMin()">
+              @if (yScaleUnit()) {
+                <span matTextSuffix>{{ yScaleUnit() }}</span>
+              }
             </mat-form-field>
 
             <mat-form-field class="graph-option-radio-button-config-form-field">
@@ -102,6 +105,9 @@
               <input matInput type="number"
                 name="yScaleSuggestedMax"
                 [formControl]="yScaleSuggestedMax()">
+              @if (yScaleUnit()) {
+                <span matTextSuffix>{{ yScaleUnit() }}</span>
+              }
             </mat-form-field>
           </div>
 
@@ -119,6 +125,9 @@
                   name="yScaleMin"
                   [formControl]="yScaleMin()"
                   required>
+                @if (yScaleUnit()) {
+                  <span matTextSuffix>{{ yScaleUnit() }}</span>
+                }
               </mat-form-field>
             </div>
             <div class="graph-option-radio-button-config-item">
@@ -128,6 +137,9 @@
                   name="yScaleMax"
                   [formControl]="yScaleMax()"
                   required>
+                @if (yScaleUnit()) {
+                  <span matTextSuffix>{{ yScaleUnit() }}</span>
+                }
               </mat-form-field>
             </div>
           </div>

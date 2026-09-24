@@ -60,7 +60,9 @@ const OPTION_UNITS_RULE =
   'stored in; for an array option the unit applies to each element. A widget config that holds any of these ' +
   "options must also carry siVersion set to the widget's defaultConfig.siVersion. Skip reads a widget config " +
   'without siVersion as holding the older, pre-SI units and converts it, so SI values written without the marker ' +
-  'are converted a second time.';
+  'are converted a second time. A unit written as \'SI unit of <slot>\' is the Signal K SI unit of the path that ' +
+  'path slot (or path option) points at, such as K for a temperature. A scale bound set to null is unset: the ' +
+  "widget uses the path's own display scale, and a data graph scales itself.";
 
 /**
  * Extracts Skip's widget catalog (`_widgetDefinition`) from widget.service.ts.

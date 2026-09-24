@@ -10,7 +10,7 @@ import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.d
 import { UnitsService } from '../../core/services/units.service';
 import { DataService, IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
-import { ISkZone, States } from '../../core/interfaces/signalk-interfaces';
+import { ISkDisplayScale, ISkZone, States } from '../../core/interfaces/signalk-interfaces';
 import { ITheme } from '../../core/services/app-service';
 
 /** Stands in for the steelseries gauge and records what the wrapper hands it. */
@@ -46,10 +46,13 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
   let options: WritableSignal<IWidgetSvcConfig>;
   let zones: WritableSignal<ISkZone[]>;
   let calls: string[];
+  let metaScale: WritableSignal<ISkDisplayScale | undefined>;
+  let metaObserved: string[];
 
   const zoneWarn: ISkZone = { lower: ZERO_C + 60, upper: ZERO_C + 80, state: States.Warn };
 
-  const makeConfig = (convertUnitTo: string, lower = 0, upper = 100): IWidgetSvcConfig => {
+  // Bounds are SI; the default is 0..100 °C.
+  const makeConfig = (convertUnitTo: string, lower: number | null = ZERO_C, upper: number | null = ZERO_C + 100): IWidgetSvcConfig => {
     const dflt = WidgetSteelGaugeComponent.DEFAULT_CONFIG;
     const gaugePath = (dflt.paths as IPathArray)['gaugePath'];
     return {
@@ -74,6 +77,8 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
   beforeEach(async () => {
     next = undefined;
     calls = [];
+    metaScale = signal<ISkDisplayScale | undefined>(undefined);
+    metaObserved = [];
     options = signal(makeConfig('celsius'));
     zones = signal<ISkZone[]>([zoneWarn]);
 
@@ -94,7 +99,11 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
             useSiValues: () => { calls.push('useSiValues'); }
           }
         },
-        { provide: WidgetMetadataDirective, useValue: { zones, observe: () => undefined } }
+        { provide: WidgetMetadataDirective, useValue: {
+          zones,
+          displayScale: metaScale,
+          observe: (key: string) => { metaObserved.push(key); }
+        } }
       ]
     }).compileComponents();
 
@@ -172,5 +181,39 @@ describe('WidgetSteelGaugeComponent output from SI inputs', () => {
     options.set({ ...makeConfig('celsius'), ignoreZones: true });
     fixture.detectChanges();
     expect(shown().zones).toEqual([]);
+  });
+
+  describe('scale bounds', () => {
+    it('draws 273.15..393.15 K as 0..120 °C, and as 32..248 °F when the server shows fahrenheit', () => {
+      options.set(makeConfig('celsius', ZERO_C, ZERO_C + 120));
+      fixture.detectChanges();
+      feed(ZERO_C + 20, 'celsius');
+      expect([shown().min, shown().max]).toEqual([0, 120]);
+      feed(ZERO_C + 20, 'fahrenheit');
+      expect([shown().min, shown().max]).toEqual([32, 248]);
+    });
+
+    it("takes the path's meta scale for bounds that are not set", () => {
+      options.set(makeConfig('celsius', null, null));
+      metaScale.set({ lower: ZERO_C, upper: ZERO_C + 120, type: 'linear' });
+      fixture.detectChanges();
+      feed(ZERO_C + 20, 'fahrenheit');
+      expect([shown().min, shown().max]).toEqual([32, 248]);
+    });
+
+    it('draws 0..100 in the presentation measure when neither the config nor meta sets a bound', () => {
+      options.set(makeConfig('celsius', null, null));
+      fixture.detectChanges();
+      feed(ZERO_C + 20, 'fahrenheit');
+      expect([shown().min, shown().max]).toEqual([0, 100]);
+      expect(shown().value).toBeCloseTo(68);
+    });
+
+    it('observes the path meta for its scale even when zones are ignored', () => {
+      metaObserved = [];
+      options.set({ ...makeConfig('celsius'), ignoreZones: true });
+      fixture.detectChanges();
+      expect(metaObserved).toContain('gaugePath');
+    });
   });
 });

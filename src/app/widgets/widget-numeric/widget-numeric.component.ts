@@ -5,6 +5,8 @@ import { MinigraphComponent } from '../minigraph/minigraph.component';
 import { reduceMinMax } from './numeric-minmax.util';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
+import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
+import { presentedScaleBounds } from '../../core/utils/si-presentation.util';
 import { IPathUpdate } from '../../core/services/data.service';
 import { CanvasService } from '../../core/services/canvas.service';
 import { TDurationFormat, UnitsService } from '../../core/services/units.service';
@@ -53,18 +55,26 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     showMin: false,
     numDecimal: 1,
     showMiniChart: false,
-    yScaleMin: 0,
-    yScaleMax: 10,
+    yScaleMin: null,
+    yScaleMax: null,
     inverseYAxis: false,
     verticalChart: false,
     color: 'contrast',
     updateInterval: 500,
     enableTimeout: false,
     dataTimeout: 5,
-    ignoreZones: false
+    ignoreZones: false,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    yScaleMin: 'SI unit of numericPath',
+    yScaleMax: 'SI unit of numericPath'
   };
   private readonly runtime = inject(WidgetRuntimeDirective);
   private readonly stream = inject(WidgetStreamsDirective);
+  private readonly metadata = inject(WidgetMetadataDirective);
 
   private readonly canvas = inject(CanvasService);
   private readonly unitsService = inject(UnitsService);
@@ -96,6 +106,18 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   private pathDataState: States | null = null;
   private isDestroyed = false;
   private lastSubscriptionSignature: string | null = null;
+
+  /** The minigraph's y range in the measure the value is shown in, which the minigraph converts its data to. */
+  private miniGraphRange = computed(() => {
+    const cfg = this.runtime.options();
+    return presentedScaleBounds(
+      this.unitsService,
+      this.effectiveUnit(),
+      { lower: cfg?.yScaleMin, upper: cfg?.yScaleMax },
+      this.metadata.displayScale(),
+      { lower: 0, upper: 10 }
+    );
+  });
 
   private subscriptionSignature = computed(() => {
     const cfg = this.runtime?.options();
@@ -180,6 +202,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
 
         if (sig) {
           this.stream?.observe('numericPath', this.onNumericValue);
+          this.metadata.observe('numericPath');
           this.streamRegistered = true;
           this.updateMiniGraphVisibility();
         }
@@ -192,14 +215,15 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
       const cfg = this.runtime?.options();
       const pathInfo = cfg?.paths?.['numericPath'];
       const effUnit = this.effectiveUnit();
+      const range = this.miniGraphRange();
       const miniGraphSignature = [
         cfg?.showMiniChart ? '1' : '0',
         pathInfo?.path ?? '',
         pathInfo?.source ?? 'default',
         effUnit,
         cfg?.numDecimal ?? '',
-        cfg?.yScaleMin ?? '',
-        cfg?.yScaleMax ?? '',
+        range.lower,
+        range.upper,
         cfg?.inverseYAxis ? '1' : '0',
         cfg?.verticalChart ? '1' : '0',
         cfg?.color ?? ''
@@ -240,6 +264,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     // This is a sanity check in case subscription effect hasn't fired yet
     if (!this.streamRegistered && this.subscriptionSignature()) {
       this.stream?.observe('numericPath', this.onNumericValue);
+      this.metadata.observe('numericPath');
       this.streamRegistered = true;
       this.updateMiniGraphVisibility();
     }
@@ -285,8 +310,9 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     graph.color = cfg.color ?? 'contrast';
     graph.convertUnitTo = this.effectiveUnit();
     graph.numDecimal = cfg.numDecimal ?? 1;
-    graph.yScaleMin = cfg.yScaleMin ?? 0;
-    graph.yScaleMax = cfg.yScaleMax ?? 10;
+    const range = this.miniGraphRange();
+    graph.yScaleMin = range.lower;
+    graph.yScaleMax = range.upper;
     graph.inverseYAxis = cfg.inverseYAxis ?? false;
     graph.verticalChart = cfg.verticalChart ?? false;
   }

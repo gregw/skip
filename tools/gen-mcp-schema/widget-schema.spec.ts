@@ -102,7 +102,20 @@ describe('extractWidgetSchemas', () => {
     const windsteer = bySelector('widget-wind-steer');
     expect(windsteer?.optionUnits).toEqual({ closeHauledLineAngle: 'rad' });
     expect(windsteer?.defaultConfig['closeHauledLineAngle']).toBeCloseTo(Math.PI / 4, 15);
-    expect(bySelector('widget-numeric')?.optionUnits).toBeUndefined();
+    expect(bySelector('widget-boolean-switch')?.optionUnits).toBeUndefined();
+  });
+
+  it('publishes scale bounds as SI in the unit of the path they scale', () => {
+    const gaugeBounds = { 'displayScale.lower': 'SI unit of gaugePath', 'displayScale.upper': 'SI unit of gaugePath' };
+    for (const selector of ['widget-gauge-ng-radial', 'widget-gauge-ng-linear', 'widget-gauge-steel', 'widget-simple-linear']) {
+      expect(bySelector(selector)?.optionUnits, selector).toEqual(gaugeBounds);
+    }
+    expect(bySelector('widget-numeric')?.optionUnits)
+      .toEqual({ yScaleMin: 'SI unit of numericPath', yScaleMax: 'SI unit of numericPath' });
+    const graphUnit = 'SI unit of datachartPath';
+    expect(bySelector('widget-data-chart')?.optionUnits).toEqual({
+      yScaleSuggestedMin: graphUnit, yScaleSuggestedMax: graphUnit, yScaleMin: graphUnit, yScaleMax: graphUnit
+    });
   });
 
   it('names nested SI options by their dotted path (Sea Horizon heel angles, AIS radar ranges and COG time)', () => {

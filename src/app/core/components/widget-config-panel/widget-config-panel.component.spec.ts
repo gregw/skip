@@ -88,6 +88,7 @@ describe('WidgetConfigPanelComponent', () => {
     const config = configPassedTo(openWidgetOptions);
     expect(config['laylineAngle']).toBe(40);
     expect(config['widgetName']).toBe('Wind Steer');
+    expect(config['widgetType']).toBe('widget-wind-steer');
   });
 
   it('merges the saved config onto the current default so upgrade-added fields stay editable', async () => {
