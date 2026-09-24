@@ -183,7 +183,8 @@ export interface ISkMetadata {
   supportsPut?: boolean; // true if the path supports PUT (write) requests
   units?: string;        // required if value is present. Describe the SK type of data
   timeout?: number;     // tells the consumer how long it should consider the value valid
-  properties: object; // Not defined by Skip. Used by GPS and Ship details and other complex data types
+  /** The fields of an object value, in JSON Schema shape (e.g. `latitude` of `navigation.position`). */
+  properties?: Record<string, ISkPropertyMeta>;
   method?: TMethod[];
   displayScale?: ISkDisplayScale
   /**
@@ -198,6 +199,16 @@ export interface ISkMetadata {
   alarmMethod?: TMethod[];
   emergencyMethod?: TMethod[];
   zones?: ISkZone[];
+}
+
+/** Metadata of one field of an object value, as declared in its path's `meta.properties`. */
+export interface ISkPropertyMeta {
+  /** JSON Schema type: 'number', 'integer', 'string', 'boolean', 'object' or 'array'. */
+  type?: string;
+  units?: string;
+  description?: string;
+  displayName?: string;
+  properties?: Record<string, ISkPropertyMeta>;
 }
 
 export interface ISkDisplayUnits {

@@ -2,12 +2,14 @@ import { DestroyRef, inject, Injectable, OnDestroy } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, BehaviorSubject, ReplaySubject, Subject, map, combineLatest, interval, filter, timeout, finalize, Subscription } from 'rxjs';
 import { ISkPathData, IPathValueData, IPathMetaData, IMeta, IPathUpdateEvent } from "../interfaces/app-interfaces";
-import { ISignalKDataValueUpdate, ISkMetadata, ISkDisplayUnits, ISignalKNotification, States, TState } from '../interfaces/signalk-interfaces'
+import { ISignalKDataValueUpdate, ISkMetadata, ISkDisplayUnits, ISignalKNotification, ISkPropertyMeta, States, TState } from '../interfaces/signalk-interfaces'
 import { SignalKDeltaService } from './signalk-delta.service';
 import { SignalKConnectionService } from './signalk-connection.service';
 import { cloneDeep, merge } from 'lodash-es';
 import type { TDurationFormat } from './units.service';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { formatJsonPointer, type Path } from '@jsonjoy.com/json-pointer';
+import { splitPointerPath } from '../utils/pointer-path.util';
 
 const SELFROOTDEF = "self";
 
@@ -65,6 +67,58 @@ const typeFromUnits = (units: string | undefined): string | undefined => {
     return "Date";
   }
   return "number";
+};
+
+const propertyAsMeta = (property: ISkPropertyMeta): ISkMetadata => {
+  const meta: ISkMetadata = { description: property.description ?? '' };
+  if (property.type !== undefined) meta.type = property.type;
+  if (property.units !== undefined) meta.units = property.units;
+  if (property.displayName !== undefined) meta.displayName = property.displayName;
+  if (property.properties !== undefined) meta.properties = cloneDeep(property.properties);
+  return meta;
+};
+
+/**
+ * The metadata a pointer path presents: the named field's own entry in `meta.properties`, walking
+ * nested `properties` per token. Only the field's declared keys carry over, so the base path's
+ * zones, `supportsPut` and `displayUnits` never apply to a field.
+ */
+const fieldMeta = (meta: ISkMetadata | null | undefined, pointer: Path): ISkMetadata | null => {
+  let properties = meta?.properties;
+  let property: ISkPropertyMeta | undefined;
+  for (const token of pointer) {
+    const key = String(token);
+    if (!properties || !Object.hasOwn(properties, key)) return null;
+    property = properties[key];
+    properties = property?.properties;
+  }
+  return property ? propertyAsMeta(property) : null;
+};
+
+/**
+ * Appends a `basePath#/field` entry for every leaf field in `properties` whose type is `valueType`.
+ * JSON Schema's 'integer' lists as 'number'. Array and object fields are not listed: a field with
+ * nested `properties` is walked instead, and without them nothing could display it.
+ */
+const collectFieldEntries = (
+  basePath: string,
+  properties: Record<string, ISkPropertyMeta>,
+  parentPointer: string[],
+  valueType: string,
+  entries: IPathMetaData[]
+): void => {
+  for (const [key, property] of Object.entries(properties)) {
+    if (!property) continue;
+    const pointer = [...parentPointer, key];
+    if (property.properties) {
+      collectFieldEntries(basePath, property.properties, pointer, valueType, entries);
+      continue;
+    }
+    const type = property.type === 'integer' ? 'number' : property.type;
+    if (type === valueType && type !== 'array' && type !== 'object') {
+      entries.push({ path: `${basePath}#${formatJsonPointer(pointer)}`, meta: propertyAsMeta(property) });
+    }
+  }
 };
 
 /**
@@ -971,37 +1025,64 @@ export class DataService implements OnDestroy {
 
   public getPathsAndMetaByType(valueType: string, supportsPutOnly = false, hasZones = false, selfOnly = true): IPathMetaData[] {
     return this.getSkDataArray()
-      .filter(item => {
-        const isRuntimeType = ['string', 'number', 'boolean', 'object', 'undefined', 'function', 'symbol', 'bigint', 'Date']
-          .includes(valueType);
-        const typeMatches = isRuntimeType
-          ? item.type === valueType
-          : item.meta?.type === valueType;
-        const selfMatches = !selfOnly || item.path.startsWith("self");
-        const supportsPutMatches = supportsPutOnly === true ? item.meta?.supportsPut === true : true;
-        const hasZonesMatches = hasZones === true
-          ? Array.isArray(item.meta?.zones) && item.meta.zones.length > 0
-          : true;
-        return typeMatches && selfMatches && supportsPutMatches && hasZonesMatches;
-      })
+      .filter(item => this.pathMatches(item, valueType, supportsPutOnly, hasZones, selfOnly))
       .map(item => ({ path: item.path, meta: item.meta }));
   }
 
-  public getPathObject(path: string): ISkPathData | null {
-    return cloneDeep(this._skData.get(path)) || null;
+  /**
+   * {@link getPathsAndMetaByType} plus a `path#/field` entry for each field of type `valueType` that
+   * an object path's `meta.properties` declares, listed right after its base path's position in the
+   * store. Metadata alone is enough: a field is listed before any value arrives. A field cannot be
+   * written or carry zones, so `supportsPutOnly` and `hasZones` requests get no field entries.
+   */
+  public getPathsAndFieldsByType(valueType: string, supportsPutOnly = false, hasZones = false, selfOnly = true): IPathMetaData[] {
+    const withFields = !supportsPutOnly && !hasZones;
+    return this.getSkDataArray().flatMap(item => {
+      const entries: IPathMetaData[] = this.pathMatches(item, valueType, supportsPutOnly, hasZones, selfOnly)
+        ? [{ path: item.path, meta: item.meta }]
+        : [];
+      const properties = item.meta?.properties;
+      if (withFields && properties && (!selfOnly || item.path.startsWith("self"))) {
+        collectFieldEntries(item.path, properties, [], valueType, entries);
+      }
+      return entries;
+    });
   }
 
+  private pathMatches(item: ISkPathData, valueType: string, supportsPutOnly: boolean, hasZones: boolean, selfOnly: boolean): boolean {
+    const isRuntimeType = ['string', 'number', 'boolean', 'object', 'undefined', 'function', 'symbol', 'bigint', 'Date']
+      .includes(valueType);
+    const typeMatches = isRuntimeType
+      ? item.type === valueType
+      : item.meta?.type === valueType;
+    const selfMatches = !selfOnly || item.path.startsWith("self");
+    const supportsPutMatches = supportsPutOnly === true ? item.meta?.supportsPut === true : true;
+    const hasZonesMatches = hasZones === true
+      ? Array.isArray(item.meta?.zones) && item.meta.zones.length > 0
+      : true;
+    return typeMatches && selfMatches && supportsPutMatches && hasZonesMatches;
+  }
+
+  /** The cached entry of the path, or of its base path for a pointer path. */
+  public getPathObject(path: string): ISkPathData | null {
+    const split = splitPointerPath(path);
+    return split.valid ? cloneDeep(this._skData.get(split.basePath)) || null : null;
+  }
+
+  /** The path's Signal K units, or for a pointer path the units its field declares. */
   public getPathUnitType(path: string): string | null {
-    return this._skData.get(path)?.meta?.units || null;
+    return this.getPathMeta(path)?.units || null;
   }
 
   /**
    * Server-supplied display-unit preference for a path (Signal K unit-preferences plugin), captured
    * off the existing sendMeta=all stream. Returns undefined when the plugin is absent or the path
-   * carries no displayUnits meta.
+   * carries no displayUnits meta. A pointer path has none: the base path's preference describes the
+   * whole value, not a field's unit.
    */
   public getPathDisplayUnits(path: string): ISkDisplayUnits | undefined {
-    return this._skData.get(path)?.meta?.displayUnits;
+    const split = splitPointerPath(path);
+    return split.valid && !split.pointer ? this._skData.get(split.basePath)?.meta?.displayUnits : undefined;
   }
 
   /**
@@ -1101,9 +1182,17 @@ export class DataService implements OnDestroy {
    *   consumers, and releasing one source's value registration does not complete it.
    * - Does not require a prior {@link subscribePath}: the subject is created on demand, seeded from
    *   any cached meta, and stays live for the session (it does not complete on its own).
+   * - A pointer path emits its field's meta (see {@link getPathMeta}), derived from the base path's
+   *   stream: incoming meta is keyed by the canonical path, so a stream of its own would never emit.
    */
   public getPathMetaObservable(path: string): Observable<ISkMetadata | null> {
-    return this.getOrCreatePathMeta(path).asObservable();
+    const split = splitPointerPath(path);
+    if (!split.valid) {
+      return new BehaviorSubject<ISkMetadata | null>(null).asObservable();
+    }
+    const { basePath, pointer } = split;
+    const baseMeta$ = this.getOrCreatePathMeta(basePath).asObservable();
+    return pointer ? baseMeta$.pipe(map(meta => fieldMeta(meta, pointer))) : baseMeta$;
   }
 
   /**
@@ -1125,10 +1214,15 @@ export class DataService implements OnDestroy {
    *
    * @param {string} path - The path for which to fetch the metadata.
    *
+   * For a pointer path this is the field's own entry in the base path's `meta.properties`.
+   *
    * @returns {ISkMetadata | null} The metadata object for the given path if found, otherwise null.
    */
   public getPathMeta(path: string): ISkMetadata | null {
-    return this._skData.get(path)?.meta || null;
+    const split = splitPointerPath(path);
+    if (!split.valid) return null;
+    const meta = this._skData.get(split.basePath)?.meta;
+    return split.pointer ? fieldMeta(meta, split.pointer) : meta || null;
   }
 
   public isResetService(): Observable<boolean> {
