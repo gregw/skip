@@ -5,6 +5,7 @@ import {
   LATEST_APP_CONFIG_VERSION,
   REMOTE_CONFIG_FILE_VERSION,
 } from '../../src/app/core/constants/config-versions.const';
+import { SI_VERSION_KEY } from '../../src/app/core/utils/config-migration.util';
 
 const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
 const schema = buildSchema({ projectRoot });
@@ -17,6 +18,13 @@ describe('buildSchema', () => {
       configVersion: LATEST_APP_CONFIG_VERSION,
     });
     expect(schema.meta.skipVersion).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('states that a config written in optionUnits must carry the SI marker', () => {
+    expect(schema.meta.optionUnitsRule).toContain(`${SI_VERSION_KEY} set to the widget's defaultConfig.${SI_VERSION_KEY}`);
+    for (const widget of schema.widgets.filter((w) => w.optionUnits)) {
+      expect(typeof widget.defaultConfig[SI_VERSION_KEY], widget.selector).toBe('number');
+    }
   });
 
   it('includes the widget schemas and the design system', () => {

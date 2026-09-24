@@ -159,6 +159,8 @@ export interface SchemaMeta {
   configFileVersion: number;
   /** `app.configVersion` value Skip expects in a saved config body. */
   configVersion: number;
+  /** How to write an option listed in a widget's `optionUnits`, and the marker such a config needs. */
+  optionUnitsRule: string;
 }
 
 /**
