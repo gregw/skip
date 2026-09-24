@@ -2,6 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { TDurationFormat, UnitsService } from './units.service';
 import { DataService } from './data.service';
+import { CONSOLE_MIGRATION_SINK, migrateWidgetConfig } from '../utils/config-migration.util';
+import { IWidgetPath, IWidgetSvcConfig } from '../interfaces/widgets-interface';
 
 describe('UnitsService', () => {
   function setup(): UnitsService {
@@ -472,6 +474,16 @@ describe('UnitsService', () => {
     it('offers the Angle group for a degree field that is not a coordinate', () => {
       expect(groups(setupWithUnits(), 'self.environment.sunlight.position#/elevation')).toEqual(['Angle']);
       expect(groups(setupWithUnits(), 'self.navigation.attitude#/roll')).toEqual(['Angle']);
+    });
+
+    it('still offers the Position-group unit a migrated v20 latitude slot stores', () => {
+      const v20 = { paths: { numericPath: { path: 'self.navigation.position.latitude', convertUnitTo: 'latitudeMin' } } } as unknown as IWidgetSvcConfig;
+      const slot = (migrateWidgetConfig('widget-numeric', v20, 20, CONSOLE_MIGRATION_SINK).paths as Record<string, IWidgetPath>)['numericPath'];
+
+      expect(slot.path).toBe('self.navigation.position#/latitude');
+      expect(slot.convertUnitTo).toBe('latitudeMin');
+      const offered = setupWithUnits().getConversionsForPath(slot.path as string).conversions.flatMap(g => g.units.map(u => u.measure));
+      expect(offered).toContain('latitudeMin');
     });
 
     it('resolves a field without a server preference to unitless, so the slot\'s stored unit applies', () => {

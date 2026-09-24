@@ -1084,6 +1084,37 @@ describe('ConfigurationUpgradeService', () => {
         expect(mockStorage.setConfig).not.toHaveBeenCalled();
     });
 
+    it('v22 upgrade rewrites a stored dotted sub-field slot to pointer form and stamps v23', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 22 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', configuration: [
+                { input: { widgetProperties: { type: 'widget-numeric', config: {
+                    paths: { numericPath: { path: 'self.navigation.position.latitude', convertUnitTo: 'deg' } }
+                } } } }
+            ] }]
+        });
+
+        await service.runUpgrade(22);
+
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        expect(mockStorage.setConfig.mock.calls[0]).toHaveLength(3);
+        const written = mockStorage.setConfig.mock.calls[0][2];
+        expect(written.app.configVersion).toBe(23);
+        expect(written.dashboards[0].configuration[0].input.widgetProperties.config.paths.numericPath)
+            .toEqual({ path: 'self.navigation.position#/latitude', convertUnitTo: 'pdeg' });
+        expect(service.messages()).toContain('[Upgrade] Rewrote 1 compound sub-field path(s) to pointer form.');
+        expect(service.error()).toBeNull();
+    });
+
+    it('v22 upgrade skips a slot that is not at version 22 (no re-stamp)', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 21 }, theme: { themeName: '' }, dashboards: [] });
+        await service.runUpgrade(22);
+        expect(mockStorage.setConfig).not.toHaveBeenCalled();
+    });
+
     it('startFresh retires BOTH global and user legacy configs via an awaited write before resetting', async () => {
         mockStorage.initConfig = null; // remote (Signal K) path
         mockStorage.listConfigs.mockResolvedValueOnce([

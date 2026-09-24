@@ -586,9 +586,117 @@ describe('v21 -> v22: scale bounds in SI', () => {
     expect(resets(config)).toHaveLength(1);
   });
 
-  it('migrateConfig carries a v21 config to v22', () => {
+  it('migrateConfig carries a v21 config through the SI step to the latest version', () => {
     const result = migrateConfig(configWith(21, [gauge('widget-gauge-ng-radial', 'rpm', 0, 3600)]), recordingSink());
-    expect(result.config.app?.configVersion).toBe(22);
+    expect(result.config.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
     expect(widgetConfigs(result.config)[0]).toMatchObject({ displayScale: { lower: 0, upper: 60 }, [SI_VERSION_KEY]: 22 });
+  });
+});
+
+describe('v22 -> v23: dotted compound sub-field paths to pointer form', () => {
+  // A path slot as a generic widget stores it.
+  const slot = (path: string, convertUnitTo?: string): Record<string, unknown> =>
+    ({ description: 'x', path, source: 'default', pathType: 'number', isPathConfigurable: true, ...(convertUnitTo ? { convertUnitTo } : {}) });
+  const numeric = (path: string, convertUnitTo?: string) =>
+    ({ type: 'widget-numeric', config: { paths: { numericPath: slot(path, convertUnitTo) } } });
+  const slotOf = (config: Record<string, unknown>) =>
+    (config['paths'] as Record<string, Record<string, unknown>>)['numericPath'];
+  const migrate = (widgets: { type: string; config: Record<string, unknown> }[], sink = recordingSink()) =>
+    widgetConfigs(migrateOneAppVersion(configWith(22, widgets), 22, sink) as IConfig);
+
+  it('rewrites a numeric widget on a position or attitude child path to a pointer path, and stamps v23', () => {
+    const migrated = migrateOneAppVersion(configWith(22, [
+      numeric('self.navigation.position.latitude'),
+      numeric('self.navigation.attitude.roll')
+    ]), 22, recordingSink());
+
+    expect(migrated?.app?.configVersion).toBe(23);
+    expect(widgetConfigs(migrated as IConfig).map(c => slotOf(c)['path']))
+      .toEqual(['self.navigation.position#/latitude', 'self.navigation.attitude#/roll']);
+  });
+
+  it('rewrites a nested compound at its own leaf', () => {
+    const [cfg] = migrate([numeric('self.navigation.courseGreatCircle.nextPoint.position.longitude')]);
+    expect(slotOf(cfg)['path']).toBe('self.navigation.courseGreatCircle.nextPoint.position#/longitude');
+  });
+
+  it('rewrites every slot of the array form of paths', () => {
+    const [cfg] = migrate([{ type: 'widget-gauge-ng-linear', config: { paths: [slot('self.navigation.attitude.pitch')] } }]);
+    expect((cfg['paths'] as Record<string, unknown>[])[0]['path']).toBe('self.navigation.attitude#/pitch');
+  });
+
+  it("rewrites a data graph's datachartPath", () => {
+    const [cfg] = migrate([{ type: 'widget-data-chart', config: { datachartPath: 'self.navigation.attitude.roll', datachartSource: 'default' } }]);
+    expect(cfg).toEqual({ datachartPath: 'self.navigation.attitude#/roll', datachartSource: 'default' });
+  });
+
+  it('leaves unknown dotted paths alone', () => {
+    const [numericCfg, graphCfg] = migrate([
+      numeric('self.electrical.solar.0.chargingMode.message'),
+      { type: 'widget-data-chart', config: { datachartPath: 'self.navigation.speedOverGround' } }
+    ]);
+    expect(slotOf(numericCfg)['path']).toBe('self.electrical.solar.0.chargingMode.message');
+    expect(graphCfg['datachartPath']).toBe('self.navigation.speedOverGround');
+  });
+
+  it.each(['widget-position', 'widget-heel-gauge', 'widget-horizon'])('leaves %s alone (v13 -> v14 collapsed it)', type => {
+    const config = { paths: { p: slot('self.navigation.position.latitude', 'deg') } };
+    const [cfg] = migrate([{ type, config: structuredClone(config) }]);
+    expect(cfg).toEqual(config);
+  });
+
+  it('is idempotent: a pointer path is unchanged and a second run is a no-op', () => {
+    const sink = recordingSink();
+    const first = migrateOneAppVersion(configWith(22, [numeric('self.navigation.position.latitude', 'deg')]), 22, sink) as IConfig;
+    const expected = structuredClone(widgetConfigs(first));
+    first.app!.configVersion = 22;
+
+    const again = migrateOneAppVersion(first, 22, sink) as IConfig;
+
+    expect(widgetConfigs(again)).toEqual(expected);
+    expect(slotOf(expected[0])).toMatchObject({ path: 'self.navigation.position#/latitude', convertUnitTo: 'pdeg' });
+    expect(sink.infos.filter(m => /pointer form/.test(m))).toHaveLength(1);
+  });
+
+  it('keeps a Position-group unit on a migrated coordinate', () => {
+    const [cfg] = migrate([numeric('self.navigation.position.latitude', 'latitudeMin')]);
+    expect(slotOf(cfg)['convertUnitTo']).toBe('latitudeMin');
+  });
+
+  it.each(['deg', 'rad', 'grad'])('moves a coordinate stored in the Angle group\'s %s to position degrees', unit => {
+    const [lat] = migrate([numeric('self.navigation.position.latitude', unit)]);
+    const [lon] = migrate([numeric('self.navigation.position.longitude', unit)]);
+    expect(slotOf(lat)['convertUnitTo']).toBe('pdeg');
+    expect(slotOf(lon)['convertUnitTo']).toBe('pdeg');
+  });
+
+  it('keeps an Angle-group unit on a migrated attitude field', () => {
+    const [cfg] = migrate([numeric('self.navigation.attitude.roll', 'deg')]);
+    expect(slotOf(cfg)).toMatchObject({ path: 'self.navigation.attitude#/roll', convertUnitTo: 'deg' });
+  });
+
+  it('reports the rewrites and unit changes through the sink', () => {
+    const sink = recordingSink();
+    migrate([numeric('self.navigation.position.latitude', 'deg'), numeric('self.navigation.attitude.yaw')], sink);
+    expect(sink.infos).toEqual([
+      '[Upgrade] Rewrote 2 compound sub-field path(s) to pointer form.',
+      '[Upgrade] Switched 1 latitude/longitude unit(s) from the Angle group to position degrees.'
+    ]);
+    expect(sink.errors).toEqual([]);
+  });
+
+  it('migrates a Freeboard tile config at v22 through migrateWidgetConfig', () => {
+    const cfg = { paths: { numericPath: slot('self.navigation.position.longitude', 'deg') } } as unknown as IWidgetSvcConfig;
+
+    const migrated = migrateWidgetConfig('widget-numeric', cfg, 22, recordingSink()) as unknown as Record<string, unknown>;
+
+    expect(slotOf(migrated)).toMatchObject({ path: 'self.navigation.position#/longitude', convertUnitTo: 'pdeg' });
+    expect(slotOf(cfg as unknown as Record<string, unknown>)['path']).toBe('self.navigation.position.longitude');
+  });
+
+  it('refuses a config that is not at v22', () => {
+    const sink = recordingSink();
+    expect(migrateOneAppVersion(configWith(21, []), 22, sink)).toBeNull();
+    expect(sink.errors).toHaveLength(1);
   });
 });

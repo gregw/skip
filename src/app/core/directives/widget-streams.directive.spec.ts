@@ -6,6 +6,7 @@ import { DataService, IPathUpdate } from '../services/data.service';
 import { TDurationFormat, UnitsService } from '../services/units.service';
 import { IWidgetSvcConfig, IWidgetPath } from '../interfaces/widgets-interface';
 import { ISkMetadata } from '../interfaces/signalk-interfaces';
+import { CONSOLE_MIGRATION_SINK, migrateWidgetConfig } from '../utils/config-migration.util';
 
 class FakeDataService {
     calls: {
@@ -220,6 +221,20 @@ describe('WidgetStreamsDirective', () => {
         directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]));
         dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
 
+        expect(received).toEqual([[-0.0384, 'deg']]);
+    });
+
+    it('tags live roll with the stored degrees on a slot migrated from the dotted v20 path', () => {
+        const v20 = makeCfg({ path: 'self.navigation.attitude.roll', pathType: 'number', convertUnitTo: 'deg', updateInterval: 50 });
+        const migrated = migrateWidgetConfig('widget-numeric', v20, 20, CONSOLE_MIGRATION_SINK);
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'unitless');
+        directive.setStreamsConfig(migrated);
+
+        const received: unknown[][] = [];
+        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
+
+        expect((migrated.paths as Record<string, IWidgetPath>)['p'].convertUnitTo).toBe('deg');
         expect(received).toEqual([[-0.0384, 'deg']]);
     });
 

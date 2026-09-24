@@ -31,6 +31,7 @@ export const V19_MIGRATION_OUTPUT_VERSION = 19;
 export const V20_MIGRATION_OUTPUT_VERSION = 20;
 export const V21_MIGRATION_OUTPUT_VERSION = 21;
 export const V22_MIGRATION_OUTPUT_VERSION = 22;
+export const V23_MIGRATION_OUTPUT_VERSION = 23;
 
 /**
  * The per-widget SI marker: the version of the last SI step whose shape a widget config is in.
@@ -358,21 +359,26 @@ const V19_AUTOPILOT_FIXED_SLOTS = ['headingMag', 'headingTrue', 'windAngleAppare
 const V19_AUTOPILOT_REMOVED_SLOTS = ['windAngleTrueWater'];
 
 // SK-02 / #21: the delta parser stopped fabricating dotted child paths for compound leaves, so a
-// stored widget path pointing at a sub-field of one of these leaves must be rewritten to the whole
-// canonical path (the widgets read the sub-field off the whole value). Matched by suffix so a nested
-// compound (e.g. courseGreatCircle.nextPoint.position) is covered as well as the top-level leaf.
+// stored widget path pointing at a sub-field of one of these leaves no longer receives data. v13 -> v14
+// rewrites it to the whole canonical path for the widgets that read the sub-field off the whole value;
+// v22 -> v23 rewrites it to pointer form (`…position#/latitude`) for every other widget. Matched by
+// suffix so a nested compound (e.g. courseGreatCircle.nextPoint.position) is covered as well as the
+// top-level leaf.
 const COMPOUND_SUBFIELD_PATH_SUFFIXES = [
   '.position.latitude', '.position.longitude', '.position.altitude',
   '.attitude.roll', '.attitude.pitch', '.attitude.yaw',
 ];
 
-// Only the predefined widgets that were adapted to read a compound sub-field off the whole value are
-// rewritten. A generic widget (numeric, gauge, ...) a user pointed at a compound sub-field has no
-// sub-field accessor, so rewriting its path to the whole leaf would render a raw object — worse than
-// leaving it on the now-inert child path (which shows a clean no-data placeholder). Charting a
-// compound sub-field is deferred to #345. Autopilot's Next-WPT position is an internal widget config,
-// not a stored path, so it is not listed here.
+// The predefined widgets that read a compound sub-field off the whole value; v13 -> v14 collapsed
+// their paths to the whole leaf. A generic widget (numeric, gauge, ...) handed the whole leaf would
+// render a raw object, so v22 -> v23 gives it a pointer path instead. Autopilot's Next-WPT position is
+// an internal widget config, not a stored path, so it is not listed here.
 const SUBFIELD_WIDGET_TYPES = new Set(['widget-position', 'widget-heel-gauge', 'widget-horizon']);
+
+// The Angle group's measures, which convert from radians. Before the de-flattening the conversion list
+// offered them for a dotted latitude/longitude, whose value is in degrees.
+const V23_ANGLE_GROUP_MEASURES = new Set(['rad', 'deg', 'grad']);
+const V23_POSITION_DEGREES = 'pdeg';
 
 /**
  * Where a migration step reports what it changed. The persistent upgrade shows these in its
@@ -551,6 +557,7 @@ export function migrateOneAppVersion(config: IConfig, fromVersion: number, sink:
     case 19: return upgradeConfigV19toV20(config, sink);
     case 20: return upgradeConfigV20toV21(config, sink);
     case 21: return upgradeConfigV21toV22(config, sink);
+    case 22: return upgradeConfigV22toV23(config, sink);
     default: return null;
   }
 }
@@ -1093,6 +1100,81 @@ function upgradeConfigV21toV22(config: IConfig, sink: MigrationMessageSink): ICo
     return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
   } catch (error) {
     sink.error(`[Upgrade Service] Error upgrading v21->v22: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/** The pointer form of a dotted compound sub-field path, with the field it addresses; null for any other path. */
+function toSubfieldPointerPath(path: string): { path: string; field: string } | null {
+  if (path.includes('#') || !COMPOUND_SUBFIELD_PATH_SUFFIXES.some(s => path.endsWith(s))) return null;
+  const dot = path.lastIndexOf('.');
+  const field = path.slice(dot + 1);
+  return { path: `${path.slice(0, dot)}#/${field}`, field };
+}
+
+/**
+ * v22 -> v23: a generic widget's dotted compound sub-field path (`self.navigation.position.latitude`)
+ * has received no data since #21 stopped fabricating child paths. Rewrite it to pointer form
+ * (`self.navigation.position#/latitude`) in `paths` and in `datachartPath`, for every widget type
+ * except SUBFIELD_WIDGET_TYPES, which v13 -> v14 already collapsed. A rewritten latitude or longitude
+ * slot storing an Angle-group unit moves to position degrees: the Angle group would read its degree
+ * value as radians. Idempotent: a pointer path matches no suffix. Unknown dotted paths are left alone,
+ * since without metadata a field cannot be told from a path segment.
+ */
+function upgradeConfigV22toV23(config: IConfig, sink: MigrationMessageSink): IConfig | null {
+  try {
+    const appConfig = config.app;
+    if (!appConfig || appConfig.configVersion !== 22) {
+      sink.error(`[Upgrade Service] Config version ${appConfig?.configVersion} is not an upgradable v22 config. Skipping...`);
+      return null;
+    }
+
+    let rewritten = 0;
+    let unitsChanged = 0;
+    if (Array.isArray(config.dashboards)) {
+      for (const dash of config.dashboards) {
+        if (!dash || !Array.isArray(dash.configuration)) continue;
+        for (const widget of dash.configuration) {
+          const wp = (widget as { input?: { widgetProperties?: { type?: unknown; config?: WidgetConfigRecord } } })?.input?.widgetProperties;
+          if (!wp || typeof wp.type !== 'string' || SUBFIELD_WIDGET_TYPES.has(wp.type)) continue;
+          const cfg = wp.config;
+          if (!cfg || typeof cfg !== 'object') continue;
+          const paths = cfg['paths'];
+          if (paths && typeof paths === 'object') {
+            for (const pathCfg of Object.values(paths as Record<string, WidgetConfigRecord>)) {
+              if (!pathCfg || typeof pathCfg !== 'object' || typeof pathCfg['path'] !== 'string') continue;
+              const pointer = toSubfieldPointerPath(pathCfg['path']);
+              if (!pointer) continue;
+              pathCfg['path'] = pointer.path;
+              rewritten++;
+              const unit = pathCfg['convertUnitTo'];
+              if ((pointer.field === 'latitude' || pointer.field === 'longitude')
+                && typeof unit === 'string' && V23_ANGLE_GROUP_MEASURES.has(unit)) {
+                pathCfg['convertUnitTo'] = V23_POSITION_DEGREES;
+                unitsChanged++;
+              }
+            }
+          }
+          const chartPath = cfg['datachartPath'];
+          const chartPointer = typeof chartPath === 'string' ? toSubfieldPointerPath(chartPath) : null;
+          if (chartPointer) {
+            cfg['datachartPath'] = chartPointer.path;
+            rewritten++;
+          }
+        }
+      }
+    }
+    if (rewritten) {
+      sink.info(`[Upgrade] Rewrote ${rewritten} compound sub-field path(s) to pointer form.`);
+    }
+    if (unitsChanged) {
+      sink.info(`[Upgrade] Switched ${unitsChanged} latitude/longitude unit(s) from the Angle group to position degrees.`);
+    }
+
+    appConfig.configVersion = V23_MIGRATION_OUTPUT_VERSION;
+    return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
+  } catch (error) {
+    sink.error(`[Upgrade Service] Error upgrading v22->v23: ${(error as Error).message}`);
     return null;
   }
 }
