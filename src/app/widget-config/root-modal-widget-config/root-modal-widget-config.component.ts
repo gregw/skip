@@ -2,8 +2,8 @@ import { Component, OnInit, inject, signal, computed, DestroyRef } from '@angula
 import { AbstractControl, UntypedFormGroup, UntypedFormControl, FormControl, FormGroup, Validators, UntypedFormBuilder, UntypedFormArray, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { filter, take } from 'rxjs';
-import { cloneDeep, get, set } from 'lodash-es';
+import { filter, merge, take } from 'rxjs';
+import { cloneDeep, get, has, set } from 'lodash-es';
 
 import { MatButtonModule } from '@angular/material/button';
 import { MatDividerModule } from '@angular/material/divider';
@@ -33,7 +33,7 @@ import { ActivePolarService } from '../../core/services/active-polar.service';
 import { DataService } from '../../core/services/data.service';
 import { POLAR_OVERLAY_PATH_KEYS } from '../../core/utils/polar-overlay.util';
 import { UnitsService } from '../../core/services/units.service';
-import { presentedOption } from '../../core/utils/si-presentation.util';
+import { pathOptionMeasure, presentationValue, presentedOption } from '../../core/utils/si-presentation.util';
 
 /** An option stored in SI and shown in the form in a presentation unit. */
 interface SiOption {
@@ -43,10 +43,26 @@ interface SiOption {
   unit: string;
 }
 
-/** An SI option as the form was built with it: the stored value and what the form showed for it. */
+/** Where the path an option follows is: a path slot, or a config key holding a path. */
+type SiUnitSource = { slot: string } | { pathKey: 'datachartPath' };
+
+/** Options of the listed widget types stored in SI and shown in the unit the widget presents a path in. */
+interface PathSiOptions {
+  types: readonly string[];
+  source: SiUnitSource;
+  paths: readonly (readonly string[])[];
+}
+
+/**
+ * An SI option in the form: the stored value, what the form showed for it and in which unit, and the
+ * unit the form's value is in now. `null` is a bound left unset.
+ */
 interface SiField extends SiOption {
-  si: number;
-  shown: number;
+  si: number | null;
+  shown: number | null;
+  shownIn: string;
+  /** For an option that follows a path: where the path is, and the path and slot unit `unit` was resolved for. */
+  follows?: { source: SiUnitSource; resolvedFor: string };
 }
 
 /** Typed reactive-form control map for an array-mode {@link IWidgetPath}: one control per field. */
@@ -76,6 +92,19 @@ export class RootModalWidgetConfigComponent implements OnInit {
     { path: ['gauge', 'heelAlarmAngle'], unit: 'deg' },
     { path: ['ais', 'cogVectorsSeconds'], unit: 'Minutes' }
   ];
+  private static readonly PATH_SI_OPTIONS: readonly PathSiOptions[] = [
+    {
+      types: ['widget-gauge-ng-radial', 'widget-gauge-ng-linear', 'widget-gauge-steel', 'widget-simple-linear'],
+      source: { slot: 'gaugePath' },
+      paths: [['displayScale', 'lower'], ['displayScale', 'upper']]
+    },
+    { types: ['widget-numeric'], source: { slot: 'numericPath' }, paths: [['yScaleMin'], ['yScaleMax']] },
+    {
+      types: ['widget-data-chart'],
+      source: { pathKey: 'datachartPath' },
+      paths: [['yScaleMin'], ['yScaleMax'], ['yScaleSuggestedMin'], ['yScaleSuggestedMax']]
+    }
+  ];
   private dialogRef = inject<MatDialogRef<RootModalWidgetConfigComponent>>(MatDialogRef);
   private fb = inject(UntypedFormBuilder);
   private app = inject(AppService);
@@ -97,6 +126,8 @@ export class RootModalWidgetConfigComponent implements OnInit {
   private readonly data = inject(DataService);
   private readonly units = inject(UnitsService);
   private siFields: SiField[] = [];
+  /** The unit symbol of each option that follows a path, by its dotted config path. */
+  private readonly siUnitSymbols = signal<ReadonlyMap<string, string>>(new Map());
   /** The Wind Steer polar overlay's SI input paths, and those the server has sent at least once. */
   private polarOverlayPaths: string[] = [];
   private readonly receivedPolarOverlayPaths = signal<ReadonlySet<string>>(new Set());
@@ -126,8 +157,9 @@ export class RootModalWidgetConfigComponent implements OnInit {
     const formConfig = cloneDeep(this.widgetConfig);
     delete formConfig.widgetName;
     delete formConfig.widgetType;
-    this.showSiOptionsInPresentationUnits(formConfig);
+    this.showSiOptionsInPresentationUnits(formConfig, this.widgetConfig.widgetType);
     this.formMaster = this.generateFormGroups(formConfig);
+    this.followSiUnitSources();
     this.setupWindsteerControlState();
     if (this.widgetConfig.polarOverlayEnable !== undefined) this.watchPolarOverlay();
     this.formMaster.statusChanges
@@ -496,8 +528,16 @@ export class RootModalWidgetConfigComponent implements OnInit {
     this.dialogRef.close(nextConfig);
   }
 
+  /**
+   * The unit symbol an SI option that follows a path is shown with, by its dotted config path, or
+   * null for a field that is not such an option.
+   */
+  protected siUnitSymbol(key: string): string | null {
+    return this.siUnitSymbols().get(key) ?? null;
+  }
+
   /** Replaces each SI option in the form's copy of the config with its value in the form's unit. */
-  private showSiOptionsInPresentationUnits(formConfig: object): void {
+  private showSiOptionsInPresentationUnits(formConfig: object, widgetType: string | undefined): void {
     this.siFields = [];
     for (const option of RootModalWidgetConfigComponent.SI_OPTIONS) {
       const si: unknown = get(formConfig, option.path);
@@ -506,21 +546,125 @@ export class RootModalWidgetConfigComponent implements OnInit {
       if (converted == null || !Number.isFinite(converted)) continue;
       const shown = presentedOption(converted);
       set(formConfig, option.path, shown);
-      this.siFields.push({ ...option, si, shown });
+      this.siFields.push({ ...option, si, shown, shownIn: option.unit });
+    }
+    for (const group of RootModalWidgetConfigComponent.PATH_SI_OPTIONS) {
+      if (!widgetType || !group.types.includes(widgetType)) continue;
+      const { path, stored } = this.siUnitSourceIn(group.source, keys => get(formConfig, keys));
+      const unit = pathOptionMeasure(this.units, path, stored);
+      for (const optionPath of group.paths) {
+        if (!has(formConfig, optionPath)) continue;
+        const value: unknown = get(formConfig, optionPath);
+        const si = typeof value === 'number' && Number.isFinite(value) ? value : null;
+        const shown = this.presented(unit, si);
+        set(formConfig, optionPath, shown);
+        this.siFields.push({ path: optionPath, unit, si, shown, shownIn: unit, follows: { source: group.source, resolvedFor: this.resolutionKey(path, stored) } });
+      }
     }
   }
 
+  private presented(unit: string, si: number | null): number | null {
+    return si == null ? null : presentedOption(presentationValue(this.units, unit, si));
+  }
+
+  /** The path an option follows and the unit stored with its slot, read through `read`. */
+  private siUnitSourceIn(source: SiUnitSource, read: (keys: string[]) => unknown): { path: string | null; stored: string | null } {
+    const text = (value: unknown): string | null => typeof value === 'string' && value !== '' ? value : null;
+    if ('pathKey' in source) return { path: text(read([source.pathKey])), stored: null };
+    return { path: text(read(['paths', source.slot, 'path'])), stored: text(read(['paths', source.slot, RootModalWidgetConfigComponent.KEY_CONVERT_UNIT_TO])) };
+  }
+
+  private resolutionKey(path: string | null, stored: string | null): string {
+    return JSON.stringify([path, stored]);
+  }
+
+  private siUnitSourceInForm(source: SiUnitSource): { path: string | null; stored: string | null } {
+    return this.siUnitSourceIn(source, keys => this.formMaster.get(keys)?.value);
+  }
+
   /**
-   * Converts each SI option back from the form's unit. An option whose shown value is unchanged
-   * keeps its stored SI value exactly, so opening and saving without edits changes nothing.
+   * Keeps each option that follows a path in that path's unit. A re-point (a new path or slot unit)
+   * switches the fields to the new unit and leaves their numbers, which path-control-config has
+   * already set; save then converts them from the new unit. A path whose meta has not arrived when
+   * the form is built resolves once more when it does, for the fields the user has not edited.
+   */
+  private followSiUnitSources(): void {
+    const sources = new Set(this.siFields.flatMap(field => field.follows ? [field.follows.source] : []));
+    this.refreshSiUnitSymbols();
+    for (const source of sources) {
+      const controls = ('pathKey' in source ? [[source.pathKey]] : [['paths', source.slot, 'path'], ['paths', source.slot, RootModalWidgetConfigComponent.KEY_CONVERT_UNIT_TO]])
+        .map(keys => this.formMaster.get(keys))
+        .filter((control): control is AbstractControl => control != null);
+      merge(...controls.map(control => control.valueChanges))
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe(() => this.followRepoint(source));
+
+      const { path, stored } = this.siUnitSourceInForm(source);
+      if (path && this.units.resolvePathMeasure(path) === 'unitless' && this.data.getPathMeta(path) == null) {
+        const builtFor = this.resolutionKey(path, stored);
+        this.data.getPathMetaObservable(path)
+          .pipe(filter(meta => meta != null), take(1), takeUntilDestroyed(this.destroyRef))
+          .subscribe(() => this.resolveOnMetaArrival(source, builtFor));
+      }
+    }
+  }
+
+  private fieldsFollowing(source: SiUnitSource): SiField[] {
+    return this.siFields.filter(field => field.follows?.source === source);
+  }
+
+  private followRepoint(source: SiUnitSource): void {
+    const { path, stored } = this.siUnitSourceInForm(source);
+    const key = this.resolutionKey(path, stored);
+    const unit = pathOptionMeasure(this.units, path, stored);
+    for (const field of this.fieldsFollowing(source)) {
+      if (field.follows?.resolvedFor === key) continue;
+      field.unit = unit;
+      field.follows = { source, resolvedFor: key };
+    }
+    this.refreshSiUnitSymbols();
+  }
+
+  private resolveOnMetaArrival(source: SiUnitSource, builtFor: string): void {
+    const { path, stored } = this.siUnitSourceInForm(source);
+    const unit = pathOptionMeasure(this.units, path, stored);
+    for (const field of this.fieldsFollowing(source)) {
+      const control = this.formMaster.get(field.path as string[]);
+      if (field.follows?.resolvedFor !== builtFor || !control || control.value !== field.shown || unit === field.unit) continue;
+      field.unit = field.shownIn = unit;
+      field.shown = this.presented(unit, field.si);
+      control.setValue(field.shown);
+    }
+    this.refreshSiUnitSymbols();
+  }
+
+  private refreshSiUnitSymbols(): void {
+    const symbols = new Map<string, string>();
+    for (const field of this.siFields) {
+      if (!field.follows) continue;
+      // SI is shown with the path's own unit.
+      const measure = field.unit === 'unitless'
+        ? this.data.getPathUnitType(this.siUnitSourceInForm(field.follows.source).path ?? '')
+        : field.unit;
+      symbols.set(field.path.join('.'), this.units.getRenderableUnitSymbol(measure));
+    }
+    this.siUnitSymbols.set(symbols);
+  }
+
+  /**
+   * Converts each SI option back from the form's unit. An option whose shown value and unit are both
+   * unchanged keeps its stored SI value exactly, so opening and saving without edits changes nothing.
+   * An option that follows a path and is left empty is stored unset.
    */
   private storeSiOptionsInSi(config: IWidgetSvcConfig): void {
     for (const field of this.siFields) {
       const value: unknown = get(config, field.path);
-      if (value === field.shown) {
+      if (value === field.shown && field.unit === field.shownIn) {
         set(config, field.path, field.si);
       } else if (typeof value === 'number' && Number.isFinite(value)) {
         set(config, field.path, this.fromPresentation(field.unit, value));
+      } else if (field.follows) {
+        set(config, field.path, null);
       }
     }
   }

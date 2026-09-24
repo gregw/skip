@@ -44,6 +44,8 @@ export class GraphDisplayOptionsComponent implements OnInit {
   readonly enableMinMaxScaleLimit = input.required<FormControl<boolean>>();
   readonly yScaleMin = input.required<FormControl<number>>();
   readonly yScaleMax = input.required<FormControl<number>>();
+  /** The unit symbol the y-scale bounds are shown in. */
+  readonly yScaleUnit = input('');
 
   readonly numDecimal = input.required<FormControl<number>>();
   readonly color = input.required<FormControl<string>>();
