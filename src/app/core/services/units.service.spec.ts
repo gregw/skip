@@ -428,4 +428,54 @@ describe('UnitsService', () => {
       expect(setup().formatDuration(format, seconds)).toBe(expected);
     });
   });
+
+  describe('getConversionsForPath for position coordinates and pointer paths', () => {
+    // SI units as DataService reports them: a pointer path answers with its field's units.
+    const UNITS: Record<string, string> = {
+      'self.navigation.position#/latitude': 'deg',
+      'self.navigation.position#/longitude': 'deg',
+      'self.navigation.position#/altitude': 'm',
+      'self.navigation.courseGreatCircle.nextPoint.position#/latitude': 'deg',
+      'self.navigation.position.latitude': 'deg',
+      'self.navigation.attitude#/roll': 'rad',
+      'self.navigation.headingTrue': 'rad',
+      'self.environment.sunlight.position#/elevation': 'deg',
+    };
+
+    function setupWithUnits(): UnitsService {
+      TestBed.resetTestingModule();
+      const dataStub: Partial<DataService> = {
+        getPathUnitType: path => UNITS[path] ?? null,
+        getPathDisplayUnits: () => undefined,
+      };
+      TestBed.configureTestingModule({
+        providers: [UnitsService, { provide: DataService, useValue: dataStub }],
+      });
+      return TestBed.inject(UnitsService);
+    }
+
+    const groups = (service: UnitsService, path: string) => service.getConversionsForPath(path).conversions.map(g => g.group);
+
+    it.each([
+      'self.navigation.position#/latitude',
+      'self.navigation.position#/longitude',
+      'self.navigation.courseGreatCircle.nextPoint.position#/latitude',
+      'self.navigation.position.latitude',
+    ])('offers only the Position group for %s', path => {
+      expect(groups(setupWithUnits(), path)).toEqual(['Position']);
+    });
+
+    it('offers the Length group for #/altitude, from the field\'s own unit', () => {
+      expect(groups(setupWithUnits(), 'self.navigation.position#/altitude')).toEqual(['Length']);
+    });
+
+    it('offers the Angle group for a degree field that is not a coordinate', () => {
+      expect(groups(setupWithUnits(), 'self.environment.sunlight.position#/elevation')).toEqual(['Angle']);
+      expect(groups(setupWithUnits(), 'self.navigation.attitude#/roll')).toEqual(['Angle']);
+    });
+
+    it('resolves a field without a server preference to unitless, so the slot\'s stored unit applies', () => {
+      expect(setupWithUnits().resolvePathMeasure('self.navigation.attitude#/roll')).toBe('unitless');
+    });
+  });
 });
