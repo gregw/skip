@@ -40,7 +40,9 @@
               "@godind/canvas-gauges",
               "js-quantities",
               "prismjs",
-              "clipboard"
+              "clipboard",
+              "@jsonjoy.com/json-pointer",
+              "@jsonjoy.com/util"
             ],
             "browser": "src/main.ts"
           },

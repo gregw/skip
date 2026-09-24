@@ -88,6 +88,7 @@
     "@angular/router": "21.2.7",
     "@aziham/chartjs-plugin-streaming": "^3.5.1",
     "@godind/ng-canvas-gauges": "^6.2.1",
+    "@jsonjoy.com/json-pointer": "^18.30.0",
     "@types/canvas-gauges": "^2.1.8",
     "@types/d3": "^7.4.3",
     "@types/d3-selection": "^3.0.11",
