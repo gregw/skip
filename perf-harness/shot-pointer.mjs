@@ -5,10 +5,11 @@
  *
  *   node shot-pointer.mjs --public ../public
  *
- * Expected tiles: latitude 60° 05.15′ N, roll -2.20 °, roll -0.0384 (no stored unit, so Signal K's
- * radians) and pitch 0.52 °. A second pass opens a widget's settings and types "latitude" into the
- * path picker, which should offer `self.navigation.position#/latitude` described as "Latitude".
- * Writes results/shots/pointer/{pointer-grid,pointer-picker}.png.
+ * The mock serves the unit-preferences API with the "Nautical (Metric)" angle entry (radians shown
+ * in degrees). Expected tiles: latitude 60° 05.15′ N, roll -2.20 °, roll -2.2002 (no stored unit, so
+ * the server's angle preference) and pitch 0.52 °. A second pass opens a widget's settings and
+ * types "latitude" into the path picker, which should offer `self.navigation.position#/latitude`
+ * described as "Latitude". Writes results/shots/pointer/{pointer-grid,pointer-picker}.png.
  */
 import { chromium } from 'playwright-core';
 import { mkdir } from 'node:fs/promises';
@@ -39,6 +40,13 @@ server.setConfigDocument(serverConfigDocument({
 }));
 server.setControl({
   streaming: true, rateHz: 2,
+  unitPreferences: {
+    categories: { categoryToBaseUnit: { angle: 'rad', angleDegrees: 'deg', distance: 'm', depth: 'm', length: 'm' } },
+    active: { name: 'Nautical (Metric)', categories: {
+      angle: { baseUnit: 'rad', targetUnit: 'degree', displayFormat: '0.0', formula: 'value * 57.29577951308231', inverseFormula: 'value / 57.29577951308231', symbol: '°' },
+      angleDegrees: { baseUnit: 'deg', targetUnit: 'deg', displayFormat: '0.0' },
+    } },
+  },
   selfPaths: ['navigation.position', 'navigation.attitude'],
   selfValues: { 'navigation.position': POSITION, 'navigation.attitude': ATTITUDE },
   selfMeta: {
