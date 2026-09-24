@@ -8,7 +8,8 @@ import hurmaPolar from './polar-engine.hurma-polar.fixture.json';
 // polar-math is the reference implementation this engine ports. It is loaded through Node's
 // require so the spec bundle never pulls it (or its ajv dependency) through the app build.
 interface OracleResult<T> { value: T | null; state: PolarState }
-interface OracleTargets { maxSpeed: { twa: number; speed: number } }
+interface OracleSideTarget { twa: number; speed: number; vmg: number }
+interface OracleTargets { beat: OracleSideTarget | null; run: OracleSideTarget | null; maxSpeed: { twa: number; speed: number } }
 interface OraclePolar {
   speedAt(query: object): OracleResult<number>;
   rangeAt(query: object): OracleResult<{ minTwa: number; maxTwa: number }>;
@@ -55,7 +56,8 @@ function knotsSource(): LooseTable {
     },
     derived: {
       rows: [
-        { tws: 6, beat: { twa: 40, tbs: 4.5, vmg: 3.45 } },
+        // A VMG unlike tbs·|cos twa| (3.45), so parity shows the table's own VMG is used.
+        { tws: 6, beat: { twa: 40, tbs: 4.5, vmg: 3.0 } },
         { tws: 10, run: { twa: 140, tbs: 6.6, vmg: 5.06 }, maxSpeed: 7.4, maxSpeedAngle: 90 },
         { tws: 16, beat: { twa: 38, tbs: 7.2, vmg: 5.67 }, run: null }
       ]
@@ -82,6 +84,8 @@ function siSource(tws: number[], twaDeg: number[], matrix: number[][]): LooseTab
 const singleColumnSource = (): LooseTable => siSource([4], [40, 60, 90, 120, 150, 180], [[2.6, 3.0, 3.2, 3.1, 2.7, 2.2]]);
 const runOnlySource = (): LooseTable => siSource([3, 6], [100, 130, 160], [[2.0, 1.8, 1.4], [3.1, 3.0, 2.6]]);
 const allZeroSource = (): LooseTable => siSource([3, 6], [45, 90], [[0, 0], [0, 0]]);
+/** A light-air column with no speed below 90° next to one with a beat side. */
+const lightAirSource = (): LooseTable => siSource([3, 6], [45, 90, 150], [[0, 3.0, 2.4], [3.2, 3.6, 3.1]]);
 
 function load(source: unknown): { ours: Polar; oracle: OraclePolar; table: PolarTable } {
   const result = toCanonicalPolarTable(source);
@@ -173,6 +177,31 @@ function rangeMismatches(ours: Polar, oracle: OraclePolar, table: PolarTable): s
   return failures.slice(0, 10);
 }
 
+function sameSideTarget(a: OracleSideTarget | null, b: OracleSideTarget | null): boolean {
+  if (a === null || b === null) return a === b;
+  return sameValue(a.twa, b.twa) && sameValue(a.speed, b.speed) && sameValue(a.vmg, b.vmg);
+}
+
+function targetMismatches(ours: Polar, oracle: OraclePolar, table: PolarTable): string[] {
+  const failures: string[] = [];
+  for (const tws of twsGrid(table)) {
+    for (const performanceFactor of FACTORS) {
+      const query = { tws, performanceFactor };
+      const actual = ours.targetsAt(query);
+      const expected = oracle.targetsAt(query);
+      const valuesMatch = actual.value === null || expected.value === null
+        ? actual.value === expected.value
+        : sameSideTarget(actual.value.beat, expected.value.beat) && sameSideTarget(actual.value.run, expected.value.run) &&
+          sameValue(actual.value.maxSpeed.twa, expected.value.maxSpeed.twa) &&
+          sameValue(actual.value.maxSpeed.speed, expected.value.maxSpeed.speed);
+      if (!valuesMatch || !sameState(actual.state, expected.state)) {
+        failures.push(`${JSON.stringify(query)}: ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`);
+      }
+    }
+  }
+  return failures.slice(0, 10);
+}
+
 /** The oracle's peak: the largest max-speed target over every TWS column, at factor 1. */
 function oraclePeak(oracle: OraclePolar, table: PolarTable): number | null {
   const speeds = table.axes.tws
@@ -186,7 +215,8 @@ const PARITY_TABLES: { label: string; source: () => unknown }[] = [
   { label: 'a knots/degrees table with zero cells and derived targets', source: knotsSource },
   { label: 'a single-column table', source: singleColumnSource },
   { label: 'a table with no beat side', source: runOnlySource },
-  { label: 'a table with only zero speeds', source: allZeroSource }
+  { label: 'a table with only zero speeds', source: allZeroSource },
+  { label: 'a table whose light-air column has no beat side', source: lightAirSource }
 ];
 
 describe('polar-engine.util', () => {
@@ -199,6 +229,11 @@ describe('polar-engine.util', () => {
     it('matches rangeAt over the TWS, factor and extrapolation grid', () => {
       const { ours, oracle, table } = load(source());
       expect(rangeMismatches(ours, oracle, table)).toEqual([]);
+    });
+
+    it('matches targetsAt over the TWS and factor grid', () => {
+      const { ours, oracle, table } = load(source());
+      expect(targetMismatches(ours, oracle, table)).toEqual([]);
     });
 
     it('matches the peak speed across all TWS columns', () => {

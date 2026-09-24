@@ -4,12 +4,12 @@
  *
  * Ported to TypeScript from two packages by Aswin Bouwmeester (github.com/Asw1n), both licensed
  * under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0):
- *   - polar-math 1.1.1 (https://github.com/Asw1n/polar-math): table preparation, speedAt, rangeAt
- *     and the per-TWS maximum speed.
+ *   - polar-math 1.1.1 (https://github.com/Asw1n/polar-math): table preparation, speedAt, rangeAt,
+ *     targetsAt and the per-TWS maximum speed.
  *   - polar-format 1.0.0 (https://github.com/Asw1n/polar-format): unit canonicalization.
  * Neither package ships a NOTICE file.
  *
- * Changes from the originals: rewritten in TypeScript; targetsAt and vmgAt are not ported; the
+ * Changes from the originals: rewritten in TypeScript; vmgAt is not ported; the
  * ajv JSON-schema validation is replaced by a typed guard that checks only the fields this engine
  * reads, so unknown extra fields and a missing schemaVersion are accepted; peakSpeed is added.
  * Interpolation results match polar-math 1.1.1, which the spec uses as its oracle. The
@@ -52,6 +52,19 @@ export interface PolarSpeedQuery extends PolarQuery {
 }
 export interface PolarResult<T> { value: T | null; state: PolarState }
 export interface PolarTwaRange { minTwa: number; maxTwa: number }
+/** A best-VMG target: TWA in rad, target boat speed and its VMG in m/s. */
+export interface PolarSideTarget { twa: number; speed: number; vmg: number }
+export interface PolarTargets {
+  /**
+   * Best VMG upwind, or null when either TWS column around the query has no beat side, such as a
+   * light-air column with no speeds below 90°. Null for one TWS says nothing about another.
+   */
+  beat: PolarSideTarget | null;
+  /** Best VMG downwind, or null when either TWS column around the query has no run side. */
+  run: PolarSideTarget | null;
+  /** The fastest point and its TWA. */
+  maxSpeed: { twa: number; speed: number };
+}
 
 const PINCH_FACTOR = 0.8;
 const BEAT_ENDPOINT_ANGLE = 25 * Math.PI / 180;
@@ -79,7 +92,7 @@ const ANGLE_FACTORS_TO_RAD = new Map<string, number>([
 ]);
 
 interface Point { readonly twa: number; readonly speed: number }
-interface Target { readonly twa: number; readonly tbs: number }
+interface Target { readonly twa: number; readonly tbs: number; readonly vmg: number }
 interface RunFlatten { readonly anchorTwa: number; readonly anchorVmg: number; readonly a: number; readonly b: number }
 
 /** One prepared TWS column: the curve points with their PCHIP tangents and targets. */
@@ -90,8 +103,10 @@ interface Entry {
   readonly realPoints: readonly Point[];
   readonly realTangents: readonly number[];
   readonly runFlatten: RunFlatten | null;
-  readonly beatAngle: number | null;
+  readonly beat: PolarSideTarget | null;
+  readonly run: PolarSideTarget | null;
   readonly maxSpeed: number;
+  readonly maxSpeedAngle: number;
 }
 
 interface TwsSpan { readonly lower: Entry; readonly upper: Entry; readonly ratio: number }
@@ -134,6 +149,38 @@ export class Polar {
       value: {
         minTwa: interpolate(minTwaForEntry(span.lower, input.extrapolate), minTwaForEntry(span.upper, input.extrapolate), span.ratio),
         maxTwa: interpolate(maxTwaForEntry(span.lower, input.extrapolate), maxTwaForEntry(span.upper, input.extrapolate), span.ratio)
+      },
+      state: validState(this.twsState(input.tws), null)
+    };
+  }
+
+  /**
+   * The beat and run targets and the fastest point for a TWS, interpolated between the TWS
+   * columns and scaled by the performance factor. Outside the table the nearest column's targets
+   * apply, and the state says so.
+   */
+  targetsAt(query: PolarQuery): PolarResult<PolarTargets> {
+    const input = normalizeQuery(query);
+    if (!input) return { value: null, state: invalidState() };
+    if (this.entries.length === 0) return { value: null, state: noDataState() };
+
+    const { lower, upper, ratio } = this.findTwsSpan(input.tws);
+    const scale = input.performanceFactor;
+    const side = (key: 'beat' | 'run'): PolarSideTarget | null => {
+      const low = lower[key];
+      const high = upper[key];
+      if (!low || !high) return null;
+      return {
+        twa: interpolate(low.twa, high.twa, ratio),
+        speed: interpolate(low.speed, high.speed, ratio) * scale,
+        vmg: interpolate(low.vmg, high.vmg, ratio) * scale
+      };
+    };
+    return {
+      value: {
+        beat: side('beat'),
+        run: side('run'),
+        maxSpeed: { twa: interpolate(lower.maxSpeedAngle, upper.maxSpeedAngle, ratio), speed: interpolate(lower.maxSpeed, upper.maxSpeed, ratio) * scale }
       },
       state: validState(this.twsState(input.tws), null)
     };
@@ -183,8 +230,8 @@ export class Polar {
       return validState(this.twsState(tws), twaState);
     }
 
-    const beatAngle = lower.beatAngle !== null && upper.beatAngle !== null
-      ? interpolate(lower.beatAngle, upper.beatAngle, ratio)
+    const beatAngle = lower.beat && upper.beat
+      ? interpolate(lower.beat.twa, upper.beat.twa, ratio)
       : null;
     let twaState: PolarTwaState = 'in_range';
     if (normalizedTwa < minTwa) twaState = beatAngle !== null ? 'in_irons' : 'below_range';
@@ -244,9 +291,12 @@ function prepareEntries(table: PolarTable): Entry[] {
     addTarget(points, runTarget);
     points.sort((a, b) => a.twa - b.twa);
 
-    const beatAngle = beatTarget ? beatTarget.twa : bestVmgPoint(points, point => point.twa < HALF_PI)?.twa ?? null;
-    const runAngle = runTarget ? runTarget.twa : bestVmgPoint(points, point => point.twa >= HALF_PI)?.twa ?? null;
-    const maxSpeed = Math.max(...points.map(point => point.speed));
+    const beat = sideTarget(beatTarget, bestVmgPoint(points, point => point.twa < HALF_PI));
+    const run = sideTarget(runTarget, bestVmgPoint(points, point => point.twa >= HALF_PI));
+    const beatAngle = beat?.twa ?? null;
+    const runAngle = run?.twa ?? null;
+    const fastest = points.reduce((result, point) => point.speed > result.speed ? point : result, points[0]);
+    const maxSpeed = fastest.speed;
     const realPoints = points.slice();
 
     const extended = addRunExtension(axisPoints, addBeatExtension(points, beatAngle), runAngle);
@@ -258,8 +308,10 @@ function prepareEntries(table: PolarTable): Entry[] {
       realPoints,
       realTangents: pchipTangents(realPoints),
       runFlatten: buildRunFlatten(extended, tangents, runAngle),
-      beatAngle,
-      maxSpeed
+      beat,
+      run,
+      maxSpeed,
+      maxSpeedAngle: fastest.twa
     });
   });
 
@@ -273,10 +325,23 @@ function prepareEntries(table: PolarTable): Entry[] {
     realPoints: first.realPoints.map(point => ({ ...point, speed: 0 })),
     realTangents: first.realTangents.map(() => 0),
     runFlatten: first.runFlatten ? { ...first.runFlatten, anchorVmg: 0, a: 0, b: 0 } : null,
-    beatAngle: first.beatAngle,
-    maxSpeed: 0
+    beat: first.beat ? { twa: first.beat.twa, speed: 0, vmg: 0 } : null,
+    run: first.run ? { twa: first.run.twa, speed: 0, vmg: 0 } : null,
+    maxSpeed: 0,
+    maxSpeedAngle: first.maxSpeedAngle
   };
   return [zeroRow, ...entries];
+}
+
+// A column's target: the derived row's own, else its best-VMG point. A derived VMG is rounded to
+// hundredths, as polar-math does, so the two stay at parity.
+function sideTarget(target: Target | null, best: Point | null): PolarSideTarget | null {
+  if (target) return { twa: target.twa, speed: target.tbs, vmg: roundToHundredths(target.vmg) };
+  return best ? { twa: best.twa, speed: best.speed, vmg: roundToHundredths(vmgOf(best)) } : null;
+}
+
+function roundToHundredths(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function bestVmgPoint(points: readonly Point[], predicate: (point: Point) => boolean): Point | null {
@@ -424,8 +489,8 @@ function speedFromEntry(entry: Entry, twa: number, extrapolate: boolean): number
 
 function minTwaForEntry(entry: Entry, extrapolate: boolean): number {
   if (!extrapolate) return entry.realPoints[0].twa;
-  return entry.beatAngle !== null
-    ? BEAT_ENDPOINT_ANGLE + PINCH_FACTOR * (entry.beatAngle - BEAT_ENDPOINT_ANGLE)
+  return entry.beat
+    ? BEAT_ENDPOINT_ANGLE + PINCH_FACTOR * (entry.beat.twa - BEAT_ENDPOINT_ANGLE)
     : entry.points[0].twa;
 }
 
@@ -453,7 +518,9 @@ function fillDerivedTargets(twsAxis: readonly number[], rows: readonly PolarDeri
       const high = upper >= 0 ? targets[upper][key] : null;
       if (low && high) {
         const ratio = (twsAxis[index] - twsAxis[lower]) / (twsAxis[upper] - twsAxis[lower]);
-        targets[index][key] = { twa: interpolate(low.twa, high.twa, ratio), tbs: interpolate(low.tbs, high.tbs, ratio) };
+        const twa = interpolate(low.twa, high.twa, ratio);
+        const tbs = interpolate(low.tbs, high.tbs, ratio);
+        targets[index][key] = { twa, tbs, vmg: tbs * Math.abs(Math.cos(twa)) };
       } else if (low) targets[index][key] = { ...low };
       else if (high) targets[index][key] = { ...high };
     }
