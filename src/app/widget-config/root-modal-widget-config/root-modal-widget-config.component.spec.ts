@@ -1,16 +1,30 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { UntypedFormArray, UntypedFormControl, UntypedFormGroup, Validators } from '@angular/forms';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RootModalWidgetConfigComponent } from './root-modal-widget-config.component';
 import { IConversionPathList, UnitsService } from '../../core/services/units.service';
 import { AppService } from '../../core/services/app-service';
 import { ensureTestIconsReady } from '../../../test-helpers/icon-test-utils';
-import type { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
+import type { IWidgetPath, IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { MIN_UPDATE_INTERVAL_MS } from '../../core/interfaces/widgets-interface';
 import { WidgetBooleanSwitchComponent } from '../../widgets/widget-boolean-switch/widget-boolean-switch.component';
 import { WidgetZonesStatePanelComponent } from '../../widgets/widget-zones-state-panel/widget-zones-state-panel.component';
 import { WidgetAutopilotComponent } from '../../widgets/widget-autopilot/widget-autopilot.component';
+import { WidgetSteelCompassComponent } from '../../widgets/widget-gauge-steel-compass/widget-gauge-steel-compass.component';
+import { WidgetSeaHorizonComponent } from '../../widgets/widget-sea-horizon/widget-sea-horizon.component';
+import { WidgetWindComponent } from '../../widgets/widget-windsteer/widget-windsteer.component';
+import { WidgetRacesteerComponent } from '../../widgets/widget-racesteer/widget-racesteer.component';
+import { WidgetAisRadarComponent } from '../../widgets/widget-ais-radar/widget-ais-radar.component';
+import { WidgetGaugeNgRadialComponent } from '../../widgets/widget-gauge-ng-radial/widget-gauge-ng-radial.component';
+import { WidgetNumericComponent } from '../../widgets/widget-numeric/widget-numeric.component';
+import { WidgetDataGraphComponent } from '../../widgets/widget-data-graph/widget-data-graph.component';
+import { WidgetSliderComponent } from '../../widgets/widget-slider/widget-slider.component';
+import type { ISkMetadata } from '../../core/interfaces/signalk-interfaces';
+import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
+import { DataService, IPathUpdate } from '../../core/services/data.service';
+import { signal } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
 
 describe('ModalWidgetComponent', () => {
   let component: RootModalWidgetConfigComponent;
@@ -214,6 +228,115 @@ describe('ModalWidgetComponent Paths tab visibility (#416)', () => {
     // widget-boolean-switch / widget-zones-state-panel ship paths:[] and add paths via this tab.
     const component = createComponentWithData({ paths: [], multiChildCtrls: [] });
     expect(component.hasConfigurablePaths).toBe(true);
+  });
+});
+
+// The gauge settings tabs bind formControlName straight at the keys a widget ships in its
+// gauge group, so a key dropped from a DEFAULT_CONFIG breaks the dialog at runtime rather than at
+// build time. Locks the steel compass card controls against that.
+describe('ModalWidgetComponent steel compass gauge controls', () => {
+  const unitsServiceStub: Pick<UnitsService, 'getConversionsForPath'> = {
+    getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }),
+  };
+  const appServiceStub: Pick<AppService, 'configurableThemeColors'> = { configurableThemeColors: [] };
+
+  beforeEach(() => TestBed.resetTestingModule());
+
+  it('builds a control for every card option the Settings tab binds', () => {
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        { provide: UnitsService, useValue: unitsServiceStub },
+        { provide: AppService, useValue: appServiceStub },
+        { provide: MAT_DIALOG_DATA, useValue: WidgetSteelCompassComponent.DEFAULT_CONFIG },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+      ],
+    });
+    ensureTestIconsReady();
+    const component = TestBed.createComponent(RootModalWidgetConfigComponent).componentInstance;
+    component.ngOnInit();
+
+    const gauge = component.formMaster.get('gauge') as UntypedFormGroup;
+    expect(gauge).toBeTruthy();
+    // Every key the compass Settings tab binds by name.
+    expect(gauge.get('degreeScale')?.value).toBe(true);
+    // The Classic Steel material keys, bound by the pickers the two widgets share.
+    expect(gauge.get('backgroundColor')?.value).toBe('carbon');
+    expect(gauge.get('faceColor')?.value).toBe('anthracite');
+  });
+});
+
+// The Sea Horizon heel-band pair is validated only by the template: each number input's [min]/[max]
+// follows the other field's live value, so the rule exists only once the Display tab has rendered.
+// Renders the dialog for real and drives both fields across each other so a dropped binding or a
+// dropped validator directive fails here instead of letting a crossed pair reach the widget.
+describe('ModalWidgetComponent sea horizon gauge controls', () => {
+  // The heel angles are stored in rad and shown in degrees.
+  const unitsServiceStub: Pick<UnitsService, 'getConversionsForPath' | 'convertToUnit'> = {
+    getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }),
+    convertToUnit: (unit: string, value: number) => unit === 'deg' ? value * 180 / Math.PI : value,
+  };
+  const appServiceStub: Pick<AppService, 'configurableThemeColors'> = { configurableThemeColors: [] };
+
+  beforeEach(() => TestBed.resetTestingModule());
+
+  function renderSeaHorizonDialog(): { component: RootModalWidgetConfigComponent; gauge: UntypedFormGroup } {
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        { provide: UnitsService, useValue: unitsServiceStub },
+        { provide: AppService, useValue: appServiceStub },
+        { provide: MAT_DIALOG_DATA, useValue: structuredClone(WidgetSeaHorizonComponent.DEFAULT_CONFIG) },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+      ],
+    });
+    ensureTestIconsReady();
+    const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    return { component, gauge: component.formMaster.get('gauge') as UntypedFormGroup };
+  }
+
+  it('builds a control for every gauge option the Display tab binds', () => {
+    const { gauge } = renderSeaHorizonDialog();
+    expect(gauge).toBeTruthy();
+    expect(gauge.get('invertPitch')?.value).toBe(false);
+    expect(gauge.get('invertRoll')?.value).toBe(false);
+    expect(gauge.get('noFrameVisible')?.value).toBe(true);
+    expect(gauge.get('heelCautionAngle')?.value).toBe(20);
+    expect(gauge.get('heelAlarmAngle')?.value).toBe(30);
+    expect(gauge.get('damping')?.value).toBe(0);
+    // The Classic Steel material keys, bound by the pickers the steel family shares.
+    expect(gauge.get('backgroundColor')?.value).toBe('carbon');
+    expect(gauge.get('faceColor')?.value).toBe('anthracite');
+  });
+
+  it('rejects a caution angle raised to or above the alarm angle', () => {
+    const { component, gauge } = renderSeaHorizonDialog();
+    const caution = gauge.get('heelCautionAngle');
+    expect(caution?.valid).toBe(true);
+
+    caution?.setValue(30);
+    expect(caution?.hasError('max')).toBe(true);
+    expect(component.formMaster.invalid).toBe(true);
+
+    caution?.setValue(29);
+    expect(caution?.valid).toBe(true);
+    expect(component.formMaster.valid).toBe(true);
+  });
+
+  it('rejects an alarm angle lowered to or below the caution angle', () => {
+    const { component, gauge } = renderSeaHorizonDialog();
+    const alarm = gauge.get('heelAlarmAngle');
+    expect(alarm?.valid).toBe(true);
+
+    alarm?.setValue(20);
+    expect(alarm?.hasError('min')).toBe(true);
+    expect(component.formMaster.invalid).toBe(true);
+
+    alarm?.setValue(21);
+    expect(alarm?.valid).toBe(true);
+    expect(component.formMaster.valid).toBe(true);
   });
 });
 
@@ -436,5 +559,518 @@ describe('ModalWidgetComponent updateInterval Display-tab placement', () => {
     expect(fixture.componentInstance.hasConfigurablePaths).toBe(false);
     expect(fixture.nativeElement.querySelector('input[name="updateInterval"]')).toBeTruthy();
     expect(fixture.nativeElement.querySelector('mat-checkbox[name="enableTimeout"]')).toBeTruthy();
+  });
+});
+
+describe('ModalWidgetComponent options stored in SI', () => {
+  function open(config: IWidgetSvcConfig): ComponentFixture<RootModalWidgetConfigComponent> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        UnitsService,
+        { provide: AppService, useValue: { configurableThemeColors: [] } },
+        { provide: MAT_DIALOG_DATA, useValue: config },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+        { provide: ActivePolarService, useValue: { status: signal({ kind: 'loading' }), message: signal(null), refreshIfFailed: () => undefined } }
+      ]
+    });
+    ensureTestIconsReady();
+    vi.spyOn(TestBed.inject(DataService), 'acquirePath').mockImplementation(() =>
+      ({ data$: new BehaviorSubject<IPathUpdate>({ data: { value: null, timestamp: null }, state: 'normal' } as IPathUpdate), release: () => undefined }));
+    const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
+    fixture.detectChanges();
+    return fixture;
+  }
+  const windsteer = (closeHauledLineAngle: number): IWidgetSvcConfig =>
+    ({ ...structuredClone(WidgetWindComponent.DEFAULT_CONFIG), closeHauledLineAngle, widgetName: 'Wind Steer' } as IWidgetSvcConfig);
+  const saved = (): IWidgetSvcConfig =>
+    ((TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>).mock.calls[0][0]) as IWidgetSvcConfig;
+
+  it('shows the close-hauled angle stored in rad in degrees', () => {
+    const fixture = open(windsteer(Math.PI / 4));
+    expect(fixture.componentInstance.formMaster.get('closeHauledLineAngle')?.value).toBe(45);
+    const input = fixture.nativeElement.querySelector('input[name="closeHauledLineAngle"]') as HTMLInputElement;
+    expect(Number(input.value)).toBe(45);
+  });
+
+  it('stores an entered angle in rad', () => {
+    const fixture = open(windsteer(Math.PI / 4));
+    fixture.componentInstance.formMaster.get('closeHauledLineAngle')?.setValue(50);
+    fixture.componentInstance.submitConfig();
+    expect(saved().closeHauledLineAngle).toBeCloseTo(50 * Math.PI / 180, 6);
+  });
+
+  it('leaves a stored angle bit-identical when the dialog is saved without editing it', () => {
+    const stored = 0.7; // 40.107045659... degrees: not a round trip through the rounded display value
+    const fixture = open(windsteer(stored));
+    expect(fixture.componentInstance.formMaster.get('closeHauledLineAngle')?.value).toBe(40.10704566);
+    fixture.componentInstance.submitConfig();
+    expect(saved().closeHauledLineAngle).toBe(stored);
+  });
+
+  const seaHorizon = (heelCautionAngle: number, heelAlarmAngle: number): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetSeaHorizonComponent.DEFAULT_CONFIG);
+    config.gauge = { ...config.gauge!, heelCautionAngle, heelAlarmAngle };
+    return { ...config, widgetName: 'Sea Horizon' } as IWidgetSvcConfig;
+  };
+
+  it('shows the heel angles stored in rad in degrees, and stores an edit in rad', () => {
+    const caution = 20 * Math.PI / 180;
+    const fixture = open(seaHorizon(caution, 30 * Math.PI / 180));
+    const gauge = fixture.componentInstance.formMaster.get('gauge') as UntypedFormGroup;
+    expect(gauge.get('heelCautionAngle')?.value).toBe(20);
+    expect(gauge.get('heelAlarmAngle')?.value).toBe(30);
+
+    gauge.get('heelAlarmAngle')?.setValue(35);
+    fixture.componentInstance.submitConfig();
+    expect(saved().gauge?.heelAlarmAngle).toBeCloseTo(35 * Math.PI / 180, 12);
+    // The caution angle was not edited, so it keeps its stored value exactly.
+    expect(saved().gauge?.heelCautionAngle).toBe(caution);
+  });
+
+  it('shows the AIS COG vector time stored in seconds in minutes, and stores an edit in seconds', () => {
+    const config = { ...structuredClone(WidgetAisRadarComponent.DEFAULT_CONFIG), widgetName: 'AIS Radar' } as IWidgetSvcConfig;
+    config.ais = { ...config.ais!, cogVectorsSeconds: 600 };
+    const fixture = open(config);
+    const ais = fixture.componentInstance.formMaster.get('ais') as UntypedFormGroup;
+    expect(ais.get('cogVectorsSeconds')?.value).toBe(10);
+    const input = fixture.nativeElement.querySelector('input[name="cogVectorsSeconds"]') as HTMLInputElement;
+    expect(Number(input.value)).toBe(10);
+
+    fixture.componentInstance.submitConfig();
+    expect(saved().ais?.cogVectorsSeconds).toBe(600);
+    // The range rings have no field; the dialog passes them through as stored.
+    expect(saved().ais?.rangeRings).toEqual([1852, 5556, 11112, 22224, 44448, 88896]);
+
+    ais.get('cogVectorsSeconds')?.setValue(15);
+    fixture.componentInstance.submitConfig();
+    const edited = (TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>).mock.calls[1][0] as IWidgetSvcConfig;
+    expect(edited.ais?.cogVectorsSeconds).toBeCloseTo(900, 9);
+  });
+
+  it('offers the polar close-hauled angle and the run lines, and saves their switches', () => {
+    const fixture = open(windsteer(Math.PI / 4));
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="closeHauledAngleFromPolar"]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="runLineEnable"]')).not.toBeNull();
+
+    fixture.componentInstance.formMaster.get('closeHauledAngleFromPolar')?.setValue(false);
+    fixture.componentInstance.formMaster.get('runLineEnable')?.setValue(true);
+    fixture.componentInstance.submitConfig();
+    expect(saved().closeHauledAngleFromPolar).toBe(false);
+    expect(saved().runLineEnable).toBe(true);
+  });
+
+  it('shows no close-hauled section for a widget without the option', () => {
+    const fixture = open({ ...structuredClone(WidgetRacesteerComponent.DEFAULT_CONFIG), widgetName: 'Race Steer' } as IWidgetSvcConfig);
+    expect(fixture.nativeElement.querySelector('input[name="closeHauledLineAngle"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="closeHauledLineEnable"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="closeHauledAngleFromPolar"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="runLineEnable"]')).toBeNull();
+  });
+});
+
+describe('ModalWidgetComponent polar overlay status', () => {
+  const TWS = 'self.environment.wind.speedTrue';
+  const WATER_TWA = 'self.environment.wind.angleTrueWater';
+  const STW = 'self.navigation.speedThroughWater';
+
+  class FakeActivePolarService {
+    public readonly status = signal<ActivePolarStatus>({ kind: 'loading' });
+    public readonly message = signal<string | null>(null);
+    public refreshes = 0;
+    public refreshIfFailed(): void { this.refreshes += 1; }
+  }
+
+  let polar: FakeActivePolarService;
+  let streams: Map<string, BehaviorSubject<IPathUpdate>>;
+  let acquired: string[];
+  let acquiredSources: Map<string, string>;
+  let released: string[];
+
+  const update = (value: number | null, timestamp: Date | null = value === null ? null : new Date()): IPathUpdate =>
+    ({ data: { value, timestamp }, state: 'normal' } as IPathUpdate);
+  const stream = (path: string): BehaviorSubject<IPathUpdate> => {
+    let subject = streams.get(path);
+    if (!subject) {
+      subject = new BehaviorSubject<IPathUpdate>(update(null));
+      streams.set(path, subject);
+    }
+    return subject;
+  };
+
+  function open(config: IWidgetSvcConfig): ComponentFixture<RootModalWidgetConfigComponent> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        { provide: UnitsService, useValue: { getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }), skBaseUnits: [], convertToUnit: (unit: string, value: number) => unit === 'deg' ? value * 180 / Math.PI : value } },
+        { provide: AppService, useValue: { configurableThemeColors: [] } },
+        { provide: MAT_DIALOG_DATA, useValue: config },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+        { provide: ActivePolarService, useValue: polar }
+      ]
+    });
+    ensureTestIconsReady();
+    vi.spyOn(TestBed.inject(DataService), 'acquirePath').mockImplementation((path: string, source: string): { data$: Observable<IPathUpdate>; release: () => void } => {
+      acquired.push(path);
+      acquiredSources.set(path, source);
+      return { data$: stream(path), release: () => released.push(path) };
+    });
+    const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
+    fixture.detectChanges();
+    return fixture;
+  }
+  const windsteer = (): IWidgetSvcConfig => ({ ...structuredClone(WidgetWindComponent.DEFAULT_CONFIG), widgetName: 'Wind Steer' } as IWidgetSvcConfig);
+  const hint = (fixture: ComponentFixture<RootModalWidgetConfigComponent>): string | null => {
+    fixture.detectChanges();
+    return (fixture.nativeElement.querySelector('.polar-overlay-hint') as HTMLElement | null)?.textContent?.trim() ?? null;
+  };
+
+  beforeEach(() => {
+    polar = new FakeActivePolarService();
+    streams = new Map();
+    acquired = [];
+    acquiredSources = new Map();
+    released = [];
+  });
+
+  it('shows the overlay option for Wind Steer and starts or retries the polar service on open', () => {
+    const fixture = open(windsteer());
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="polarOverlayEnable"]')).toBeTruthy();
+    expect(polar.refreshes).toBe(1);
+  });
+
+  it('neither starts the service nor watches the overlay paths for another widget', () => {
+    const fixture = open({ displayName: 'Numeric', updateInterval: 500, paths: {} } as IWidgetSvcConfig);
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="polarOverlayEnable"]')).toBeNull();
+    expect(polar.refreshes).toBe(0);
+    expect(acquired).toEqual([]);
+  });
+
+  it('saves the option with the rest of the config', () => {
+    const fixture = open(windsteer());
+    fixture.componentInstance.formMaster.get('polarOverlayEnable')?.setValue(true);
+    fixture.componentInstance.submitConfig();
+    const close = TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>;
+    expect((close.mock.calls[0][0] as IWidgetSvcConfig).polarOverlayEnable).toBe(true);
+  });
+
+  it('shows the service message as a hint when the polar cannot be used', () => {
+    polar.status.set({ kind: 'fetch-failed', cause: 401 });
+    polar.message.set('Sign in to read the active polar.');
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBe('Sign in to read the active polar.');
+  });
+
+  it('shows no hint while the service is still loading', () => {
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBeNull();
+  });
+
+  it('names an overlay input the server has never sent once the polar is ready', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    stream(STW).next(update(3));
+    const fixture = open(windsteer());
+    expect(acquired.sort()).toEqual([TWS, WATER_TWA, STW].sort());
+    expect(hint(fixture)).toBe('The Signal K server has not sent environment.wind.angleTrueWater, so the overlay stays hidden.');
+  });
+
+  it('watches each overlay input on the source the widget reads it from', () => {
+    const config = windsteer();
+    const paths = config.paths as Record<string, IWidgetPath>;
+    paths['trueWindSpeed'].source = 'n2k.115';
+    paths['trueWindAngle'].source = 'n2k.200';
+    open(config);
+    expect(acquiredSources.get(TWS)).toBe('n2k.115');
+    expect(acquiredSources.get(WATER_TWA)).toBe('n2k.200');
+    expect(acquiredSources.get(STW)).toBe('default');
+  });
+
+  it('watches the water TWA on the default source when the displayed TWA is the Ground path', () => {
+    const config = windsteer();
+    const paths = config.paths as Record<string, IWidgetPath>;
+    paths['trueWindSpeed'].source = 'n2k.115';
+    paths['trueWindAngle'] = { ...paths['trueWindAngle'], path: 'self.environment.wind.angleTrueGround', source: 'n2k.200' };
+    open(config);
+    expect(acquiredSources.get(WATER_TWA)).toBe('default');
+    expect(acquiredSources.get(TWS)).toBe('n2k.115');
+  });
+
+  it('names every missing input', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBe('The Signal K server has not sent environment.wind.angleTrueWater and navigation.speedThroughWater, so the overlay stays hidden.');
+  });
+
+  it('gives no message for an input that was received and has gone stale', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    stream(STW).next(update(3));
+    stream(WATER_TWA).next(update(0.7, new Date(Date.now() - 3_600_000)));
+    const fixture = open(windsteer());
+    expect(hint(fixture)).toBeNull();
+  });
+
+  it('clears the missing-input hint when the input arrives while the dialog is open', () => {
+    polar.status.set({ kind: 'ready' });
+    stream(TWS).next(update(5));
+    stream(STW).next(update(3));
+    const fixture = open(windsteer());
+    expect(hint(fixture)).not.toBeNull();
+
+    stream(WATER_TWA).next(update(0.7));
+    expect(hint(fixture)).toBeNull();
+  });
+
+  it('releases the watched paths when the dialog closes', () => {
+    const fixture = open(windsteer());
+    fixture.destroy();
+    expect(released.sort()).toEqual([TWS, WATER_TWA, STW].sort());
+  });
+});
+
+describe('ModalWidgetComponent scale bounds stored in SI', () => {
+  const TEMPERATURE = 'self.propulsion.main.temperature';
+  const RPM = 'self.propulsion.main.revolutions';
+  const SPEED = 'self.navigation.speedThroughWater';
+  const DEPTH = 'self.environment.depth.belowTransducer';
+  const meta = (units: string, targetUnit?: string, displayScale?: ISkMetadata['displayScale']): ISkMetadata =>
+    ({ description: '', properties: {}, units, ...(targetUnit ? { displayUnits: { targetUnit } } : {}), ...(displayScale ? { displayScale } : {}) });
+
+  let metas: Map<string, BehaviorSubject<ISkMetadata | null>>;
+  const metaOf = (path: string): BehaviorSubject<ISkMetadata | null> => {
+    let subject = metas.get(path);
+    if (!subject) {
+      subject = new BehaviorSubject<ISkMetadata | null>(null);
+      metas.set(path, subject);
+    }
+    return subject;
+  };
+
+  function open(type: string, config: IWidgetSvcConfig): ComponentFixture<RootModalWidgetConfigComponent> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        UnitsService,
+        { provide: AppService, useValue: { configurableThemeColors: [] } },
+        { provide: MAT_DIALOG_DATA, useValue: { ...config, widgetName: 'Widget', widgetType: type } },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+        { provide: ActivePolarService, useValue: { status: signal({ kind: 'loading' }), message: signal(null), refreshIfFailed: () => undefined } }
+      ]
+    });
+    ensureTestIconsReady();
+    const data = TestBed.inject(DataService);
+    vi.spyOn(data, 'getPathUnitType').mockImplementation(path => metaOf(path).value?.units ?? null);
+    vi.spyOn(data, 'getPathDisplayUnits').mockImplementation(path => metaOf(path).value?.displayUnits);
+    vi.spyOn(data, 'getPathMeta').mockImplementation(path => metaOf(path).value);
+    vi.spyOn(data, 'getPathMetaObservable').mockImplementation(path => metaOf(path).asObservable());
+    vi.spyOn(data, 'getPathObject').mockImplementation(path =>
+      metaOf(path).value ? { path, pathValue: null, pathTimestamp: '', type: 'number', state: 'normal', sources: {}, meta: metaOf(path).value! } as ReturnType<DataService['getPathObject']> : null);
+    const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
+    fixture.detectChanges();
+    return fixture;
+  }
+  const lastSaved = (): IWidgetSvcConfig => {
+    const calls = (TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>).mock.calls;
+    return calls[calls.length - 1][0] as IWidgetSvcConfig;
+  };
+  const suffix = (fixture: ComponentFixture<RootModalWidgetConfigComponent>, name: string): string | null => {
+    fixture.detectChanges();
+    const field = (fixture.nativeElement.querySelector(`input[name="${name}"]`) as HTMLElement | null)?.closest('mat-form-field');
+    return field?.querySelector('[matTextSuffix]')?.textContent?.trim() ?? null;
+  };
+
+  /** A slider on `path`; its slot is structural and has no convertUnitTo, as the slider's defaults. */
+  const slider = (path: string): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetSliderComponent.DEFAULT_CONFIG);
+    config.paths = { gaugePath: { ...(config.paths as Record<string, IWidgetPath>)['gaugePath'], path } };
+    return config;
+  };
+
+  const gauge = (path: string | null, convertUnitTo: string, lower: number | null, upper: number | null): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetGaugeNgRadialComponent.DEFAULT_CONFIG);
+    config.paths = { gaugePath: { ...(config.paths as Record<string, IWidgetPath>)['gaugePath'], path, convertUnitTo } };
+    config.displayScale = { ...config.displayScale!, lower, upper } as IWidgetSvcConfig['displayScale'];
+    return config;
+  };
+  const numeric = (path: string | null, convertUnitTo: string, yScaleMin: number | null, yScaleMax: number | null): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetNumericComponent.DEFAULT_CONFIG);
+    config.paths = { numericPath: { ...(config.paths as Record<string, IWidgetPath>)['numericPath'], path, convertUnitTo } };
+    return { ...config, yScaleMin, yScaleMax } as IWidgetSvcConfig;
+  };
+  const scale = (fixture: ComponentFixture<RootModalWidgetConfigComponent>) =>
+    fixture.componentInstance.formMaster.get('displayScale') as UntypedFormGroup;
+  const slot = (fixture: ComponentFixture<RootModalWidgetConfigComponent>, name: string) =>
+    fixture.componentInstance.formMaster.get(['paths', name]) as UntypedFormGroup;
+
+  beforeEach(() => {
+    metas = new Map();
+  });
+
+  it('shows gauge bounds stored in K in the unit the server shows the path in', () => {
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', 273.15, 393.15));
+    expect(scale(fixture).get('lower')?.value).toBe(0);
+    expect(scale(fixture).get('upper')?.value).toBe(120);
+    expect(suffix(fixture, 'lower')).toBe('°C');
+    expect(suffix(fixture, 'upper')).toBe('°C');
+  });
+
+  it('shows the bounds in the stored unit when the server sets none, and in SI without either', () => {
+    metaOf(TEMPERATURE).next(meta('K'));
+    const stored = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'fahrenheit', 273.15, 393.15));
+    expect(scale(stored).get('lower')?.value).toBe(32);
+    expect(scale(stored).get('upper')?.value).toBe(248);
+
+    const si = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', 273.15, 393.15));
+    expect(scale(si).get('upper')?.value).toBe(393.15);
+    expect(suffix(si, 'upper')).toBe('K');
+  });
+
+  it('leaves the SI bounds bit-identical when saved without edits', () => {
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const lower = 273.15 + 1 / 3;
+    const upper = 393.15 + Math.PI;
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', lower, upper));
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().displayScale?.lower).toBe(lower);
+    expect(lastSaved().displayScale?.upper).toBe(upper);
+  });
+
+  it('stores numeric bounds entered in knots in m/s', () => {
+    metaOf(SPEED).next(meta('m/s', 'knots'));
+    const fixture = open('widget-numeric', numeric(SPEED, 'knots', null, null));
+    const form = fixture.componentInstance.formMaster;
+    form.get('yScaleMin')?.setValue(0);
+    form.get('yScaleMax')?.setValue(20);
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().yScaleMin).toBe(0);
+    expect(lastSaved().yScaleMax).toBeCloseTo(10.2889, 3);
+    expect(suffix(fixture, 'yScaleMax')).toBe('kn');
+  });
+
+  it('shows an unset bound as an empty field and saves it unset, and does not require one', () => {
+    metaOf(SPEED).next(meta('m/s', 'knots'));
+    const fixture = open('widget-numeric', numeric(SPEED, 'knots', null, 5.144));
+    const form = fixture.componentInstance.formMaster;
+    const input = fixture.nativeElement.querySelector('input[name="yScaleMin"]') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(form.get('yScaleMin')?.valid).toBe(true);
+
+    form.get('yScaleMax')?.setValue(null);
+    expect(form.valid).toBe(true);
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().yScaleMin).toBeNull();
+    expect(lastSaved().yScaleMax).toBeNull();
+  });
+
+  it("hints that an empty scale field uses the path's own scale", () => {
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', null, null));
+    const field = (fixture.nativeElement.querySelector('input[name="lower"]') as HTMLElement).closest('mat-form-field') as HTMLElement;
+    expect(field.querySelector('mat-hint')?.textContent).toMatch(/empty.*path's own scale/i);
+  });
+
+  it('re-resolves the unit once when the meta arrives, for a field the user has not edited', () => {
+    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'unitless', 273.15, 393.15));
+    expect(scale(fixture).get('lower')?.value).toBe(273.15);
+    scale(fixture).get('upper')?.setValue(400);
+
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    expect(scale(fixture).get('lower')?.value).toBe(0);
+    expect(suffix(fixture, 'lower')).toBe('°C');
+    // The edited field keeps the unit it was entered in.
+    expect(scale(fixture).get('upper')?.value).toBe(400);
+
+    metaOf(TEMPERATURE).next(meta('K', 'fahrenheit'));
+    expect(scale(fixture).get('lower')?.value).toBe(0);
+
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().displayScale?.lower).toBe(273.15);
+    expect(lastSaved().displayScale?.upper).toBe(400);
+  });
+
+  describe('with the path picker', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    const pick = async (fixture: ComponentFixture<RootModalWidgetConfigComponent>, slotName: string, path: string) => {
+      const control = slot(fixture, slotName).get('path')!;
+      control.markAsDirty();
+      control.setValue(path);
+      await vi.advanceTimersByTimeAsync(400);
+    };
+
+    it('re-points a gauge from a celsius path to an rpm path: meta scale in rpm, saved in Hz', async () => {
+      metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+      metaOf(RPM).next(meta('Hz', 'rpm', { lower: 0, upper: 60, type: 'linear' }));
+      const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'celsius', 273.15, 393.15));
+      await pick(fixture, 'gaugePath', RPM);
+      expect(scale(fixture).get('lower')?.value).toBe(0);
+      expect(scale(fixture).get('upper')?.value).toBe(3600);
+      expect(suffix(fixture, 'upper')).toBe('rpm');
+
+      fixture.componentInstance.submitConfig();
+      // 0 °C was 273.15 K; the new lower bound is 0 rpm.
+      expect(lastSaved().displayScale?.lower).toBe(0);
+      expect(lastSaved().displayScale?.upper).toBeCloseTo(60, 9);
+    });
+
+    it("fills a re-pointed slider's scale in SI, the unit the slider works in", async () => {
+      metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+      metaOf(RPM).next(meta('Hz', 'rpm', { lower: 0, upper: 60, type: 'linear' }));
+      const fixture = open('widget-slider', slider(TEMPERATURE));
+      await pick(fixture, 'gaugePath', RPM);
+      expect(scale(fixture).get('upper')?.value).toBe(60);
+
+      fixture.componentInstance.submitConfig();
+      expect(lastSaved().displayScale?.lower).toBe(0);
+      expect(lastSaved().displayScale?.upper).toBe(60);
+    });
+
+    it('re-points a numeric to a path without meta scale: same numbers, new unit', async () => {
+      metaOf(SPEED).next(meta('m/s', 'knots'));
+      metaOf(DEPTH).next(meta('m', 'feet'));
+      const fixture = open('widget-numeric', numeric(SPEED, 'knots', 0, 5.144));
+      const shown = fixture.componentInstance.formMaster.get('yScaleMax')?.value as number;
+      await pick(fixture, 'numericPath', DEPTH);
+      expect(fixture.componentInstance.formMaster.get('yScaleMax')?.value).toBe(shown);
+      expect(suffix(fixture, 'yScaleMax')).toBe('ft');
+
+      fixture.componentInstance.submitConfig();
+      expect(lastSaved().yScaleMax).toBeCloseTo(shown * 0.3048, 6);
+    });
+  });
+
+  it("converts a data graph's y bounds with the unit of its path, also after a path change", () => {
+    metaOf(SPEED).next(meta('m/s', 'knots'));
+    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+    const config = { ...structuredClone(WidgetDataGraphComponent.DEFAULT_CONFIG), datachartPath: SPEED,
+      yScaleMin: 0, yScaleMax: 5.144, yScaleSuggestedMin: null, yScaleSuggestedMax: 2.572 } as unknown as IWidgetSvcConfig;
+    const fixture = open('widget-data-chart', config);
+    const form = fixture.componentInstance.formMaster;
+    expect(form.get('yScaleMax')?.value).toBeCloseTo(10, 2);
+    expect(form.get('yScaleSuggestedMax')?.value).toBeCloseTo(5, 2);
+    expect(form.get('yScaleSuggestedMin')?.value).toBeNull();
+    expect(suffix(fixture, 'yScaleSuggestedMax')).toBe('kn');
+
+    form.get('datachartPath')?.setValue(TEMPERATURE);
+    expect(suffix(fixture, 'yScaleMin')).toBe('°C');
+    form.get('yScaleMax')?.setValue(100);
+    fixture.componentInstance.submitConfig();
+    expect(lastSaved().yScaleMin).toBeCloseTo(273.15, 9);
+    expect(lastSaved().yScaleMax).toBeCloseTo(373.15, 9);
+    expect(lastSaved().yScaleSuggestedMin).toBeNull();
+  });
+
+  it("leaves a slider's scale, which is already SI, as it is", () => {
+    metaOf(RPM).next(meta('Hz', 'rpm'));
+    const fixture = open('widget-slider', slider(RPM));
+    expect(scale(fixture).get('upper')?.value).toBe(1);
+    expect(suffix(fixture, 'upper')).toBeNull();
   });
 });

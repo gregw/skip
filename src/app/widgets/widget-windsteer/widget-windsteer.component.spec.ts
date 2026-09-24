@@ -1,12 +1,20 @@
 import { WritableSignal, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { WidgetWindComponent, computeTrueWindBaseAngle } from './widget-windsteer.component';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WidgetWindComponent, computeTrueWindBaseAngle, resolvePolarOverlayMode, PolarOverlayModeInputs, resolvePolarLineAngles } from './widget-windsteer.component';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { UnitsService } from '../../core/services/units.service';
 import { IPathUpdate } from '../../core/services/data.service';
-import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
+import { IWidgetPath, IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
+import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
+import { Polar, PolarResult, PolarTargets, toCanonicalPolarTable } from '../../core/utils/polar-engine.util';
+import { OverlayPoint, OverlayScale, POLAR_PATH_KEYS, VMC_HEADING_STEP, VmcOptimum, polarCurve, polarSpeedProfile, speedToRadius, vmcOptimum } from '../../core/utils/polar-overlay.util';
+import { PolarOverlayMode } from '../svg-windsteer/svg-windsteer.component';
+import { SI_VERSION_KEY, V20_MIGRATION_OUTPUT_VERSION } from '../../core/utils/config-migration.util';
+import hurmaPolar from '../../core/utils/polar-engine.hurma-polar.fixture.json';
+
+const DEG = Math.PI / 180;
 
 const unitsServiceStub = {
   getUnitDisplaySymbol: (measure: string | null | undefined) => measure ?? '',
@@ -31,21 +39,21 @@ describe('computeTrueWindBaseAngle (#1066, #1063)', () => {
 
   it('keeps boat-relative true wind angle unchanged in simple mode (compass mode off)', () => {
     // heading 90°, boat-relative TWA 45° -> must stay 45° in simple mode (NOT 135°)
-    expect(computeTrueWindBaseAngle(TRUE_WATER, 45, 90, false)).toBe(45);
-    expect(computeTrueWindBaseAngle(TRUE_GROUND, 45, 90, false)).toBe(45);
+    expect(computeTrueWindBaseAngle(TRUE_WATER, 45 * DEG, 90 * DEG, false)).toBe(45 * DEG);
+    expect(computeTrueWindBaseAngle(TRUE_GROUND, 45 * DEG, 90 * DEG, false)).toBe(45 * DEG);
   });
 
   it('converts true wind angle to the compass frame (adds heading) in enhanced/compass mode', () => {
-    expect(computeTrueWindBaseAngle(TRUE_WATER, 45, 90, true)).toBe(135);
+    expect(computeTrueWindBaseAngle(TRUE_WATER, 45 * DEG, 90 * DEG, true)).toBeCloseTo(135 * DEG, 12);
   });
 
-  it('wraps the compass-frame result into 0..359 in enhanced/compass mode', () => {
-    expect(computeTrueWindBaseAngle(TRUE_WATER, 300, 90, true)).toBe(30); // 390 -> 30
+  it('wraps the compass-frame result into [0, 2π) in enhanced/compass mode', () => {
+    expect(computeTrueWindBaseAngle(TRUE_WATER, 300 * DEG, 90 * DEG, true)).toBeCloseTo(30 * DEG, 12); // 390 -> 30
   });
 
   it('passes through non boat-relative true wind paths (e.g. directionTrue) in both modes', () => {
-    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200, 90, false)).toBe(200);
-    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200, 90, true)).toBe(200);
+    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200 * DEG, 90 * DEG, false)).toBe(200 * DEG);
+    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200 * DEG, 90 * DEG, true)).toBe(200 * DEG);
   });
 });
 
@@ -93,19 +101,19 @@ describe('WidgetWindComponent live compass-mode toggle (#73)', () => {
   });
 
   it('recomputes the TWA base on a live compass-mode toggle without a new wind sample', () => {
-    callbacks.get('headingPath')!(update(90));
-    callbacks.get('trueWindAngle')!(update(45));
-    expect(twa()).toBe(45); // simple mode: boat-relative angle shown as-is
+    callbacks.get('headingPath')!(update(90 * DEG));
+    callbacks.get('trueWindAngle')!(update(45 * DEG));
+    expect(twa()).toBeCloseTo(45 * DEG, 12); // simple mode: boat-relative angle shown as-is
 
     options.set(makeConfig(true));
     TestBed.tick();
 
-    expect(twa()).toBe(135); // compass mode: heading (90) added to the cached angle (45)
+    expect(twa()).toBeCloseTo(135 * DEG, 12); // compass mode: heading (90) added to the cached angle (45)
   });
 });
 
 /**
- * Wind sectors and layline gating are driven by TRUE wind, not apparent wind.
+ * Wind sectors and close-hauled line gating are driven by TRUE wind, not apparent wind.
  * The sector history must be fed only from the true-wind stream, and trueWindFresh
  * must track whether the configured true-wind path is currently delivering a value.
  */
@@ -199,12 +207,12 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
   it('freezes every angle/speed path on a null sample instead of resetting it to 0', () => {
     vi.useFakeTimers();
     try {
-      callbacks.get('headingPath')!(update(123));
-      callbacks.get('appWindAngle')!(update(45));
-      callbacks.get('courseOverGround')!(update(20));
+      callbacks.get('headingPath')!(update(123 * DEG));
+      callbacks.get('appWindAngle')!(update(45 * DEG));
+      callbacks.get('courseOverGround')!(update(20 * DEG));
       callbacks.get('trueWindSpeed')!(update(12));
       callbacks.get('appWindSpeed')!(update(9));
-      callbacks.get('set')!(update(80));
+      callbacks.get('set')!(update(80 * DEG));
       callbacks.get('drift')!(update(0.4));
       callbacks.get('headingPath')!(update(null));
       callbacks.get('appWindAngle')!(update(null));
@@ -213,12 +221,12 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
       callbacks.get('appWindSpeed')!(update(null));
       callbacks.get('set')!(update(null));
       callbacks.get('drift')!(update(null));
-      expect(sig('currentHeading')).toBe(123);        // all frozen, none reset to 0
-      expect(sig('appWindAngle')).toBe(45);
-      expect(sig('courseOverGroundAngle')).toBe(20);
+      expect(sig('currentHeading')).toBeCloseTo(123 * DEG, 12);        // all frozen, none reset to 0
+      expect(sig('appWindAngle')).toBeCloseTo(45 * DEG, 12);
+      expect(sig('courseOverGroundAngle')).toBeCloseTo(20 * DEG, 12);
       expect(sig('trueWindSpeed')).toBe(12);
       expect(sig('appWindSpeed')).toBe(9);
-      expect(sig('driftSet')).toBe(80);
+      expect(sig('driftSet')).toBeCloseTo(80 * DEG, 12);
       expect(sig('driftFlow')).toBe(0.4);
     } finally { vi.useRealTimers(); }
   });
@@ -258,12 +266,12 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
   it('re-shows a path when data resumes after it went stale', () => {
     vi.useFakeTimers();
     try {
-      callbacks.get('appWindAngle')!(update(30));
+      callbacks.get('appWindAngle')!(update(30 * DEG));
       vi.advanceTimersByTime(5000);
       expect(sig('appWindFresh')).toBe(false);   // hidden
-      callbacks.get('appWindAngle')!(update(35)); // data resumes
+      callbacks.get('appWindAngle')!(update(35 * DEG)); // data resumes
       expect(sig('appWindFresh')).toBe(true);     // shown again
-      expect(sig('appWindAngle')).toBe(35);
+      expect(sig('appWindAngle')).toBeCloseTo(35 * DEG, 12);
     } finally { vi.useRealTimers(); }
   });
 
@@ -371,8 +379,8 @@ describe('WidgetWindComponent waypoint presence (#441)', () => {
   });
 
   it('propagates a real waypoint bearing', () => {
-    callbacks.get('nextWaypointBearing')!(update(120));
-    expect(wpt()).toBe(120);
+    callbacks.get('nextWaypointBearing')!(update(120 * DEG));
+    expect(wpt()).toBeCloseTo(120 * DEG, 12);
   });
 
   it('treats a zero bearing as a real value (waypoint due north)', () => {
@@ -381,8 +389,8 @@ describe('WidgetWindComponent waypoint presence (#441)', () => {
   });
 
   it('clears the bearing to undefined when the destination goes away (null)', () => {
-    callbacks.get('nextWaypointBearing')!(update(120));
-    expect(wpt()).toBe(120);
+    callbacks.get('nextWaypointBearing')!(update(120 * DEG));
+    expect(wpt()).toBeCloseTo(120 * DEG, 12);
     callbacks.get('nextWaypointBearing')!(update(null));
     expect(wpt()).toBeUndefined();
   });
@@ -535,18 +543,20 @@ describe('WidgetWindComponent speed-over-ground gating (#442)', () => {
 });
 
 /**
- * #441: the current-set arrow and drift readout hide below a physical-speed threshold. The limit is
- * defined in SI (m/s) and expressed in the value's own display unit before comparison, so the cutoff
- * is the same real current whether the readout is in knots, m/s, or km/h.
+ * #441/#637: the drift readout shows at any magnitude; only the set arrow is gated on speed, with
+ * hysteresis so an estimate hovering near the limit cannot blink it. The limits and the value are
+ * both in m/s, so the cutoff is the same real current whether the readout is in knots, m/s, or km/h.
  */
-describe('WidgetWindComponent drift/current gating (#441)', () => {
+describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
   let component: WidgetWindComponent;
   let options: WritableSignal<IWidgetSvcConfig | undefined>;
   let callbacks: Map<string, (u: IPathUpdate) => void>;
 
   const update = (value: number | null, measure?: string): IPathUpdate => ({ data: { value, timestamp: null, measure }, state: 'normal' });
-  const driftActive = (): boolean => (component as unknown as { driftActive: () => boolean }).driftActive();
+  const setArrowActive = (): boolean => (component as unknown as { setArrowActive: () => boolean }).setArrowActive();
   const driftUnit = (): string => (component as unknown as { driftUnit: () => string }).driftUnit();
+  // Show at 0.1 m/s, hide below 0.05 m/s: the band between keeps the arrow's last state.
+  const HYSTERESIS_STEPS_MS: [number, boolean][] = [[0.12, true], [0.07, true], [0.04, false], [0.07, false], [0.11, true]];
 
   beforeEach(() => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
@@ -565,23 +575,647 @@ describe('WidgetWindComponent drift/current gating (#441)', () => {
     TestBed.tick();
   });
 
-  it('hides below 0.1 m/s and shows above it when the value is in knots', () => {
-    // 0.1 m/s -> ~0.19 kn threshold; driftFlow is the display (knots) value.
-    callbacks.get('drift')!(update(0.15, 'knots'));  // 0.15 kn < 0.19 kn
-    expect(driftActive()).toBe(false);
-    callbacks.get('drift')!(update(0.3, 'knots'));   // 0.3 kn > 0.19 kn
-    expect(driftActive()).toBe(true);
+  it('starts with the set arrow hidden', () => {
+    expect(setArrowActive()).toBe(false);
   });
 
-  it('applies the 0.1 m/s threshold directly when the value is already in m/s', () => {
-    callbacks.get('drift')!(update(0.05, 'm/s'));
-    expect(driftActive()).toBe(false);
-    callbacks.get('drift')!(update(0.15, 'm/s'));
-    expect(driftActive()).toBe(true);
+  it('applies set-arrow hysteresis to drift presented in knots', () => {
+    for (const [ms, shown] of HYSTERESIS_STEPS_MS) {
+      callbacks.get('drift')!(update(ms, 'knots'));
+      expect(setArrowActive(), `${ms} m/s`).toBe(shown);
+    }
+  });
+
+  it('applies set-arrow hysteresis to drift presented in m/s', () => {
+    for (const [ms, shown] of HYSTERESIS_STEPS_MS) {
+      callbacks.get('drift')!(update(ms, 'm/s'));
+      expect(setArrowActive(), `${ms} m/s`).toBe(shown);
+    }
+  });
+
+  it('keeps the drift value at any magnitude, including zero', () => {
+    const driftFlow = (): number => (component as unknown as { driftFlow: () => number }).driftFlow();
+    callbacks.get('drift')!(update(0, 'm/s'));
+    expect(driftFlow()).toBe(0);
+    expect(setArrowActive()).toBe(false);
   });
 
   it('exposes the drift display unit for the readout label', () => {
     callbacks.get('drift')!(update(0.4, 'knots'));
     expect(driftUnit()).toBe('knots');
+  });
+});
+
+describe('WidgetWindComponent default config', () => {
+  it('stores the close-hauled angle in rad, 45° by default, and carries the SI marker of the v20 step', () => {
+    expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledLineAngle).toBe(Math.PI / 4);
+    expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledLineEnable).toBe(true);
+    expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledAngleFromPolar).toBe(true);
+    expect(WidgetWindComponent.DEFAULT_CONFIG.runLineEnable).toBe(false);
+    expect(WidgetWindComponent.DEFAULT_CONFIG[SI_VERSION_KEY as 'siVersion']).toBe(V20_MIGRATION_OUTPUT_VERSION);
+    expect(WidgetWindComponent.OPTION_UNITS).toEqual({ closeHauledLineAngle: 'rad' });
+  });
+});
+
+describe('resolvePolarOverlayMode', () => {
+  const all: PolarOverlayModeInputs = {
+    enabled: true, polarReady: true, twsFresh: true, twaFresh: true,
+    compassMode: true, headingFresh: true, waypointActive: true
+  };
+
+  it.each([
+    ['option off', { enabled: false }, 'hidden'],
+    ['no usable polar', { polarReady: false }, 'hidden'],
+    ['stale TWS', { twsFresh: false }, 'hidden'],
+    ['stale water TWA', { twaFresh: false }, 'hidden'],
+    ['everything for VMC', {}, 'vmc'],
+    ['compass mode off', { compassMode: false }, 'polar'],
+    ['stale heading', { headingFresh: false }, 'polar'],
+    ['no active waypoint', { waypointActive: false }, 'polar']
+  ] as [string, Partial<PolarOverlayModeInputs>, PolarOverlayMode][])('%s gives %s', (_label, change, mode) => {
+    expect(resolvePolarOverlayMode({ ...all, ...change })).toBe(mode);
+  });
+});
+
+describe('resolvePolarLineAngles', () => {
+  const FIXED = 45 * DEG;
+  const targets = (tws: 'in_range' | 'below_range' | 'above_range', beat: number | null, run: number | null): PolarResult<PolarTargets> => ({
+    value: {
+      beat: beat === null ? null : { twa: beat, speed: 3, vmg: 2 },
+      run: run === null ? null : { twa: run, speed: 3, vmg: 2 },
+      maxSpeed: { twa: 2, speed: 4 }
+    },
+    state: { available: true, tws, twa: null }
+  });
+
+  it('takes the polar beat and run angles', () => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: true, targets: targets('in_range', 0.7, 2.6) }))
+      .toEqual({ closeHauled: 0.7, run: 2.6 });
+  });
+
+  it('keeps the fixed angle with the switch off, and still draws the run lines', () => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: false, runLines: true, targets: targets('in_range', 0.7, 2.6) }))
+      .toEqual({ closeHauled: FIXED, run: 2.6 });
+  });
+
+  it.each([
+    ['above', targets('above_range', 0.7, 2.6)],
+    ['below', targets('below_range', 0.7, 2.6)]
+  ])('takes the nearest column\'s angles for a TWS %s the table, so gusts across its edge do not flip the lines', (_label, result) => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: true, targets: result }))
+      .toEqual({ closeHauled: 0.7, run: 2.6 });
+  });
+
+  it.each([
+    ['no polar targets (no polar, stale TWS)', null],
+    ['a table with no beat or run side at this TWS', targets('in_range', null, null)]
+  ])('falls back to the fixed angle and hides the run lines with %s', (_label, result) => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: true, targets: result }))
+      .toEqual({ closeHauled: FIXED, run: null });
+  });
+
+  it('hides the run lines with their option off', () => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: false, targets: targets('in_range', 0.7, 2.6) }).run)
+      .toBeNull();
+  });
+});
+
+/** Wind Steer polar overlay (#478): option, SI inputs, mode decision and geometry handed to the SVG. */
+describe('WidgetWindComponent polar overlay', () => {
+  const TTL_MS = 5000;
+  const TWS_MS = 5;
+  const WATER_TWA_DEG = 45;
+
+  function polarFrom(source: unknown): Polar {
+    const result = toCanonicalPolarTable(source);
+    if (!result.ok) throw new Error(result.reason);
+    return new Polar(result.table);
+  }
+  const hurma = polarFrom(hurmaPolar);
+  /** Same shape as the fixture, every speed halved: a smaller boat on the same axes. */
+  const halfHurma = polarFrom({
+    ...hurmaPolar,
+    values: { boatSpeedMatrix: hurmaPolar.values.boatSpeedMatrix.map(row => row.map(speed => speed / 2)) }
+  });
+  const scaleOf = (polar: Polar): OverlayScale => ({ peakSpeed: polar.peakSpeed() ?? 0, peakRadius: 300, dialRadius: 350 });
+
+  class FakeActivePolarService {
+    public readonly status = signal<ActivePolarStatus>({ kind: 'ready' });
+    public readonly polar = signal<Polar | null>(hurma);
+    public readonly peakSpeed = signal<number | null>(hurma.peakSpeed());
+    public readonly performanceFactor = signal(1);
+    public starts = 0;
+    public ensureStarted(): void { this.starts += 1; }
+    public use(polar: Polar): void {
+      this.polar.set(polar);
+      this.peakSpeed.set(polar.peakSpeed());
+    }
+  }
+
+  interface OverlayView {
+    closeHauledAngle: () => number;
+    runLineAngle: () => number | null;
+    overlayMode: () => PolarOverlayMode;
+    polarCurvePoints: () => OverlayPoint[] | null;
+    vmcCurvePoints: () => OverlayPoint[] | null;
+    vmcOptima: () => { port: VmcOptimum | null; starboard: VmcOptimum | null } | null;
+    overlayTwa: () => number;
+    overlayDotRadius: () => number | null;
+  }
+
+  let component: WidgetWindComponent;
+  let view: OverlayView;
+  let options: WritableSignal<IWidgetSvcConfig | undefined>;
+  let callbacks: Map<string, (u: IPathUpdate) => void>;
+  let unobserved: string[];
+  let polarService: FakeActivePolarService;
+
+  const makeConfig = (overrides: Partial<IWidgetSvcConfig> = {}): IWidgetSvcConfig => ({
+    ...WidgetWindComponent.DEFAULT_CONFIG,
+    compassModeEnabled: true,
+    windSectorEnable: false,
+    polarOverlayEnable: true,
+    ...overrides
+  });
+  const update = (value: number | null, measure?: string): IPathUpdate =>
+    ({ data: { value, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
+  const feed = (pathKey: string, value: number | null, measure?: string): void => {
+    const callback = callbacks.get(pathKey);
+    if (!callback) throw new Error(`${pathKey} is not observed`);
+    callback(update(value, measure));
+  };
+  /** Fresh overlay wind: TWS in m/s and water TWA in rad on the SI slots. */
+  const feedWind = (twsMs = TWS_MS, waterTwaDeg = WATER_TWA_DEG): void => {
+    feed('polarTrueWindSpeed', twsMs);
+    feed('polarTrueWindAngle', waterTwaDeg * DEG);
+  };
+  /** Compass mode with fresh heading and a fresh waypoint bearing. */
+  const feedWaypoint = (headingDeg: number, bearingDeg: number): void => {
+    feed('headingPath', headingDeg * DEG);
+    feed('nextWaypointBearing', bearingDeg * DEG);
+  };
+  const create = (config: IWidgetSvcConfig): void => {
+    options.set(config);
+    component = TestBed.runInInjectionContext(() => new WidgetWindComponent());
+    view = component as unknown as OverlayView;
+    TestBed.tick();
+  };
+  const reconfigure = (config: IWidgetSvcConfig): void => {
+    options.set(config);
+    TestBed.tick();
+  };
+  const longestSpoke = (points: readonly OverlayPoint[]): OverlayPoint =>
+    points.reduce((best, point) => point.r > best.r ? point : best);
+  const angleDiff = (a: number, b: number): number => {
+    const wrapped = ((a - b) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    return wrapped > Math.PI ? wrapped - 2 * Math.PI : wrapped;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    options = signal<IWidgetSvcConfig | undefined>(undefined);
+    callbacks = new Map<string, (u: IPathUpdate) => void>();
+    unobserved = [];
+    polarService = new FakeActivePolarService();
+    const streamsMock = {
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      unobserve: (pathName: string) => { unobserved.push(pathName); callbacks.delete(pathName); }
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: WidgetRuntimeDirective, useValue: { options } },
+        { provide: WidgetStreamsDirective, useValue: streamsMock },
+        { provide: UnitsService, useValue: unitsServiceStub },
+        { provide: ActivePolarService, useValue: polarService }
+      ]
+    });
+  });
+
+  afterEach(() => {
+    component?.ngOnDestroy();
+    vi.useRealTimers();
+  });
+
+  describe('option and paths', () => {
+    it('keeps the overlay off in a stored config that has it off, through the defaults merge', () => {
+      const runtime = TestBed.runInInjectionContext(() => new WidgetRuntimeDirective());
+      runtime.initialize(WidgetWindComponent.DEFAULT_CONFIG, { polarOverlayEnable: false } as IWidgetSvcConfig);
+      expect(runtime.options()?.polarOverlayEnable).toBe(false);
+    });
+
+    it('defaults the option on and declares the three SI slots hidden, structural and optional', () => {
+      const paths = WidgetWindComponent.DEFAULT_CONFIG.paths as Record<string, IWidgetPath>;
+      expect(WidgetWindComponent.DEFAULT_CONFIG.polarOverlayEnable).toBe(true);
+      for (const [key, path, unit] of [
+        ['polarTrueWindSpeed', 'self.environment.wind.speedTrue', 'm/s'],
+        ['polarTrueWindAngle', 'self.environment.wind.angleTrueWater', 'rad'],
+        ['polarSpeedThroughWater', 'self.navigation.speedThroughWater', 'm/s']
+      ]) {
+        expect(paths[key]).toMatchObject({
+          path, convertUnitTo: unit, isPathConfigurable: false, hideFromConfig: true,
+          showConvertUnitTo: false, pathRequired: false
+        });
+      }
+      expect(paths['polarTrueWindSpeed'].sourceFromPath).toBe('trueWindSpeed');
+      expect(paths['polarTrueWindAngle'].sourceFromPath).toBe('trueWindAngle');
+      expect(paths['polarSpeedThroughWater'].sourceFromPath).toBeUndefined();
+    });
+
+    it('shares its SI slot keys with the options dialog: exactly the hidden polar slots of the default config', () => {
+      const paths = WidgetWindComponent.DEFAULT_CONFIG.paths as Record<string, IWidgetPath>;
+      const hiddenPolarSlots = Object.keys(paths).filter(key => key.startsWith('polar') && paths[key].hideFromConfig);
+      expect([...POLAR_PATH_KEYS].sort()).toEqual(hiddenPolarSlots.sort());
+    });
+
+    it('with every polar feature off, observes none of the SI slots and never starts the polar service', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false, runLineEnable: false }));
+      expect([...callbacks.keys()].filter(key => key.startsWith('polar'))).toEqual([]);
+      expect(polarService.starts).toBe(0);
+      expect(view.overlayMode()).toBe('hidden');
+    });
+
+    it('with the option on, observes the SI slots and starts the polar service', () => {
+      create(makeConfig());
+      expect(callbacks.has('polarTrueWindSpeed')).toBe(true);
+      expect(callbacks.has('polarTrueWindAngle')).toBe(true);
+      expect(callbacks.has('polarSpeedThroughWater')).toBe(true);
+      expect(polarService.starts).toBeGreaterThan(0);
+    });
+
+    it('releases the SI slots when the option is turned off and hides the overlay', () => {
+      create(makeConfig({ closeHauledAngleFromPolar: false }));
+      feedWind();
+      expect(view.overlayMode()).toBe('polar');
+
+      reconfigure(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false }));
+      expect(unobserved.sort()).toEqual(['polarSpeedThroughWater', 'polarTrueWindAngle', 'polarTrueWindSpeed']);
+      expect(view.overlayMode()).toBe('hidden');
+    });
+
+    it('waits for fresh SI samples after the option is turned back on', () => {
+      create(makeConfig({ closeHauledAngleFromPolar: false }));
+      feedWind();
+      reconfigure(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false }));
+      reconfigure(makeConfig({ closeHauledAngleFromPolar: false }));
+      expect(view.overlayMode()).toBe('hidden');
+      feedWind();
+      expect(view.overlayMode()).toBe('polar');
+    });
+  });
+
+  describe('close-hauled and run lines', () => {
+    const beatAt = (tws: number): number => hurma.targetsAt({ tws }).value?.beat?.twa ?? NaN;
+    const runAt = (tws: number): number => hurma.targetsAt({ tws }).value?.run?.twa ?? NaN;
+
+    it('draws the lines at the polar beat angle for a fresh TWS, and moves them with TWS', () => {
+      // Beats wider in light air: the fixture's beat angle sits on its 40° floor at every TWS.
+      const widening = polarFrom({
+        kind: 'polarTable',
+        units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+        symmetry: { portStarboardSymmetric: true },
+        axes: { tws: [3, 8], twa: [30, 40, 50, 60, 90, 120, 150, 180].map(deg => deg * DEG) },
+        values: { boatSpeedMatrix: [[1.0, 2.0, 3.2, 3.5, 3.8, 3.6, 3.0, 2.6], [3.0, 5.0, 5.4, 5.6, 6.0, 6.2, 5.8, 5.2]] }
+      });
+      polarService.use(widening);
+      const beat = (tws: number): number => widening.targetsAt({ tws }).value?.beat?.twa ?? NaN;
+      create(makeConfig());
+      feed('polarTrueWindSpeed', 3.5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beat(3.5), 9);
+      feed('polarTrueWindSpeed', 7.5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beat(7.5), 9);
+      expect(beat(7.5)).not.toBeCloseTo(beat(3.5), 2);
+    });
+
+    it('keeps the fixed angle with the switch off', () => {
+      create(makeConfig({ closeHauledAngleFromPolar: false }));
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+    });
+
+    it('holds the top column\'s angles above the table, and falls back to the fixed angle with stale TWS', () => {
+      create(makeConfig({ runLineEnable: true }));
+      feed('polarTrueWindSpeed', 12);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(9.26), 9);
+      expect(view.runLineAngle()).toBeCloseTo(runAt(9.26), 9);
+
+      vi.advanceTimersByTime(TTL_MS + 1);
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+      expect(view.runLineAngle()).toBeNull();
+    });
+
+    it.each([
+      ['no active polar', (): void => { polarService.status.set({ kind: 'loading' }); polarService.polar.set(null); }],
+      ['a polar that failed to load', (): void => { polarService.status.set({ kind: 'fetch-failed', cause: 401 }); }]
+    ])('falls back to the fixed angle and hides the run lines with %s', (_label, lose) => {
+      create(makeConfig({ runLineEnable: true }));
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(5), 9);
+      expect(view.runLineAngle()).toBeCloseTo(runAt(5), 9);
+
+      lose();
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+      expect(view.runLineAngle()).toBeNull();
+    });
+
+    it('keeps TWS and the polar angle when the overlay is turned off, and releases only the overlay slots', () => {
+      create(makeConfig());
+      feedWind();
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(TWS_MS), 9);
+
+      reconfigure(makeConfig({ polarOverlayEnable: false }));
+      expect(unobserved.sort()).toEqual(['polarSpeedThroughWater', 'polarTrueWindAngle']);
+      expect(view.overlayMode()).toBe('hidden');
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(TWS_MS), 9);
+
+      reconfigure(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false }));
+      expect(unobserved).toContain('polarTrueWindSpeed');
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+
+      reconfigure(makeConfig({ polarOverlayEnable: false }));
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+      feed('polarTrueWindSpeed', TWS_MS);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(TWS_MS), 9);
+    });
+
+    it('keeps the wind sectors on the polar angle with the close-hauled lines off', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledLineEnable: false, windSectorEnable: true }));
+      expect(polarService.starts).toBeGreaterThan(0);
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(5), 9);
+    });
+
+    it('draws the run lines at the polar run angle only with their option on', () => {
+      create(makeConfig());
+      feed('polarTrueWindSpeed', 5);
+      expect(view.runLineAngle()).toBeNull();
+
+      reconfigure(makeConfig({ runLineEnable: true }));
+      expect(view.runLineAngle()).toBeCloseTo(runAt(5), 9);
+    });
+
+    it('with the overlay off, loads the polar and observes TWS for the polar lines alone', () => {
+      create(makeConfig({ polarOverlayEnable: false }));
+      expect(polarService.starts).toBeGreaterThan(0);
+      expect([...callbacks.keys()].filter(key => key.startsWith('polar'))).toEqual(['polarTrueWindSpeed']);
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(5), 9);
+      expect(view.overlayMode()).toBe('hidden');
+    });
+
+    it('with the run lines alone, loads the polar and observes TWS', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false, runLineEnable: true }));
+      expect(polarService.starts).toBeGreaterThan(0);
+      expect([...callbacks.keys()].filter(key => key.startsWith('polar'))).toEqual(['polarTrueWindSpeed']);
+    });
+
+    it('with the close-hauled lines and the wind sectors off, the angle switch alone does not load the polar', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledLineEnable: false, windSectorEnable: false }));
+      expect(polarService.starts).toBe(0);
+      expect(callbacks.has('polarTrueWindSpeed')).toBe(false);
+    });
+  });
+
+  describe('polar mode', () => {
+    it('draws the polar curve for the SI TWS with a dot at STW when there is no waypoint', () => {
+      create(makeConfig());
+      feedWind();
+      feed('polarSpeedThroughWater', 3);
+
+      expect(view.overlayMode()).toBe('polar');
+      expect(view.polarCurvePoints()).toEqual(polarCurve(hurma, TWS_MS, 1, scaleOf(hurma)));
+      expect(view.vmcCurvePoints()).toBeNull();
+      expect(view.overlayDotRadius()).toBeCloseTo(speedToRadius(3, scaleOf(hurma)), 9);
+    });
+
+    it('scales the polar curve by the performance factor', () => {
+      polarService.performanceFactor.set(0.8);
+      create(makeConfig());
+      feedWind();
+      expect(view.polarCurvePoints()).toEqual(polarCurve(hurma, TWS_MS, 0.8, scaleOf(hurma)));
+    });
+
+    it('takes the geometry TWS from the SI slot, not the displayed TWS', () => {
+      create(makeConfig());
+      feed('trueWindSpeed', TWS_MS, 'knots');
+      feedWind();
+      expect(view.polarCurvePoints()).toEqual(polarCurve(hurma, TWS_MS, 1, scaleOf(hurma)));
+
+      feed('trueWindSpeed', 10, 'knots');
+      expect(view.polarCurvePoints()).toEqual(polarCurve(hurma, TWS_MS, 1, scaleOf(hurma)));
+    });
+
+    it('rotates the curve by the water TWA even when the displayed TWA is the Ground path', () => {
+      const paths = WidgetWindComponent.DEFAULT_CONFIG.paths as Record<string, IWidgetPath>;
+      create(makeConfig({
+        paths: { ...paths, trueWindAngle: { ...paths['trueWindAngle'], path: 'self.environment.wind.angleTrueGround' } }
+      }));
+      feed('headingPath', 0);
+      feed('trueWindAngle', 60 * DEG);
+      feedWind(TWS_MS, 45);
+
+      expect(view.overlayTwa()).toBeCloseTo(45 * DEG, 9);
+      expect(view.overlayMode()).toBe('polar');
+    });
+
+    it('stays hidden without a water TWA even when the displayed true wind is fresh', () => {
+      create(makeConfig());
+      feed('trueWindAngle', 45 * DEG);
+      feed('trueWindSpeed', 10, 'knots');
+      feed('polarTrueWindSpeed', TWS_MS);
+      expect(view.overlayMode()).toBe('hidden');
+    });
+
+    it('does not redraw for water TWA changes under 1°', () => {
+      create(makeConfig());
+      feedWind(TWS_MS, 45);
+      feed('polarTrueWindAngle', 45.6 * DEG);
+      expect(view.overlayTwa()).toBeCloseTo(45 * DEG, 9);
+      feed('polarTrueWindAngle', 46.2 * DEG);
+      expect(view.overlayTwa()).toBeCloseTo(46.2 * DEG, 9);
+    });
+
+    it('hides only the dot when STW goes stale', () => {
+      create(makeConfig());
+      feedWind();
+      feed('polarSpeedThroughWater', 3);
+      vi.advanceTimersByTime(TTL_MS - 1000);
+      feedWind();
+      vi.advanceTimersByTime(2000);
+
+      expect(view.overlayDotRadius()).toBeNull();
+      expect(view.overlayMode()).toBe('polar');
+      expect(view.polarCurvePoints()).not.toBeNull();
+    });
+
+    it('hides the overlay when TWS goes stale', () => {
+      create(makeConfig());
+      feedWind();
+      vi.advanceTimersByTime(TTL_MS + 1);
+      expect(view.overlayMode()).toBe('hidden');
+    });
+
+    it('hides the overlay while the service has no usable polar, such as after a 401', () => {
+      create(makeConfig());
+      feedWind();
+      polarService.status.set({ kind: 'fetch-failed', cause: 401 });
+      expect(view.overlayMode()).toBe('hidden');
+      expect(view.polarCurvePoints()).toBeNull();
+      expect(view.overlayDotRadius()).toBeNull();
+    });
+
+    it('redraws with the new scale when the active polar switches mid-session', () => {
+      create(makeConfig());
+      feedWind();
+      feed('polarSpeedThroughWater', 2);
+      const before = view.overlayDotRadius();
+
+      polarService.use(halfHurma);
+      expect(view.polarCurvePoints()).toEqual(polarCurve(halfHurma, TWS_MS, 1, scaleOf(halfHurma)));
+      expect(view.overlayDotRadius()).toBeCloseTo(speedToRadius(2, scaleOf(halfHurma)), 9);
+      expect(view.overlayDotRadius()).toBeCloseTo((before ?? 0) * 2, 6);
+    });
+  });
+
+  describe('VMC mode', () => {
+    it('switches to VMC with compass mode, fresh heading and an active waypoint', () => {
+      create(makeConfig());
+      feedWind();
+      feedWaypoint(30, 10);
+
+      expect(view.overlayMode()).toBe('vmc');
+      expect(view.vmcCurvePoints()?.length).toBeGreaterThan(0);
+      expect(view.polarCurvePoints()).toBeNull();
+    });
+
+    it('puts the longest spoke at the best heading for HDG 030°, BTW 010°, water TWA 45°', () => {
+      create(makeConfig());
+      feedWind(TWS_MS, 45);
+      feedWaypoint(30, 10);
+
+      const twd = 75 * DEG;
+      const btw = 10 * DEG;
+      let best = { heading: 0, vmc: -Infinity };
+      for (let heading = 0; heading < 2 * Math.PI; heading += 0.01 * DEG) {
+        const vmc = (hurma.speedAt({ tws: TWS_MS, twa: angleDiff(twd, heading) }).value ?? 0) * Math.cos(heading - btw);
+        if (vmc > best.vmc) best = { heading, vmc };
+      }
+      const points = view.vmcCurvePoints();
+      expect(points).not.toBeNull();
+      expect(Math.abs(angleDiff(longestSpoke(points ?? []).angle, best.heading))).toBeLessThanOrEqual(VMC_HEADING_STEP + 1e-9);
+    });
+
+    it('marks the best VMC heading on each tack for a waypoint dead upwind', () => {
+      create(makeConfig());
+      feedWind(TWS_MS, 45);
+      feedWaypoint(30, 75);
+
+      const profile = polarSpeedProfile(hurma, TWS_MS, 1);
+      const optima = view.vmcOptima();
+      for (const tack of ['port', 'starboard'] as const) {
+        const expected = vmcOptimum(profile, 75 * DEG, 75 * DEG, scaleOf(hurma), tack, null);
+        expect(expected).not.toBeNull();
+        expect(angleDiff(optima?.[tack]?.angle ?? NaN, expected!.angle)).toBeCloseTo(0, 6);
+        expect(optima?.[tack]?.r).toBeCloseTo(expected!.r, 6);
+      }
+      expect(angleDiff(75 * DEG, optima?.port?.angle ?? NaN)).toBeLessThan(0);
+    });
+
+    it('leaves the tack with no positive VMC unmarked', () => {
+      create(makeConfig());
+      feedWind(TWS_MS, 45);
+      feedWaypoint(30, 10);
+      expect(view.vmcOptima()?.port).toBeNull();
+      expect(view.vmcOptima()?.starboard).not.toBeNull();
+    });
+
+    it('marks nothing in polar mode', () => {
+      create(makeConfig());
+      feedWind();
+      expect(view.overlayMode()).toBe('polar');
+      expect(view.vmcOptima()).toBeNull();
+    });
+
+    it('scales every VMC spoke by the performance factor', () => {
+      create(makeConfig());
+      feedWind();
+      feedWaypoint(30, 10);
+      const full = view.vmcCurvePoints() ?? [];
+      expect(full.some(point => point.r > 0)).toBe(true);
+
+      polarService.performanceFactor.set(0.8);
+      const scaled = view.vmcCurvePoints() ?? [];
+      expect(scaled.length).toBe(full.length);
+      scaled.forEach((point, index) => {
+        expect(point.angle).toBe(full[index].angle);
+        expect(point.r).toBeCloseTo(0.8 * full[index].r, 9);
+      });
+    });
+
+    it('draws the VMC dot at STW · cos(HDG − BTW)', () => {
+      create(makeConfig());
+      feedWind();
+      feedWaypoint(30, 10);
+      feed('polarSpeedThroughWater', 3);
+      expect(view.overlayDotRadius()).toBeCloseTo(speedToRadius(3 * Math.cos(20 * DEG), scaleOf(hurma)), 9);
+    });
+
+    it('hides the VMC dot on the losing tack, where VMC is zero or less', () => {
+      create(makeConfig());
+      feedWind();
+      feedWaypoint(120, 10);
+      feed('polarSpeedThroughWater', 3);
+      expect(view.overlayMode()).toBe('vmc');
+      expect(view.overlayDotRadius()).toBeNull();
+    });
+
+    it('falls back to polar mode when heading goes stale and returns when it is fresh again', () => {
+      create(makeConfig());
+      feedWind();
+      feedWaypoint(30, 10);
+      vi.advanceTimersByTime(TTL_MS - 1000);
+      feedWind();
+      feed('nextWaypointBearing', 10 * DEG);
+      vi.advanceTimersByTime(2000);
+      expect(view.overlayMode()).toBe('polar');
+
+      feed('headingPath', 31 * DEG);
+      expect(view.overlayMode()).toBe('vmc');
+    });
+
+    it('keeps polar mode with waypointEnable off', () => {
+      create(makeConfig({ waypointEnable: false }));
+      feedWind();
+      feedWaypoint(30, 10);
+      expect(view.overlayMode()).toBe('polar');
+    });
+
+    it('keeps polar mode with compass mode off', () => {
+      create(makeConfig({ compassModeEnabled: false }));
+      feedWind();
+      feedWaypoint(30, 10);
+      expect(view.overlayMode()).toBe('polar');
+    });
+
+    it('keeps polar mode with a stale bearing', () => {
+      create(makeConfig());
+      feedWind();
+      feedWaypoint(30, 10);
+      vi.advanceTimersByTime(TTL_MS - 1000);
+      feedWind();
+      feed('headingPath', 30 * DEG);
+      vi.advanceTimersByTime(2000);
+      expect(view.overlayMode()).toBe('polar');
+    });
+
+    it('does not recompute the VMC curve for TWD changes under 1°', () => {
+      create(makeConfig());
+      feedWind(TWS_MS, 45);
+      feedWaypoint(30, 10);
+      const first = view.vmcCurvePoints();
+      feed('polarTrueWindAngle', 45.6 * DEG);
+      expect(view.vmcCurvePoints()).toBe(first);
+      feed('polarTrueWindAngle', 47 * DEG);
+      expect(view.vmcCurvePoints()).not.toBe(first);
+    });
   });
 });

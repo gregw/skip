@@ -15,6 +15,7 @@ import { DefaultConnectionConfig } from '../../../default-config/config.blank.co
 import { buildDefaultConfig } from '../../../default-config/config.default.factory';
 import { isValidConfigShape } from '../utils/config-shape.util';
 import { dashboardsRequireRemoteContexts } from '../utils/remote-context-demand.util';
+import { CONSOLE_MIGRATION_SINK, ConfigMigrationResult, applySiSteps, migrateConfig, skipsPersistentUpgrade } from '../utils/config-migration.util';
 import { cloneDeep } from 'lodash-es';
 import { BehaviorSubject, Observable, Subscription } from 'rxjs';
 import { DataService } from './data.service';
@@ -236,10 +237,23 @@ export class AppNetworkInitService implements OnDestroy {
             this._bootstrapStatus$.next('degraded');
             return;
           }
+          // A session AppComponent does not upgrade would otherwise render an older slot exactly as
+          // stored. The migrated copy is stamped current while the slot is not, so the session holds
+          // it as a view: one that gains write access later must not save that stamp over dashboards
+          // no upgrade has touched.
+          let migratedInMemory = false;
+          if (skipsPersistentUpgrade(this.embedMode, this.storage)) {
+            const result = this.migrateProfileInMemory(remoteConfig);
+            remoteConfig = result.config;
+            migratedInMemory = result.migrated;
+          } else {
+            await this.applySiStepsToOwnProfile(effectiveSharedConfigName, remoteConfig);
+          }
           const bootstrapContext: IStorageRemoteBootstrapContext = {
             sharedConfigName: effectiveSharedConfigName,
             configFileVersion: REMOTE_CONFIG_FILE_VERSION,
-            initConfig: remoteConfig
+            initConfig: remoteConfig,
+            readOnly: migratedInMemory
           };
           this.storage.bootstrapRemoteContext(bootstrapContext);
         }
@@ -376,18 +390,60 @@ export class AppNetworkInitService implements OnDestroy {
    * and boots an app that throws on the first toast or renders a blank page. An unusable body falls
    * back to the shipped dashboards instead.
    *
-   * A version older than this release is rendered as-is with a warning, not migrated: the migration
-   * belongs to the signed-in session that owns a slot, and a read-only visitor must not rewrite one.
+   * An older version is migrated in memory, like an imported profile, and never written back: the
+   * slot belongs to the operator, and a read-only visitor cannot rewrite it. A version newer than
+   * this release renders as-is, since no step can bring it down; one the chain cannot migrate falls
+   * back to the shipped dashboards, as an unusable body does.
    */
   private preparePublishedConfig(published: IConfig): IConfig {
     if (!isValidConfigShape(published)) {
       console.warn('[AppInit Network Service] The published shared configuration is not a usable Skip config; using the dashboards shipped with this version.');
       return buildDefaultConfig();
     }
-    if (published.app?.configVersion !== LATEST_APP_CONFIG_VERSION) {
-      console.warn(`[AppInit Network Service] The published shared configuration is version ${published.app?.configVersion}, not ${LATEST_APP_CONFIG_VERSION}. Rendering it unmigrated; republish it from a current Skip to keep it in step.`);
+    const version = published.app?.configVersion;
+    if (typeof version === 'number' && version > LATEST_APP_CONFIG_VERSION) {
+      console.warn(`[AppInit Network Service] The published shared configuration is version ${version}, newer than this release supports (${LATEST_APP_CONFIG_VERSION}). Rendering it unmigrated.`);
+      return published;
     }
-    return published;
+    try {
+      return migrateConfig(published, CONSOLE_MIGRATION_SINK).config;
+    } catch (error) {
+      console.warn(`[AppInit Network Service] The published shared configuration cannot be migrated (${(error as Error).message}); using the dashboards shipped with this version.`);
+      return buildDefaultConfig();
+    }
+  }
+
+  /**
+   * Migrates a stored profile for a session that renders it without running the persistent upgrade.
+   * The result is never written back. A profile the chain cannot migrate renders as stored: it is
+   * the user's own dashboard, and showing it unmigrated beats swapping in the shipped one.
+   */
+  private migrateProfileInMemory(config: IConfig): ConfigMigrationResult {
+    try {
+      return migrateConfig(config, CONSOLE_MIGRATION_SINK);
+    } catch (error) {
+      console.warn(`[AppInit Network Service] The loaded profile cannot be migrated (${(error as Error).message}); rendering it as stored.`);
+      return { config, migrated: false };
+    }
+  }
+
+  /**
+   * Runs the SI steps over the session's own profile before anything renders it, when the slot is
+   * already stamped current: a tab still on an older build can write widget configs it loaded
+   * before the SI upgrade back into such a slot, and the stamp-gated persistent upgrade would never
+   * see them again. A slot that changed is written back; a failed write only means the steps run
+   * again on the next load. An older slot is left untouched for the persistent upgrade, which must
+   * back it up before converting it: DashboardService writes the loaded dashboards back at boot, so
+   * converting them here would put SI numbers into the slot before the backup is taken.
+   */
+  private async applySiStepsToOwnProfile(name: string, config: IConfig): Promise<void> {
+    if (config.app?.configVersion !== LATEST_APP_CONFIG_VERSION) return;
+    if (!applySiSteps(config, CONSOLE_MIGRATION_SINK)) return;
+    try {
+      await this.storage.setConfig('user', name, config, REMOTE_CONFIG_FILE_VERSION);
+    } catch (error) {
+      console.warn(`[AppInit Network Service] Could not save the SI conversion of profile '${name}' (${(error as Error).message}); it runs again on the next load.`);
+    }
   }
 
   /**

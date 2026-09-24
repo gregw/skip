@@ -1,23 +1,15 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConfigurationUpgradeService, MIN_IMPORTABLE_APP_CONFIG_VERSION } from './configuration-upgrade.service';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConfigurationUpgradeService } from './configuration-upgrade.service';
 import { StorageService } from './storage.service';
 import { SettingsService } from './settings.service';
-import { IConfig } from '../interfaces/app-settings.interfaces';
-import { LATEST_APP_CONFIG_VERSION } from '../constants/config-versions.const';
-
-const importConfig = (version: unknown): IConfig =>
-    ({
-        app: version === undefined ? {} : { configVersion: version },
-        theme: { themeName: '' },
-        dashboards: []
-    } as unknown as IConfig);
 
 describe('ConfigurationUpgradeService', () => {
     let service: ConfigurationUpgradeService;
 
     const mockStorage = {
         initConfig: null,
+        sharedConfigName: 'default',
         listConfigs: vi.fn().mockResolvedValue([]),
         getConfig: vi.fn().mockResolvedValue(null),
         setConfig: vi.fn().mockResolvedValue(undefined),
@@ -64,25 +56,6 @@ describe('ConfigurationUpgradeService', () => {
         expect(mockStorage.listConfigs).not.toHaveBeenCalled();
         expect(mockStorage.setConfig).not.toHaveBeenCalled();
         expect(mockAppSettings.reloadApp).not.toHaveBeenCalled();
-    });
-
-    it('removeSplitShellConfigKeys strips the dead split-shell keys, preserving other fields', () => {
-        const app = {
-            configVersion: 12,
-            browserTabTitle: 'Helm',
-            splitShellEnabled: true,
-            splitShellSide: 'left',
-            splitShellWidth: 0.5,
-            splitShellSwipeDisabled: false
-        };
-        (service as unknown as { removeSplitShellConfigKeys: (a: unknown) => void }).removeSplitShellConfigKeys(app);
-        const raw = app as Record<string, unknown>;
-        expect(Object.prototype.hasOwnProperty.call(raw, 'splitShellEnabled')).toBe(false);
-        expect(Object.prototype.hasOwnProperty.call(raw, 'splitShellSide')).toBe(false);
-        expect(Object.prototype.hasOwnProperty.call(raw, 'splitShellWidth')).toBe(false);
-        expect(Object.prototype.hasOwnProperty.call(raw, 'splitShellSwipeDisabled')).toBe(false);
-        expect(raw['browserTabTitle']).toBe('Helm');
-        expect(raw['configVersion']).toBe(12);
     });
 
     it('should support calling runUpgrade without a version argument', async () => {
@@ -857,6 +830,28 @@ describe('ConfigurationUpgradeService', () => {
         expect(paths.autopilotState.isPathConfigurable).toBe(false);
     });
 
+    // The steps live in config-migration.util and report through a sink; the overlay shows only what
+    // that sink routes into messages().
+    it('v18 upgrade shows the step message in the upgrade overlay, with no error', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 18 },
+            theme: { themeName: '' },
+            dashboards: [
+                { id: 'd0', configuration: [
+                    { input: { widgetProperties: { type: 'widget-autopilot', config: {
+                        paths: { windAngleTrueWater: { path: 'self.environment.wind.angleTrueWater', isPathConfigurable: true } }
+                    } } } }
+                ] }
+            ]
+        });
+
+        await service.runUpgrade(18);
+
+        expect(service.messages()).toContain('[Upgrade] Slimmed 1 autopilot path field(s).');
+        expect(service.error()).toBeNull();
+    });
+
     it('v18 upgrade leaves a non-autopilot widget untouched, still stamps v19', async () => {
         mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
         mockStorage.getConfig.mockResolvedValue({
@@ -879,6 +874,244 @@ describe('ConfigurationUpgradeService', () => {
         mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
         mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 17 }, theme: { themeName: '' }, dashboards: [] });
         await service.runUpgrade(18);
+        expect(mockStorage.setConfig).not.toHaveBeenCalled();
+    });
+
+    describe('v19 upgrade (first SI step)', () => {
+        const BACKUP = 19.99;
+        const v19Slot = () => ({
+            app: { configVersion: 19 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', configuration: [
+                { input: { widgetProperties: { type: 'widget-wind-steer', config: { laylineEnable: true, laylineAngle: 40 } } } }
+            ] }]
+        });
+        // The slot at the active file version, and the backup location answering as given.
+        const serve = (backup: () => Promise<unknown>) => {
+            mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+            mockStorage.getConfig.mockImplementation((_scope: string, _name: string, version?: number) =>
+                version === BACKUP ? backup() : Promise.resolve(v19Slot()));
+        };
+        const notFound = () => Promise.reject(Object.assign(new Error('Not Found'), { status: 404 }));
+
+        afterEach(() => mockStorage.getConfig.mockReset().mockResolvedValue(null));
+
+        it('saves the v19 config to the backup file, then writes the slot converted and stamped v20', async () => {
+            serve(notFound);
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(2);
+            expect(mockStorage.setConfig.mock.calls[0]).toEqual(['user', 'default', v19Slot(), BACKUP]);
+            const written = mockStorage.setConfig.mock.calls[1][2];
+            expect(mockStorage.setConfig.mock.calls[1]).toHaveLength(3);
+            expect(written.app.configVersion).toBe(20);
+            expect(written.dashboards[0].configuration[0].input.widgetProperties.config)
+                .toEqual({ closeHauledLineEnable: true, closeHauledLineAngle: 40 * Math.PI / 180, siVersion: 20 });
+        });
+
+        it('keeps an existing backup: a rerun never overwrites it', async () => {
+            serve(() => Promise.resolve({ app: { configVersion: 19 }, theme: { themeName: '' }, dashboards: [] }));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+            expect(mockStorage.setConfig.mock.calls[0][3]).toBeUndefined();
+            expect(mockStorage.setConfig.mock.calls[0][2].app.configVersion).toBe(20);
+        });
+
+        it('treats an appless backup body as no backup', async () => {
+            serve(() => Promise.resolve({}));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig.mock.calls[0][3]).toBe(BACKUP);
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(2);
+        });
+
+        it('leaves a slot at v19 when the backup location cannot be read', async () => {
+            serve(() => Promise.reject(Object.assign(new Error('Server Error'), { status: 500 })));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).not.toHaveBeenCalled();
+            expect(service.error()).toContain('leaving it at version 19');
+        });
+
+        it('does not reload when the active slot is held back, so the upgrade cannot loop', async () => {
+            vi.useFakeTimers();
+            try {
+                serve(() => Promise.reject(Object.assign(new Error('Server Error'), { status: 500 })));
+
+                await service.runUpgrade(19);
+                vi.advanceTimersByTime(1500);
+
+                expect(mockAppSettings.reloadApp).not.toHaveBeenCalled();
+                expect(service.upgrading()).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('still reloads when only another slot is held back', async () => {
+            vi.useFakeTimers();
+            try {
+                mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }, { scope: 'user', name: 'night' }]);
+                mockStorage.getConfig.mockImplementation((_scope: string, name: string, version?: number) => {
+                    if (version !== BACKUP) return Promise.resolve(v19Slot());
+                    return name === 'night'
+                        ? Promise.reject(Object.assign(new Error('Server Error'), { status: 500 }))
+                        : notFound();
+                });
+
+                await service.runUpgrade(19);
+                vi.advanceTimersByTime(1500);
+
+                expect(mockStorage.setConfig.mock.calls.map(call => [call[1], call[3]])).toEqual([['default', BACKUP], ['default', undefined]]);
+                expect(mockAppSettings.reloadApp).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('leaves a slot at v19 when the backup cannot be saved', async () => {
+            serve(notFound);
+            mockStorage.setConfig.mockRejectedValueOnce(new Error('write failed'));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+            expect(service.error()).toContain('leaving it at version 19');
+        });
+
+        it('skips a slot that is not at version 19, without backing it up', async () => {
+            mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+            mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 18 }, theme: { themeName: '' }, dashboards: [] });
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).not.toHaveBeenCalled();
+        });
+    });
+
+    it('v20 upgrade converts Sea Horizon heel angles and AIS radar options to SI and stamps v21, without a backup', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 20 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', configuration: [
+                { input: { widgetProperties: { type: 'widget-sea-horizon', config: { gauge: { heelCautionAngle: 20, heelAlarmAngle: 30 } } } } },
+                { input: { widgetProperties: { type: 'widget-ais-radar', config: { ais: { rangeRings: [1, 3, 6, 12, 24, 48], cogVectorsMinutes: 10 } } } } }
+            ] }]
+        });
+
+        await service.runUpgrade(20);
+
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        expect(mockStorage.setConfig.mock.calls[0]).toHaveLength(3);
+        const written = mockStorage.setConfig.mock.calls[0][2];
+        expect(written.app.configVersion).toBe(21);
+        const [sea, ais] = written.dashboards[0].configuration.map((w: { input: { widgetProperties: { config: unknown } } }) => w.input.widgetProperties.config);
+        expect(sea).toEqual({ gauge: { heelCautionAngle: 0.3490658503988659, heelAlarmAngle: 0.5235987755982988 }, siVersion: 21 });
+        expect(ais).toEqual({ ais: { rangeRings: [1852, 5556, 11112, 22224, 44448, 88896], cogVectorsSeconds: 600 }, siVersion: 21 });
+    });
+
+    it('v20 upgrade skips a slot that is not at version 20 (no re-stamp)', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 19 }, theme: { themeName: '' }, dashboards: [] });
+        await service.runUpgrade(20);
+        expect(mockStorage.setConfig).not.toHaveBeenCalled();
+    });
+
+    it('clears the blocking overlay when the v20 slot listing fails, without reloading', async () => {
+        vi.useFakeTimers();
+        try {
+            mockStorage.listConfigs.mockRejectedValueOnce(new Error('offline'));
+
+            await service.runUpgrade(20);
+
+            expect(service.upgrading()).toBe(false);
+            expect(service.error()).toContain('offline');
+            vi.advanceTimersByTime(5000);
+            expect(mockAppSettings.reloadApp).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('v20 upgrade reports a slot that fails and still upgrades the others', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'broken' }, { scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockImplementation((_scope: string, name: string) => name === 'broken'
+            ? Promise.reject(new Error('read failed'))
+            : Promise.resolve({ app: { configVersion: 20 }, theme: { themeName: '' }, dashboards: [] }));
+
+        await service.runUpgrade(20);
+
+        expect(service.error()).toContain('user/broken');
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        expect(mockStorage.setConfig.mock.calls[0][1]).toBe('default');
+        mockStorage.getConfig.mockReset().mockResolvedValue(null);
+    });
+
+    it('v21 upgrade converts scale bounds to SI, records the reset ones in the app config, and stamps v22', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 21 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', name: 'Engine', configuration: [
+                { input: { widgetProperties: { type: 'widget-gauge-steel', config: {
+                    displayName: 'RPM', paths: { gaugePath: { path: 'self.x', convertUnitTo: 'rpm' } }, displayScale: { lower: 0, upper: 3600 } } } } },
+                { input: { widgetProperties: { type: 'widget-numeric', config: {
+                    displayName: 'Tank', paths: { numericPath: { path: 'self.y', convertUnitTo: 'unitless' } }, yScaleMin: 0, yScaleMax: 10 } } } }
+            ] }]
+        });
+
+        await service.runUpgrade(21);
+
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        const written = mockStorage.setConfig.mock.calls[0][2];
+        expect(written.app.configVersion).toBe(22);
+        const [gauge, numeric] = written.dashboards[0].configuration.map((w: { input: { widgetProperties: { config: Record<string, unknown> } } }) => w.input.widgetProperties.config);
+        expect(gauge['displayScale']).toEqual({ lower: 0, upper: 60 });
+        expect(numeric).toMatchObject({ yScaleMin: null, yScaleMax: null, siVersion: 22 });
+        expect(written.app.siScaleResets).toEqual([{ dashboardId: 'd0', dashboard: 'Engine', widget: 'Tank', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] }]);
+    });
+
+    it('v21 upgrade skips a slot that is not at version 21 (no re-stamp)', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 20 }, theme: { themeName: '' }, dashboards: [] });
+        await service.runUpgrade(21);
+        expect(mockStorage.setConfig).not.toHaveBeenCalled();
+    });
+
+    it('v22 upgrade rewrites a stored dotted sub-field slot to pointer form and stamps v23', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 22 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', configuration: [
+                { input: { widgetProperties: { type: 'widget-numeric', config: {
+                    paths: { numericPath: { path: 'self.navigation.position.latitude', convertUnitTo: 'deg' } }
+                } } } }
+            ] }]
+        });
+
+        await service.runUpgrade(22);
+
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        expect(mockStorage.setConfig.mock.calls[0]).toHaveLength(3);
+        const written = mockStorage.setConfig.mock.calls[0][2];
+        expect(written.app.configVersion).toBe(23);
+        expect(written.dashboards[0].configuration[0].input.widgetProperties.config.paths.numericPath)
+            .toEqual({ path: 'self.navigation.position#/latitude', convertUnitTo: 'pdeg' });
+        expect(service.messages()).toContain('[Upgrade] Rewrote 1 compound sub-field path(s) to pointer form.');
+        expect(service.error()).toBeNull();
+    });
+
+    it('v22 upgrade skips a slot that is not at version 22 (no re-stamp)', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 21 }, theme: { themeName: '' }, dashboards: [] });
+        await service.runUpgrade(22);
         expect(mockStorage.setConfig).not.toHaveBeenCalled();
     });
 
@@ -922,82 +1155,6 @@ describe('ConfigurationUpgradeService', () => {
         // transformConfig returns null for the app-less slot, so nothing is persisted and
         // the prior config.app.configVersion TypeError no longer fires.
         expect(mockStorage.setConfig).not.toHaveBeenCalled();
-    });
-
-    describe('migrateImportedConfig (in-memory import migration matrix)', () => {
-        it('accepts a current-version config unchanged, running no migration and no slot I/O', () => {
-            const result = service.migrateImportedConfig(importConfig(LATEST_APP_CONFIG_VERSION));
-
-            expect(result.migrated).toBe(false);
-            expect(result.config.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
-            expect(mockStorage.setConfig).not.toHaveBeenCalled();
-            expect(mockStorage.getConfig).not.toHaveBeenCalled();
-            expect(mockStorage.listConfigs).not.toHaveBeenCalled();
-            expect(mockAppSettings.reloadApp).not.toHaveBeenCalled();
-        });
-
-        it('migrates a floor (v11) config up to the current version purely in memory — no slot I/O, no reload', () => {
-            const original = importConfig(MIN_IMPORTABLE_APP_CONFIG_VERSION);
-
-            const result = service.migrateImportedConfig(original);
-
-            expect(result.migrated).toBe(true);
-            expect(result.config.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
-            // The migration must not touch storage or reload the app — that is the reload trap #175 pins.
-            expect(mockStorage.setConfig).not.toHaveBeenCalled();
-            expect(mockStorage.getConfig).not.toHaveBeenCalled();
-            expect(mockStorage.listConfigs).not.toHaveBeenCalled();
-            expect(mockAppSettings.reloadApp).not.toHaveBeenCalled();
-            // The caller's object is left untouched (the chain works on a clone).
-            expect(original.app?.configVersion).toBe(MIN_IMPORTABLE_APP_CONFIG_VERSION);
-        });
-
-        it('migrates an intermediate (v12) config up to the current version', () => {
-            const result = service.migrateImportedConfig(importConfig(12));
-
-            expect(result.migrated).toBe(true);
-            expect(result.config.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
-        });
-
-        it('rejects a below-floor config with a distinct "too old" error and no write', () => {
-            expect(() => service.migrateImportedConfig(importConfig(10))).toThrow(/too old/i);
-            expect(mockStorage.setConfig).not.toHaveBeenCalled();
-        });
-
-        it('rejects a config with no recognizable version with a distinct error and no write', () => {
-            expect(() => service.migrateImportedConfig(importConfig(undefined))).toThrow(/recognizable version/i);
-            expect(mockStorage.setConfig).not.toHaveBeenCalled();
-        });
-
-        it('rejects a too-new config with a distinct "newer" error and no write', () => {
-            expect(() => service.migrateImportedConfig(importConfig(LATEST_APP_CONFIG_VERSION + 1))).toThrow(/newer/i);
-            expect(mockStorage.setConfig).not.toHaveBeenCalled();
-        });
-
-        it('has an upgrade transform for every version from the import floor up to latest (guards future LATEST bumps)', () => {
-            const dispatch = service as unknown as {
-                migrateOneAppVersion(config: IConfig, from: number): IConfig | null;
-            };
-            for (let from = MIN_IMPORTABLE_APP_CONFIG_VERSION; from < LATEST_APP_CONFIG_VERSION; from++) {
-                const upgraded = dispatch.migrateOneAppVersion(importConfig(from), from);
-                // A bump of LATEST_APP_CONFIG_VERSION that forgets to register the new transform lands
-                // here: the dispatch returns null for the now-in-range version, which would make every
-                // current export non-importable through the migration loop.
-                expect(upgraded, `no upgrade transform registered for config version ${from}`).not.toBeNull();
-                expect(upgraded?.app?.configVersion).toBeGreaterThan(from);
-            }
-        });
-
-        it('throws the distinct loop-reject error when an in-range version has no working transform', () => {
-            const dispatch = service as unknown as {
-                migrateOneAppVersion(config: IConfig, from: number): IConfig | null;
-            };
-            vi.spyOn(dispatch, 'migrateOneAppVersion').mockReturnValue(null);
-
-            expect(() => service.migrateImportedConfig(importConfig(MIN_IMPORTABLE_APP_CONFIG_VERSION)))
-                .toThrow(/could not be migrated from version 11/i);
-            expect(mockStorage.setConfig).not.toHaveBeenCalled();
-        });
     });
 
     it('startFresh skips a legacy slot missing its app section and still retires the rest', async () => {

@@ -89,11 +89,12 @@ describe('SingleWidgetHostComponent', () => {
 
   // Drive the lifecycle directly rather than detectChanges, so the heavy Host2 graph is never
   // rendered (the rest of the suite relies on the same no-render boundary).
-  it('enables the host bridge for a hosted widget and disables it on destroy', () => {
+  it('enables the host bridge for the hosted widget type and disables it on destroy', () => {
     configure(MANIFEST_WIDGET_TYPE);
     const c = TestBed.createComponent(SingleWidgetHostComponent).componentInstance;
     c.ngOnInit();
-    expect(bridge.enable).toHaveBeenCalledTimes(1);
+    // The type selects the migration steps the saved tile config runs through.
+    expect(bridge.enable).toHaveBeenCalledExactlyOnceWith(MANIFEST_WIDGET_TYPE);
     c.ngOnDestroy();
     expect(bridge.disable).toHaveBeenCalledTimes(1);
   });

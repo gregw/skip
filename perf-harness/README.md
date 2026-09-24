@@ -50,6 +50,7 @@ advertises server version 2.24.0 (Skip gates widget history on ≥ 2.22.1).
 | `delta-storm-30x10` / `reconnect-backlog` | Rank 2 — delta ingestion / reconnect snapshot fan-out. |
 | `ais-radar-150` | Ranks 4/5 — AIS radar full re-render loops. |
 | `gauges-16` | Rank 7 — ng-canvas-gauge animation duty cycle. |
+| `windsteer-vmc` | Wind Steer polar overlay in VMC mode (#478): curve, dot and pointers recomputing at 10 Hz. A build without the overlay ignores the option, so the delta against it is the overlay's cost. |
 | `ais-growth-churn` | Ranks 8/9 — unbounded AIS/track growth (heap slope). |
 
 ## Run
@@ -110,12 +111,30 @@ resolution itself is unit-tested in `units.service.spec.ts`.
 `shot-fuel-rate.mjs` is the #536 probe: a steel gauge, a linear gauge and a numeric tile
 on `propulsion.0.fuel.rate`, shot twice to `results/shots/fuel-rate/` — once with the
 `displayUnits` meta the server's metric preset publishes for the `volumeRate` category
-(`targetUnit: 'L/h'`), once with the same path carrying units but no preference. It is the
-only probe that drives `control.selfMeta`, so it is the one that exercises server-resolved
-measures end to end rather than a stored `convertUnitTo`. The machine step boot-asserts
-the tile count only; **the reading and its label are canvas-drawn and need a human
-eyeball**: `preference.png` must read ~7.2 with an `l/h` label on all three tiles, and
+(`targetUnit: 'L/h'`), once with the same path carrying units but no preference. It drives
+`control.selfMeta` to exercise server-resolved measures end to end rather than a stored
+`convertUnitTo`, with and without a preference (`shot-windsteer.mjs` drives it too, only to
+put the drift in knots). The machine step boot-asserts the tile count only; **the reading
+and its label are canvas-drawn and need a human eyeball**: `preference.png` must read ~7.2 with an `l/h` label on all three tiles, and
 `si-only.png` must show the raw SI value with no label at all — never the word "unitless".
+
+`shot-windsteer.mjs` is the #637 Wind Steer current-readout probe. It streams one fixed
+boat state — heading 030°, apparent and true wind, COG/SOG, a waypoint bearing, hard-over
+starboard rudder, and a current (knots arrive as `displayUnits` meta via
+`control.selfMeta`) — and shoots the widget in compass mode at a large (24-cell) and a
+small (6-cell) tile in the light, dark and night themes, to
+`results/shots/windsteer/<label>-<theme>-<size>.png`. Flags: `--public`, `--label`
+(default `windsteer`), `--out`, `--port`, `--drift` (current speed in knots, default 0.8),
+`--set-rel` (set relative to the bow in degrees, default 90) and `--overlay` (comma-separated
+boat states, default `none`). `polar`, `vmc` and `vmc-ahead` turn the polar overlay on and
+serve the test-server polar as the active polar; they write
+`<label>-<overlay>-<theme>-<size>.png`. A before/after is two runs with different labels
+against two builds. The machine step boot-asserts the widget count (one per page) and, for
+the overlay states, that the expected overlay groups drew; **the arrow direction, the curve
+shape, legibility and clearance are a visual check**: the drift label, value and unit sit in
+the bottom-right corner with the value legible over a large faint set arrow pointing
+`--set-rel` degrees right of the bow, all clear of the dial and the rudder arcs. Below
+0.1 m/s (`--drift 0.058` is 0.03 m/s) the value shows and the arrow does not.
 
 `shot-default-seed.mjs` boots an empty-dashboards profile so `DashboardService`
 seeds the bundled `DefaultDashboard` exactly as on a fresh install, then shoots every

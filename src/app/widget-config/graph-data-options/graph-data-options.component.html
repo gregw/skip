@@ -18,6 +18,10 @@
         <mat-error>
           Path is required. Please enter a valid Signal K path.
         </mat-error>
+      } @else if (datachartPath().errors?.['pointer']) {
+        <mat-error>
+          After "#", write the field name starting with "/", for example "#/latitude".
+        </mat-error>
       }
       @if (pathWarning()) {
         <mat-hint class="pathWarningHint">{{ pathWarning() }}</mat-hint>

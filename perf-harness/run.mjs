@@ -129,8 +129,8 @@ async function main() {
       const cdp = await ctx.newCDPSession(page);
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
 
-      // fresh stream state
-      server.setControl({ streaming: false, ais: { count: 0, churnPerSec: 0 } });
+      // fresh stream state; setControl merges, so clear every per-scenario data field
+      server.setControl({ streaming: false, selfValues: null, selfMeta: null, restSelfValues: null, resources: null, ais: { count: 0, churnPerSec: 0 } });
       await page.goto(server.appUrl + '#/dashboard/0', { waitUntil: 'load', timeout: 30000 });
       const widgetCount = await waitForBoot(page, dashboards[0].configuration.length);
 

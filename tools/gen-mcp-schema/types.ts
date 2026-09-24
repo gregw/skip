@@ -95,6 +95,13 @@ export interface WidgetSchemaEntry extends WidgetCatalogEntry {
   defaultConfig: Record<string, unknown>;
   /** Data slots for `paths-record` widgets; empty for every other binding kind. */
   pathSlots: PathSlot[];
+  /**
+   * The unit each listed option of `defaultConfig` is stored in, keyed by option name, from the
+   * widget's static OPTION_UNITS. A nested option is named by its dotted path from the config root
+   * (`gauge.heelCautionAngle`), and an array option's unit applies to each element
+   * (`ais.rangeRings`). Absent when the widget declares none.
+   */
+  optionUnits?: Record<string, string>;
 }
 
 /** A named widget colour token (Skip's `configurableThemeColors`). */
@@ -152,6 +159,10 @@ export interface SchemaMeta {
   configFileVersion: number;
   /** `app.configVersion` value Skip expects in a saved config body. */
   configVersion: number;
+  /** How to write an option listed in a widget's `optionUnits`, and the marker such a config needs. */
+  optionUnitsRule: string;
+  /** Units of the numeric options that configure a widget rather than hold a measured quantity, by option path. */
+  widgetSettingUnits: Record<string, string>;
 }
 
 /**

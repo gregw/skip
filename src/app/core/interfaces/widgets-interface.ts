@@ -211,9 +211,9 @@ export interface IWidgetSvcConfig {
   /** This object provides information regarding the recommended type and extent of the scale used for displaying values. NOTE: This property can be overwritten by metadata. */
   displayScale?: {
     /** The lower bound of the scale. This is the minimum value that can be represented on the display. NOTE: This property can be overwritten by metadata. */
-    lower?: number;
+    lower?: number | null;
     /** The upper bound of the scale. This is the maximum value that can be represented on the display. NOTE: This property can be overwritten by metadata. */
-    upper?: number;
+    upper?: number | null;
     /** The type of scale to use. This can be 'linear', 'logarithmic', 'squareRoot', 'power' or null if no scale is used (Skip only support linear for now). NOTE: This property can be overwritten by metadata. */
     type: TScaleType;
     /** If scale type is 'power', the power value to use of the display scale */
@@ -334,6 +334,9 @@ export interface IWidgetSvcConfig {
     radialSize?: string;
     /** Optional. Used by GaugeSteel to set faceplate rotation */
     rotateFace?: boolean;
+    /** Optional. Used by the steel compass to print the degree scale on the card */
+    degreeScale?: boolean;
+
     /** Optional. GaugeSteel digital or bar */
     digitalMeter?: boolean;
     /** Optional. Width of gauge highlights */
@@ -350,6 +353,12 @@ export interface IWidgetSvcConfig {
     invertAngle?: boolean;
     /** Optional. Show the side label on the gauge */
     sideLabel?: boolean;
+    /** Optional. Used by Sea Horizon: heel angle (rad) where the scale turns from nominal to caution */
+    heelCautionAngle?: number;
+    /** Optional. Used by Sea Horizon: heel angle (rad) where the scale turns to alarm, and where the red limit index sits */
+    heelAlarmAngle?: number;
+    /** Optional. Used by Sea Horizon: smoothing time constant in seconds applied to attitude samples. 0 disables it */
+    damping?: number;
   }
   /** Used by numeric data Widget: Display minimum registered value since started */
   showMin?: boolean;
@@ -378,16 +387,26 @@ export interface IWidgetSvcConfig {
   windSectorEnable?: boolean;
   /** Used by wind Widget: duration to track wind shift in the sector UI feature */
   windSectorWindowSeconds?: number;
-  /** Used by wind Widget: enable/disable layline UI feature */
-  laylineEnable?: boolean;
-  /** Used by wind Widget: upwind layline angle of the vessel applied to the UI feature */
-  laylineAngle?: number;
+  /** Used by wind Widget: show the close-hauled lines, the headings at the close-hauled angle either side of the true wind */
+  closeHauledLineEnable?: boolean;
+  /** Used by wind Widget: the close-hauled angle off the true wind, rad; the fixed angle when the polar gives none */
+  closeHauledLineAngle?: number;
+  /** Used by wind Widget: take the close-hauled angle from the active polar's beat angle for the present TWS */
+  closeHauledAngleFromPolar?: boolean;
+  /** Used by wind Widget: show the run lines, the headings at the active polar's run angle either side of the true wind */
+  runLineEnable?: boolean;
+  /** The version of the last SI config step whose shape this widget config is in (config-migration.util SI_VERSION_KEY) */
+  siVersion?: number;
   /** Used by wind Widget: enable/disable Waypoint UI feature */
   waypointEnable?: boolean;
   /** Used by wind Widget: enable/disable COG UI feature */
   courseOverGroundEnable?: boolean;
   /** Used by wind Widget: enable/disable current UI feature */
   driftEnable?: boolean;
+  /** Used by Wind Trends widget: which wind the graph shows. 'true' pairs the direction slot's
+   *  chosen north reference with true wind speed; 'apparent' graphs the bow-relative apparent angle
+   *  against apparent wind speed, and the north reference does not apply. */
+  windReference?: 'true' | 'apparent';
   /** Used by wind Widget: enable/disable Apparent Wind Speed UI feature */
   awsEnable?: boolean;
   /** Used by wind Widget: enable/disable True Wind Speed UI feature */
@@ -400,6 +419,8 @@ export interface IWidgetSvcConfig {
   rudderEnable?: boolean;
   /** Used by wind Widget: flip the rudder-angle bar so it grows toward the side the boat turns */
   invertRudder?: boolean;
+  /** Used by wind Widget: draw the active polar's curve (or, with a waypoint in compass mode, its VMC curve) on the dial */
+  polarOverlayEnable?: boolean;
 
   /** Used by autopilot Widget to configure autopilot settings */
   autopilot?: IAutopilotConfig,
@@ -443,17 +464,17 @@ export interface IWidgetSvcConfig {
   /** Display graph y scale */
   showYScale?: boolean;
   /** Graph y scale suggested minimum. Scale will extend beyond this number automatically if values are below */
-  yScaleSuggestedMin?: number;
+  yScaleSuggestedMin?: number | null;
   /** Graph y scale suggested maximum. Scale will extend beyond this number automatically if values are above */
-  yScaleSuggestedMax?: number;
+  yScaleSuggestedMax?: number | null;
   /** Graph y scale suggested minimum is zero */
   startScaleAtZero?: boolean;
   /** Limit graph value axis (y) scale to min and max value */
   enableMinMaxScaleLimit?: boolean;
   /** Graph y scale minimum */
-  yScaleMin?: number;
+  yScaleMin?: number | null;
   /** Graph y scale maximum */
-  yScaleMax?: number;
+  yScaleMax?: number | null;
   /** Inverse graph Y axis */
   inverseYAxis?: boolean;
   /** Graph data flow direction. True = vertical (top to bottom), False = horizontal (left to right) */
@@ -525,14 +546,14 @@ export interface IAISRadarConfig {
   filters?: IAISRadarFilterConfig;
   /** Radar orientation: follow vessel course or keep north at the top. */
   viewMode: 'course-up' | 'north-up';
-  /** List of selectable radar ranges in nautical miles. */
+  /** List of selectable radar ranges in metres, each a whole number of nautical miles (the rings are labelled in nm). */
   rangeRings: number[];
   /** Zero-based index into rangeRings that selects the active range. */
   rangeIndex: string;
   /** Enable/disable drawing AIS motion vectors. */
   showCogVectors: boolean;
-  /** COG projection vector duration in minutes. */
-  cogVectorsMinutes: number;
+  /** COG projection vector duration in seconds. */
+  cogVectorsSeconds: number;
   /** Show targets that are marked as lost. */
   showLostTargets: boolean;
   /** Show targets that are not yet confirmed. */
@@ -753,10 +774,14 @@ export interface IWidgetPath {
    */
   showPathSkUnitsFilter?: boolean;
   /**
-   * Used in Widget Options UI and by observeDataStream() method to convert Signal K transmitted values to a specified format.
+   * The measure the slot presents its value in. A structural slot (`showConvertUnitTo: false`)
+   * always presents in this measure; a display slot follows the server's resolved measure and uses
+   * this one only until the path's unit meta arrives. `WidgetStreamsDirective` delivers the SI value
+   * with the measure alongside, and the widget converts where it presents the value.
    * Allowed values are defined in {@link unitConversionFunctions}.
    * Also used as a source to identify conversion group.
-   * Use null for no conversion.
+   * Use null on a structural slot to present its value in SI; a display slot with null still follows
+   * the server's resolved measure.
    *
    * @see units.service unitConversionFunctions()
    */
@@ -780,6 +805,12 @@ export interface IWidgetPath {
    * first non-null datapoint.
    */
   suppressBootstrapNull?: boolean;
+  /**
+   * Optional: key of another slot in the same `paths` record whose Data Source this slot reads with,
+   * in place of its own `source`. For a hidden slot that must read the same sensor as a visible one,
+   * such as an SI copy of a displayed value.
+   */
+  sourceFromPath?: string;
   /** Used as a reference ID when path is an Array and array index is not appropriate. */
   pathID?: string | null | '';
   /**

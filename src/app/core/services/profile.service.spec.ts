@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProfileService } from './profile.service';
 import { StorageService } from './storage.service';
 import { SettingsService } from './settings.service';
-import { ConfigurationUpgradeService } from './configuration-upgrade.service';
 import { IConfig } from '../interfaces/app-settings.interfaces';
 import { LATEST_APP_CONFIG_VERSION } from '../constants/config-versions.const';
 import { DefaultDashboard } from '../../../default-config/config.blank.dashboard';
@@ -57,7 +56,6 @@ describe('ProfileService', () => {
     TestBed.configureTestingModule({
       providers: [
         ProfileService,
-        ConfigurationUpgradeService, // real service: its migrateImportedConfig is pure (no storage/settings I/O)
         { provide: StorageService, useValue: storage },
         { provide: SettingsService, useValue: settings }
       ]
@@ -255,6 +253,7 @@ describe('ProfileService', () => {
       await service.refresh();
       const stale = { app: { configVersion: 9 }, theme: { themeName: 'old' }, dashboards: [] };
       await expect(service.importProfile('imported', stale)).rejects.toThrow(/too old/i);
+      await expect(service.importProfile('imported', stale)).rejects.toThrow(/older KIP, export it again, then import it/i);
       expect(storage.setConfig).not.toHaveBeenCalled();
     });
 

@@ -3,7 +3,8 @@
  *
  * A `null` sample (Signal K emits null on timeout/sensor loss) leaves the tracked
  * extremes untouched — it must not reset them. The min/max update is mutually
- * exclusive per call, matching the widget's long-standing behaviour.
+ * exclusive per call, matching the widget's long-standing behaviour. The widget folds SI
+ * samples, so the extremes present in whatever measure is current when they are drawn.
  */
 export function reduceMinMax(
   min: number | null,

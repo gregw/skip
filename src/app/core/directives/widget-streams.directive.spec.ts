@@ -1,11 +1,12 @@
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { Subject, BehaviorSubject, Observable } from 'rxjs';
-import { WidgetStreamsDirective, widgetPathSignature, normalizeWidgetPath } from './widget-streams.directive';
+import { WidgetStreamsDirective, widgetPathSignature, normalizeWidgetPath, WidgetRepointTracker } from './widget-streams.directive';
 import { DataService, IPathUpdate } from '../services/data.service';
-import { UnitsService } from '../services/units.service';
+import { TDurationFormat, UnitsService } from '../services/units.service';
 import { IWidgetSvcConfig, IWidgetPath } from '../interfaces/widgets-interface';
 import { ISkMetadata } from '../interfaces/signalk-interfaces';
+import { CONSOLE_MIGRATION_SINK, migrateWidgetConfig } from '../utils/config-migration.util';
 
 class FakeDataService {
     calls: {
@@ -64,13 +65,12 @@ class FakeDataService {
 class FakeUnitsService {
     /** Per-path resolved measure a display path follows; defaults to an identity measure ('kn'). */
     pathMeasures = new Map<string, string>();
-    convertToUnit(unit: string, value: number): number {
-        if (unit === 'x10')
-            return value * 10;
-        return value;
-    }
     resolvePathMeasure(path: string): string {
         return this.pathMeasures.get(path) ?? 'kn';
+    }
+    pathDurationFormats = new Map<string, TDurationFormat>();
+    resolvePathDurationFormat(path: string): TDurationFormat | undefined {
+        return this.pathDurationFormats.get(path);
     }
 }
 
@@ -188,56 +188,211 @@ describe('WidgetStreamsDirective', () => {
         subj.next({ data: { value: 'B', timestamp: new Date() }, state: 'normal' } as IPathUpdate);
     });
 
-    it('extracts the configured sub-field from a whole compound-object value', () => {
-        const cfg = makeCfg({ path: 'navigation.position', source: null, pathType: 'number', updateInterval: 50 });
-        directive.setStreamsConfig(cfg);
+    const attitude = (state: IPathUpdate['state'] = 'normal') =>
+        ({ data: { value: { roll: -0.0384, pitch: 0.0091, yaw: null }, timestamp: new Date() }, state } as IPathUpdate);
+
+    it('delivers a pointer path\'s field in its Signal K unit when the slot stores no unit', () => {
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'unitless');
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', pathType: 'number', updateInterval: 50 }));
 
         const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'latitude');
+        directive.observe('p', u => received.push(u?.data?.value));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
 
-        const subj = dataSvc.subjects.get('navigation.position|default')!;
-        subj.next({ data: { value: { latitude: 48.5, longitude: -123.25 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-
-        expect(received).toEqual([48.5]);
+        expect(dataSvc.calls).toEqual([{ path: 'self.navigation.attitude', source: 'default' }]);
+        expect(received).toEqual([-0.0384]);
     });
 
-    it('applies unit conversion to the extracted sub-field (extraction precedes conversion)', () => {
+    it('tags the resolved field with the slot\'s measure, value in SI', () => {
         const cfg = makeCfg({ path: 'navigation.attitude', source: null, pathType: 'number', convertUnitTo: 'x10', showConvertUnitTo: false, updateInterval: 50 });
         directive.setStreamsConfig(cfg);
 
-        const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'roll');
+        const received: unknown[][] = [];
+        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]), '/roll');
 
         const subj = dataSvc.subjects.get('navigation.attitude|default')!;
         subj.next({ data: { value: { roll: 0.2, pitch: 0.1 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
-        expect(received).toEqual([2]); // 0.2 extracted first, then the x10 conversion applied
+        expect(received).toEqual([[0.2, 'x10']]);
     });
 
-    it('passes a scalar value straight through when a sub-field is configured (customised scalar path stays working)', () => {
-        const cfg = makeCfg({ path: 'steering.rudderAngle', source: null, pathType: 'number', updateInterval: 50 });
-        directive.setStreamsConfig(cfg);
+    it('tags a pointer path\'s field with the slot\'s stored unit and keeps the value in SI', () => {
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'unitless');
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', pathType: 'number', convertUnitTo: 'deg', updateInterval: 50 }));
 
-        const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'roll');
+        const received: unknown[][] = [];
+        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
 
-        const subj = dataSvc.subjects.get('steering.rudderAngle|default')!;
-        subj.next({ data: { value: 0.42, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-
-        expect(received).toEqual([0.42]);
+        expect(received).toEqual([[-0.0384, 'deg']]);
     });
 
-    it('emits null for a missing sub-field of a compound value', () => {
-        const cfg = makeCfg({ path: 'navigation.position', source: null, pathType: 'number', updateInterval: 50 });
-        directive.setStreamsConfig(cfg);
+    it('tags live roll with the stored degrees on a slot migrated from the dotted v20 path', () => {
+        const v20 = makeCfg({ path: 'self.navigation.attitude.roll', pathType: 'number', convertUnitTo: 'deg', updateInterval: 50 });
+        const migrated = migrateWidgetConfig('widget-numeric', v20, 20, CONSOLE_MIGRATION_SINK);
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'unitless');
+        directive.setStreamsConfig(migrated);
 
+        const received: unknown[][] = [];
+        directive.observe('p', u => received.push([u?.data?.value, u?.data?.measure]));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
+
+        expect((migrated.paths as Record<string, IWidgetPath>)['p'].convertUnitTo).toBe('deg');
+        expect(received).toEqual([[-0.0384, 'deg']]);
+    });
+
+    it('reads the measure of the field, not of the base path', () => {
+        unitsSvc.pathMeasures.set('self.navigation.attitude', 'x10');
+        unitsSvc.pathMeasures.set('self.navigation.attitude#/roll', 'deg');
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
+
+        expect(received[0].data.measure).toBe('deg');
+        expect(dataSvc.metaSubjects.has('self.navigation.attitude#/roll')).toBe(true);
+    });
+
+    it('acquires the base path once per slot, so #/latitude and #/longitude share one registration', () => {
+        directive.setStreamsConfig(makeMultiCfg([
+            { key: 'lat', path: 'self.navigation.position#/latitude' },
+            { key: 'lon', path: 'self.navigation.position#/longitude' }
+        ]));
+        const lat: unknown[] = [];
+        const lon: unknown[] = [];
+        directive.observe('lat', u => lat.push(u?.data?.value));
+        directive.observe('lon', u => lon.push(u?.data?.value));
+
+        dataSvc.subjects.get('self.navigation.position|default')!.next(
+            { data: { value: { latitude: 60.08, longitude: 21.97 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(dataSvc.calls.map(c => c.path)).toEqual(['self.navigation.position', 'self.navigation.position']);
+        expect([...dataSvc.subjects.keys()]).toEqual(['self.navigation.position|default']);
+        expect(lat).toEqual([60.08]);
+        expect(lon).toEqual([21.97]);
+    });
+
+    it('yields null for a field that is null or absent in the value', () => {
+        directive.setStreamsConfig(makeMultiCfg([
+            { key: 'yaw', path: 'self.navigation.attitude#/yaw' },
+            { key: 'heave', path: 'self.navigation.attitude#/heave' }
+        ]));
+        const yaw: unknown[] = [];
+        const heave: unknown[] = [];
+        directive.observe('yaw', u => yaw.push(u?.data?.value));
+        directive.observe('heave', u => heave.push(u?.data?.value));
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude());
+
+        expect(yaw).toEqual([null]);
+        expect(heave).toEqual([null]);
+    });
+
+    it('suppresses a null field while bootstrapping, and passes a later one, as for a scalar path', async () => {
+        vi.useFakeTimers();
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/yaw', pathType: 'number', updateInterval: 30, suppressBootstrapNull: true }));
+        const yaw: unknown[] = [];
+        directive.observe('p', u => yaw.push(u?.data?.value));
+        const subj = dataSvc.subjects.get('self.navigation.attitude|default')!;
+
+        subj.next(attitude());
+        await vi.advanceTimersByTimeAsync(35);
+        expect(yaw).toEqual([]);
+
+        subj.next({ data: { value: { yaw: 1.5 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        expect(yaw).toEqual([1.5]);
+
+        subj.next(attitude());
+        await vi.advanceTimersByTimeAsync(35);
+        expect(yaw).toEqual([1.5, null]);
+    });
+
+    it('re-points #/roll to #/pitch by rebuilding the pipeline without re-acquiring the base path', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude#/roll', updateInterval: 50 }));
         const received: unknown[] = [];
-        directive.observe('p', u => received.push(u?.data?.value), 'altitude');
+        directive.observe('p', u => received.push(u?.data?.value));
+        const subj = dataSvc.subjects.get('self.navigation.attitude|default')!;
+        subj.next(attitude());
 
-        const subj = dataSvc.subjects.get('navigation.position|default')!;
-        subj.next({ data: { value: { latitude: 48.5, longitude: -123.25 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        directive.applyStreamsConfigDiff(makeCfg({ path: 'self.navigation.attitude#/pitch', updateInterval: 50 }));
+        subj.next(attitude());
+
+        expect(dataSvc.calls).toHaveLength(1);
+        expect(dataSvc.releases).toHaveLength(0);
+        expect(received).toEqual([-0.0384, 0.0091]);
+    });
+
+    it('resets the alarm state of a field, but keeps it on the whole value', () => {
+        directive.setStreamsConfig(makeMultiCfg([
+            { key: 'field', path: 'self.navigation.position#/latitude' },
+            { key: 'whole', path: 'self.navigation.position' }
+        ]));
+        const field: IPathUpdate[] = [];
+        const whole: IPathUpdate[] = [];
+        directive.observe('field', u => field.push(u));
+        directive.observe('whole', u => whole.push(u));
+
+        dataSvc.subjects.get('self.navigation.position|default')!.next(
+            { data: { value: { latitude: 60.08, longitude: 21.97 }, timestamp: new Date() }, state: 'alarm' } as IPathUpdate);
+
+        expect(field[0].state).toBe('normal');
+        expect(whole[0].state).toBe('alarm');
+    });
+
+    it('treats a stored path with a malformed pointer like an empty path', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.position#latitude' }));
+        const received: unknown[] = [];
+
+        expect(() => directive.observe('p', u => received.push(u))).not.toThrow();
+        expect(dataSvc.calls).toEqual([]);
+        expect(received).toEqual([]);
+    });
+
+    it('resolves an observe() pointer against the configured path\'s value', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude', pathType: 'number', convertUnitTo: 'x10', showConvertUnitTo: false, updateInterval: 50 }));
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u), '/roll');
+        dataSvc.subjects.get('self.navigation.attitude|default')!.next(attitude('alarm'));
+
+        expect(received[0].data.value).toBe(-0.0384);
+        expect(received[0].data.measure).toBe('x10');
+        expect(received[0].state).toBe('normal');
+    });
+
+    it('resolves the configured pointer first, then the observe() pointer', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.a#/b' }));
+        const received: unknown[] = [];
+        directive.observe('p', u => received.push(u?.data?.value), '/c');
+        dataSvc.subjects.get('self.a|default')!.next({ data: { value: { b: { c: 5 }, c: 7 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received).toEqual([5]);
+    });
+
+    it('yields null when an observe() pointer meets a scalar value', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'steering.rudderAngle' }));
+        const received: unknown[] = [];
+        directive.observe('p', u => received.push(u?.data?.value), '/roll');
+        dataSvc.subjects.get('steering.rudderAngle|default')!.next({ data: { value: 0.42, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
         expect(received).toEqual([null]);
+    });
+
+    it('delivers every widget SI values: a ratio of 1 stays 1 when the server shows the path in percent', () => {
+        // A boolean-switch numeric slot reads 0/1, whatever unit the server shows the path in.
+        unitsSvc.pathMeasures.set('electrical.switches.bank.1.state', 'percent');
+        directive.setStreamsConfig(makeCfg({ path: 'electrical.switches.bank.1.state', pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('electrical.switches.bank.1.state|default')!
+            .next({ data: { value: 1, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received.map(u => [u.data.value, u.data.measure])).toEqual([[1, 'percent']]);
+    });
+
+    it('rejects an observe() pointer that is not an RFC 6901 pointer', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'self.navigation.attitude' }));
+        expect(() => directive.observe('p', () => undefined, 'roll')).toThrow(/RFC 6901/);
     });
 
     it('resubscribes to DataService when source changes', async () => {
@@ -370,12 +525,12 @@ describe('WidgetStreamsDirective', () => {
     });
 
     it('rewires pipeline on signature change (convertUnitTo) while reusing base stream', () => {
-        // Initial config: structural number path, no conversion (convertUnitTo drives the value).
+        // Initial config: structural number path without a fixed unit.
         const cfg1 = makeCfg({ path: 'env.rewire', source: null, pathType: 'number', showConvertUnitTo: false, updateInterval: 50 });
         directive.setStreamsConfig(cfg1);
 
-        const hits: number[] = [];
-        directive.observe('p', u => hits.push(u?.data?.value as number));
+        const hits: unknown[][] = [];
+        directive.observe('p', u => hits.push([u?.data?.value, u?.data?.measure]));
 
         // Single base subscription should be created
         expect(dataSvc.calls.length).toBe(1);
@@ -383,7 +538,7 @@ describe('WidgetStreamsDirective', () => {
 
         const subj = dataSvc.subjects.get('env.rewire|default')!;
         subj.next({ data: { value: 2, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-        expect(hits).toEqual([2]);
+        expect(hits).toEqual([[2, undefined]]);
 
         // Change only convertUnitTo (part of signature), keep base identity (path+source) the same
         const cfg2 = makeCfg({ path: 'env.rewire', source: null, pathType: 'number', convertUnitTo: 'x10', showConvertUnitTo: false, updateInterval: 50 });
@@ -392,9 +547,9 @@ describe('WidgetStreamsDirective', () => {
         // DataService should NOT have been called again (base reused)
         expect(dataSvc.calls.length).toBe(1);
 
-        // Next emission should reflect new pipeline (converted by x10)
+        // Next emission comes through the new pipeline, tagged with the new unit
         subj.next({ data: { value: 3, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-        expect(hits).toEqual([2, 30]);
+        expect(hits).toEqual([[2, undefined], [3, 'x10']]);
     });
 
     it('suppresses leading bootstrap null values when configured', async () => {
@@ -537,28 +692,27 @@ describe('WidgetStreamsDirective', () => {
         expect(dataSvc.timeoutCalls[0]).toEqual({ path: 'env.to', source: 'n2k-1', pathType: 'string', dataTimeoutMs: 5000 });
     });
 
-    it('applies a structural convertUnitTo to numeric values (initial + sampled)', async () => {
+    it('samples a structural slot (initial + latest) and tags it with its fixed unit', async () => {
         vi.useFakeTimers();
         const cfg = makeCfg({ path: 'env.units', source: null, pathType: 'number', updateInterval: 50, convertUnitTo: 'x10', showConvertUnitTo: false });
         directive.setStreamsConfig(cfg);
 
-        const hits: number[] = [];
-        directive.observe('p', u => hits.push(u?.data?.value as number));
+        const hits: unknown[][] = [];
+        directive.observe('p', u => hits.push([u?.data?.value, u?.data?.measure]));
 
         const subj = dataSvc.subjects.get('env.units|default')!;
-        // Initial should be converted immediately
+        // Initial is delivered immediately
         subj.next({ data: { value: 1, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
         // Next two quick emissions; only latest sampled should be delivered after tick
         subj.next({ data: { value: 2, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
         subj.next({ data: { value: 3, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
         await vi.advanceTimersByTimeAsync(60);
-        expect(hits).toEqual([10, 30]);
+        expect(hits).toEqual([[1, 'x10'], [3, 'x10']]);
     });
 
-    it('applies the server-resolved measure to a display path and tags the value with it', () => {
+    it('tags a display path with the server-resolved measure, not the stored one', () => {
         unitsSvc.pathMeasures.set('env.disp', 'x10');
-        // Stored convertUnitTo is ignored for a display path (no showConvertUnitTo:false); the
-        // server-resolved measure wins for BOTH the conversion and the value's measure tag.
+        // Stored convertUnitTo is ignored for a display path (no showConvertUnitTo:false).
         const cfg = makeCfg({ path: 'env.disp', source: null, pathType: 'number', convertUnitTo: 'noop', updateInterval: 50 });
         directive.setStreamsConfig(cfg);
 
@@ -567,26 +721,26 @@ describe('WidgetStreamsDirective', () => {
 
         dataSvc.subjects.get('env.disp|default')!.next({ data: { value: 4, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
-        expect(received.at(-1)?.data.value).toBe(40); // resolved 'x10', not stored 'noop'
+        expect(received.at(-1)?.data.value).toBe(4);
         expect(received.at(-1)?.data.measure).toBe('x10');
     });
 
-    it('re-emits the last value in the new unit when the resolved measure changes (late meta)', () => {
+    it('re-emits the last value with the new measure when the resolved measure changes (late meta)', () => {
         unitsSvc.pathMeasures.set('env.late', 'noop'); // starts as an identity measure
         const cfg = makeCfg({ path: 'env.late', source: null, pathType: 'number', updateInterval: 50 });
         directive.setStreamsConfig(cfg);
 
-        const values: unknown[] = [];
-        directive.observe('p', u => values.push(u?.data?.value));
+        const values: unknown[][] = [];
+        directive.observe('p', u => values.push([u?.data?.value, u?.data?.measure]));
 
         dataSvc.subjects.get('env.late|default')!.next({ data: { value: 5, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
-        expect(values.at(-1)).toBe(5); // identity measure
+        expect(values.at(-1)).toEqual([5, 'noop']);
 
         // Server displayUnits meta arrives after subscribe -> resolved measure becomes 'x10'.
-        // No new data delta: the last value must re-emit, re-converted, so label and value agree.
+        // No new data delta: the last value must re-emit with it, so label and value agree.
         unitsSvc.pathMeasures.set('env.late', 'x10');
         dataSvc.metaSubjects.get('env.late')!.next({} as ISkMetadata);
-        expect(values.at(-1)).toBe(50);
+        expect(values.at(-1)).toEqual([5, 'x10']);
     });
 
     it('falls back to the stored unit for a display path while the resolved measure is still unitless', () => {
@@ -599,10 +753,52 @@ describe('WidgetStreamsDirective', () => {
 
         dataSvc.subjects.get('env.pre|default')!.next({ data: { value: 4, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
 
-        // Resolved 'unitless' -> convert with the stored 'x10' (not raw), and tag with that unit,
-        // so a pre-meta value matches the widget's stored-unit scale/label instead of raw SI.
-        expect(received.at(-1)?.data.value).toBe(40);
+        // Resolved 'unitless' -> tag with the stored 'x10', so a pre-meta value is presented in the
+        // widget's stored unit.
+        expect(received.at(-1)?.data.value).toBe(4);
         expect(received.at(-1)?.data.measure).toBe('x10');
+    });
+
+    it('keeps a duration-format display path numeric and tags it with the format (#627)', () => {
+        unitsSvc.pathMeasures.set('racing.ttl', 's');
+        unitsSvc.pathDurationFormats.set('racing.ttl', 'HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.ttl', source: null, pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('racing.ttl|default')!.next({ data: { value: 1800, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received.at(-1)?.data.value).toBe(1800);
+        expect(received.at(-1)?.data.measure).toBe('s');
+        expect(received.at(-1)?.data.durationFormat).toBe('HH:MM:SS');
+    });
+
+    it('re-emits the last value when only the duration format changes (late meta)', () => {
+        unitsSvc.pathMeasures.set('racing.late', 's');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.late', source: null, pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('racing.late|default')!.next({ data: { value: 90, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        expect(received.at(-1)?.data.durationFormat).toBeUndefined();
+
+        // The measure stays 's'; the format alone changing must still reach the widget.
+        unitsSvc.pathDurationFormats.set('racing.late', 'MM:SS');
+        dataSvc.metaSubjects.get('racing.late')!.next({} as ISkMetadata);
+        expect(received.at(-1)?.data.value).toBe(90);
+        expect(received.at(-1)?.data.durationFormat).toBe('MM:SS');
+    });
+
+    it('never tags a structural path with a duration format', () => {
+        unitsSvc.pathDurationFormats.set('racing.fixed', 'HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.fixed', source: null, pathType: 'number', convertUnitTo: 's', showConvertUnitTo: false, updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        dataSvc.subjects.get('racing.fixed|default')!.next({ data: { value: 30, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(received.at(-1)?.data.measure).toBe('s');
+        expect(received.at(-1)?.data.durationFormat).toBeUndefined();
     });
 
     it('supports observer-level min/max compounding with sampling', async () => {
@@ -769,6 +965,114 @@ describe('WidgetStreamsDirective', () => {
         expect(dataSvc.releases).toEqual([]);
     });
 
+    it('unobserve releases the base and stops delivering updates', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.off', source: null }));
+        const hits: unknown[] = [];
+        directive.observe('p', update => hits.push(update.data.value));
+        dataSvc.subjects.get('env.off|default')!.next({ data: { value: 'A', timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        directive.unobserve('p');
+        dataSvc.subjects.get('env.off|default')!.next({ data: { value: 'B', timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+        expect(hits).toEqual(['A']);
+        expect(dataSvc.releases).toEqual([{ path: 'env.off', source: 'default' }]);
+        expect(heldBaseCount(directive)).toBe(0);
+    });
+
+    it('does not resubscribe an unobserved path on a later config change', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.off', source: null }));
+        directive.observe('p', () => { });
+        directive.unobserve('p');
+
+        directive.applyStreamsConfigDiff(makeCfg({ path: 'env.off', source: 'n2k' }));
+        expect(dataSvc.calls).toEqual([{ path: 'env.off', source: 'default' }]);
+    });
+
+    it('unobserve of a path never observed is a no-op', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.none', source: null }));
+        directive.unobserve('p');
+        expect(dataSvc.calls).toEqual([]);
+        expect(dataSvc.releases).toEqual([]);
+    });
+
+    it('reads a slot with the source of the slot named by sourceFromPath when both read the same path', () => {
+        const cfg = makeMultiCfg([{ key: 'display', path: ' env.wind ' }, { key: 'hidden', path: 'env.wind' }]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['display'].source = 'n2k.115';
+        paths['hidden'].sourceFromPath = 'display';
+        directive.setStreamsConfig(cfg);
+        directive.observe('hidden', () => { });
+
+        expect(dataSvc.calls).toEqual([{ path: 'env.wind', source: 'n2k.115' }]);
+    });
+
+    it('keeps a slot\'s own source when the slot named by sourceFromPath reads another path', () => {
+        // Wind Steer showing Ground TWA from a pinned source: the hidden water-TWA slot must not ask
+        // that source for a path it may not send.
+        const cfg = makeMultiCfg([
+            { key: 'trueWindAngle', path: 'self.environment.wind.angleTrueGround' },
+            { key: 'polarTrueWindAngle', path: 'self.environment.wind.angleTrueWater' }
+        ]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['trueWindAngle'].source = 'n2k.115';
+        paths['polarTrueWindAngle'].source = 'default';
+        paths['polarTrueWindAngle'].sourceFromPath = 'trueWindAngle';
+        directive.setStreamsConfig(cfg);
+        directive.observe('polarTrueWindAngle', () => { });
+
+        expect(dataSvc.calls).toEqual([{ path: 'self.environment.wind.angleTrueWater', source: 'default' }]);
+    });
+
+    it('rebinds a slot that follows another slot when that slot\'s source changes', () => {
+        const build = (displaySource: string | null): IWidgetSvcConfig => {
+            const cfg = makeMultiCfg([{ key: 'display', path: 'env.wind' }, { key: 'hidden', path: 'env.wind' }]);
+            const paths = cfg.paths as Record<string, IWidgetPath>;
+            paths['display'].source = displaySource;
+            paths['hidden'].sourceFromPath = 'display';
+            return cfg;
+        };
+        directive.setStreamsConfig(build(null));
+        directive.observe('hidden', () => { });
+
+        directive.applyStreamsConfigDiff(build('n2k.115'));
+
+        expect(dataSvc.calls).toEqual([
+            { path: 'env.wind', source: 'default' },
+            { path: 'env.wind', source: 'n2k.115' }
+        ]);
+        expect(dataSvc.releases).toEqual([{ path: 'env.wind', source: 'default' }]);
+    });
+
+    it('drops the followed source when the followed slot is re-pointed to another path', () => {
+        const build = (displayPath: string): IWidgetSvcConfig => {
+            const cfg = makeMultiCfg([{ key: 'display', path: displayPath }, { key: 'hidden', path: 'env.wind' }]);
+            const paths = cfg.paths as Record<string, IWidgetPath>;
+            paths['display'].source = 'n2k.115';
+            paths['hidden'].sourceFromPath = 'display';
+            return cfg;
+        };
+        directive.setStreamsConfig(build('env.wind'));
+        directive.observe('hidden', () => { });
+
+        directive.applyStreamsConfigDiff(build('env.windGround'));
+
+        expect(dataSvc.calls).toEqual([
+            { path: 'env.wind', source: 'n2k.115' },
+            { path: 'env.wind', source: 'default' }
+        ]);
+    });
+
+    it('keeps a slot\'s own source when sourceFromPath names no slot', () => {
+        const cfg = makeMultiCfg([{ key: 'hidden', path: 'env.windSI' }]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['hidden'].source = 'own';
+        paths['hidden'].sourceFromPath = 'missing';
+        directive.setStreamsConfig(cfg);
+        directive.observe('hidden', () => { });
+
+        expect(dataSvc.calls).toEqual([{ path: 'env.windSI', source: 'own' }]);
+    });
+
     it('releases the base when its path key is removed from the config', () => {
         directive.setStreamsConfig(makeCfg({ key: 'p', path: 'env.keep', source: null }));
         directive.observe('p', () => { });
@@ -845,6 +1149,113 @@ describe('WidgetStreamsDirective', () => {
     });
 });
 
+describe('WidgetStreamsDirective SI values', () => {
+    let directive: WidgetStreamsDirective;
+    let dataSvc: FakeDataService;
+    let unitsSvc: FakeUnitsService;
+
+    beforeEach(() => {
+        TestBed.configureTestingModule({
+            providers: [
+                WidgetStreamsDirective,
+                { provide: DataService, useClass: FakeDataService },
+                { provide: UnitsService, useClass: FakeUnitsService }
+            ]
+        });
+        directive = TestBed.inject(WidgetStreamsDirective);
+        dataSvc = TestBed.inject(DataService) as unknown as FakeDataService;
+        unitsSvc = TestBed.inject(UnitsService) as unknown as FakeUnitsService;
+    });
+
+    const emit = (key: string, value: unknown) =>
+        dataSvc.subjects.get(key)!.next({ data: { value, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+
+    it('delivers a display slot\'s SI value with the server-resolved measure', () => {
+        unitsSvc.pathMeasures.set('nav.sog', 'knots');
+        directive.setStreamsConfig(makeCfg({ path: 'nav.sog', pathType: 'number', convertUnitTo: 'kph', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('nav.sog|default', 5.14);
+
+        expect(received.at(-1)?.data.value).toBe(5.14);
+        expect(received.at(-1)?.data.measure).toBe('knots');
+    });
+
+    it('delivers a structural slot\'s SI value with its fixed convertUnitTo as measure', () => {
+        directive.setStreamsConfig(makeCfg({ path: 'env.twa', pathType: 'number', convertUnitTo: 'deg', showConvertUnitTo: false, updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('env.twa|default', Math.PI / 2);
+
+        expect(received.at(-1)?.data.value).toBe(Math.PI / 2);
+        expect(received.at(-1)?.data.measure).toBe('deg');
+    });
+
+    it('tags a display slot with the stored unit before meta resolves, then re-emits with the server measure', () => {
+        unitsSvc.pathMeasures.set('nav.stw', 'unitless');
+        directive.setStreamsConfig(makeCfg({ path: 'nav.stw', pathType: 'number', convertUnitTo: 'knots', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('nav.stw|default', 5.14);
+
+        expect(received.at(-1)?.data.value).toBe(5.14);
+        expect(received.at(-1)?.data.measure).toBe('knots');
+
+        unitsSvc.pathMeasures.set('nav.stw', 'kph');
+        dataSvc.metaSubjects.get('nav.stw')!.next({} as ISkMetadata);
+
+        expect(received).toHaveLength(2);
+        expect(received.at(-1)?.data.value).toBe(5.14);
+        expect(received.at(-1)?.data.measure).toBe('kph');
+    });
+
+    it('delivers the SI number of seconds for a string-format measure', () => {
+        unitsSvc.pathMeasures.set('env.uptime', 'D HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'env.uptime', pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('env.uptime|default', 3600);
+
+        expect(received.at(-1)?.data.value).toBe(3600);
+        expect(received.at(-1)?.data.measure).toBe('D HH:MM:SS');
+    });
+
+    it('keeps carrying the duration format of a display slot', () => {
+        unitsSvc.pathMeasures.set('racing.ttl', 's');
+        unitsSvc.pathDurationFormats.set('racing.ttl', 'HH:MM:SS');
+        directive.setStreamsConfig(makeCfg({ path: 'racing.ttl', pathType: 'number', updateInterval: 50 }));
+
+        const received: IPathUpdate[] = [];
+        directive.observe('p', u => received.push(u));
+        emit('racing.ttl|default', 1800);
+
+        expect(received.at(-1)?.data.durationFormat).toBe('HH:MM:SS');
+    });
+
+    it('passes a null value through on display and structural slots', () => {
+        const cfg = makeMultiCfg([{ key: 'display', path: 'env.a' }, { key: 'structural', path: 'env.b' }]);
+        const paths = cfg.paths as Record<string, IWidgetPath>;
+        paths['display'].pathType = 'number';
+        paths['structural'].pathType = 'number';
+        paths['structural'].convertUnitTo = 'deg';
+        paths['structural'].showConvertUnitTo = false;
+        directive.setStreamsConfig(cfg);
+
+        const received: IPathUpdate[] = [];
+        directive.observe('display', u => received.push(u));
+        directive.observe('structural', u => received.push(u));
+        emit('env.a|default', null);
+        emit('env.b|default', null);
+
+        expect(received.map(u => u.data.value)).toEqual([null, null]);
+        expect(received.map(u => u.data.measure)).toEqual(['kn', 'deg']);
+    });
+});
+
 /**
  * Faithful-to-DataService fake: path values live in a BehaviorSubject (so the current value is
  * replayed on re-subscription), and timeoutPathObservable() resets the value to null - exactly
@@ -910,6 +1321,33 @@ describe('WidgetStreamsDirective TTL value reset (#1069)', () => {
         vi.restoreAllMocks();
     });
 
+    it('times out on the base path, nulling a field slot and a whole-value slot alike', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'log');
+        directive.setStreamsConfig({
+            ...makeMultiCfg([
+                { key: 'lat', path: 'self.navigation.position#/latitude' },
+                { key: 'whole', path: 'self.navigation.position' }
+            ]),
+            enableTimeout: true
+        });
+        const lat: unknown[] = [];
+        const whole: unknown[] = [];
+        directive.observe('lat', u => lat.push(u?.data?.value));
+        directive.observe('whole', u => whole.push(u?.data?.value));
+
+        dataSvc.subjects.get('self.navigation.position|default')!.next(
+            { data: { value: { latitude: 60.08, longitude: 21.97 }, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        // The 5 s TTL counts from the 1 s sample of the value above; the reset null arrives on the
+        // resubscribe 5 s after that.
+        await vi.advanceTimersByTimeAsync(12000);
+
+        expect(dataSvc.timeoutCalls.map(c => c.path)).toContain('self.navigation.position');
+        expect(dataSvc.timeoutCalls.every(c => c.path === 'self.navigation.position')).toBe(true);
+        expect(lat.at(-1)).toBeNull();
+        expect(whole.at(-1)).toBeNull();
+    });
+
     it('resets the value to null after a TTL timeout even with suppressBootstrapNull enabled', async () => {
         vi.useFakeTimers();
         vi.spyOn(console, 'log'); // silence timeout/retry logs
@@ -936,6 +1374,27 @@ describe('WidgetStreamsDirective TTL value reset (#1069)', () => {
         expect(dataSvc.timeoutCalls.length).toBeGreaterThanOrEqual(1);
         // The widget must be reset to null ("--"), not left showing the stale 500.
         expect(hits[hits.length - 1]).toBeNull();
+    });
+
+    it('resets a structural slot\'s SI value to null after a TTL timeout', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'log');
+        directive.setStreamsConfig(makeCfg({
+            path: 'env.ttl-si', source: null, pathType: 'number', updateInterval: 50,
+            convertUnitTo: 'x10', showConvertUnitTo: false, enableTimeout: true
+        }));
+
+        const hits: (number | null)[] = [];
+        directive.observe('p', u => hits.push((u?.data?.value as number | null) ?? null));
+
+        dataSvc.subjects.get('env.ttl-si|default')!.next({ data: { value: 7, timestamp: new Date() }, state: 'normal' } as IPathUpdate);
+        await vi.advanceTimersByTimeAsync(60);
+        expect(hits.at(-1)).toBe(7);
+
+        // The fixed 5 s TTL fires, then the 5 s retry resubscribes and replays the reset null.
+        await vi.advanceTimersByTimeAsync(10100);
+        expect(dataSvc.timeoutCalls.length).toBeGreaterThanOrEqual(1);
+        expect(hits.at(-1)).toBeNull();
     });
 });
 
@@ -984,5 +1443,50 @@ describe('widgetPathSignature', () => {
         expect(normalizeWidgetPath('   ')).toBeUndefined();
         expect(normalizeWidgetPath(null)).toBeUndefined();
         expect(normalizeWidgetPath(42)).toBeUndefined();
+    });
+
+    it('normalizeWidgetPath trims only the Signal K path of a pointer path', () => {
+        expect(normalizeWidgetPath('  self.a.b #/c')).toBe('self.a.b#/c');
+        expect(normalizeWidgetPath('self.a#/ ')).toBe('self.a#/ ');
+        expect(normalizeWidgetPath('self.a#c')).toBeUndefined();
+        expect(normalizeWidgetPath('  #/c')).toBeUndefined();
+    });
+
+    it('widgetPathSignature tells two fields of one path apart', () => {
+        const sig = (path: string) => widgetPathSignature({ path, pathType: 'number' });
+        expect(sig('self.navigation.attitude#/roll')).not.toBe(sig('self.navigation.attitude#/pitch'));
+        expect(sig('self.navigation.attitude#latitude')).toBeNull();
+    });
+});
+
+describe('WidgetRepointTracker', () => {
+    const sigA = widgetPathSignature({ path: 'self.navigation.headingMagnetic', pathType: 'number' });
+    const sigB = widgetPathSignature({ path: 'self.navigation.courseOverGroundTrue', pathType: 'number' });
+
+    it('never reports on the first call: nothing has been shown, so there is nothing to clear', () => {
+        expect(new WidgetRepointTracker().repointed(sigA)).toBe(false);
+        expect(new WidgetRepointTracker().repointed(null)).toBe(false);
+    });
+
+    it('stays quiet across a rerun on the same path, so a theme change cannot blink the reading', () => {
+        const tracker = new WidgetRepointTracker();
+        tracker.repointed(sigA);
+        expect(tracker.repointed(sigA)).toBe(false);
+    });
+
+    it('reports a re-point to another path', () => {
+        const tracker = new WidgetRepointTracker();
+        tracker.repointed(sigA);
+        expect(tracker.repointed(sigB)).toBe(true);
+    });
+
+    it('treats no-usable-path as a real identity, in both directions', () => {
+        // Clearing the path drops the reading, and a path that follows the cleared state must be
+        // told apart from it — null is not a second "not yet".
+        const tracker = new WidgetRepointTracker();
+        tracker.repointed(sigA);
+        expect(tracker.repointed(null)).toBe(true);
+        expect(tracker.repointed(null)).toBe(false);
+        expect(tracker.repointed(sigB)).toBe(true);
     });
 });

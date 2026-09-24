@@ -113,6 +113,8 @@ Each widget has a **Display** tab for how it looks and behaves, and a **Paths** 
 
 The path picker searches everything your server publishes and shows each path's description, so you can find the right one without leaving the dialog. Where a path has several sources, pick the one you want under **Data Source**, or leave it on **Any** and take whichever source Signal K resolves.
 
+Some Signal K paths carry several values at once. `navigation.position` holds latitude and longitude, and `navigation.attitude` holds roll, pitch and yaw. Where the server's metadata lists those fields, the picker offers each one on its own, written as the path, a `#`, and the field: `self.navigation.position#/latitude`, `self.navigation.attitude#/roll`. The part after `#` is a [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901), so a nested field is `#/outer/inner`. A field follows the server's unit preferences for its Signal K unit: roll is in radians, so it shows in whatever the server's active preset uses for angles. Skip reads the server-wide preset, so a preset chosen for your own user does not reach fields. When the unit belongs to several categories, such as metres for distance, depth and length, the field shows in the slot's stored unit if it has one, and otherwise in Signal K's unit. Its history graph needs a history provider that stores the whole value at its path. Position works with the DuckDB and QuestDB providers today; attitude does not yet.
+
 ![The Paths tab of a widget's settings, with a path search field showing matching Signal K paths and their descriptions](./images/widget-settings-paths.png)
 
 On a locked page, a long press on a widget opens its recent history as a graph — see [Historical Data](#historical-data).
@@ -166,7 +168,9 @@ Every widget is a visual presentation control with configuration options of its 
 - **Compass** – Faceplate or card-style rotating compass with several cardinal indicator options.
 - **Level Gauge** – Dual-scale heel indicator: a ±5° fine level for trim tuning and a ±40° arc for sea state.
 - **Pitch & Roll** – Horizon-style attitude indicator with live pitch and roll degrees.
+- **Sea Horizon** – Marine attitude indicator in a steel case: heel scale with caution and alarm bands, trim ladder, LCD readouts, and optional damping.
 - **Classic Steel** – Traditional steel-look linear and radial gauges with range sizes and zone highlights.
+- **Steel Compass** – Classic steel binnacle compass: the card turns under a fixed pointer, heading on an LCD window.
 - **Battery Monitor** – Battery banks and individual batteries: state of charge, current, voltage, power, temperature, capacity, and time remaining.
 - **Solar Charger** – Live panel output, battery-side metrics, and charger and relay status.
 - **AC/DC Charger** – Charger output and charging state with voltage, current, power, temperature, and stage indicators.

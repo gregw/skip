@@ -98,6 +98,42 @@ describe('extractWidgetSchemas', () => {
     expect(bySelector('widget-bms')?.pathSlots).toEqual([]);
   });
 
+  it('publishes the units of options a widget stores in SI (Wind Steer close-hauled angle in rad)', () => {
+    const windsteer = bySelector('widget-wind-steer');
+    expect(windsteer?.optionUnits).toEqual({ closeHauledLineAngle: 'rad' });
+    expect(windsteer?.defaultConfig['closeHauledLineAngle']).toBeCloseTo(Math.PI / 4, 15);
+    expect(bySelector('widget-boolean-switch')?.optionUnits).toBeUndefined();
+  });
+
+  it('publishes scale bounds as SI in the unit of the path they scale', () => {
+    const gaugeBounds = { 'displayScale.lower': 'SI unit of gaugePath', 'displayScale.upper': 'SI unit of gaugePath' };
+    for (const selector of ['widget-gauge-ng-radial', 'widget-gauge-ng-linear', 'widget-gauge-steel', 'widget-simple-linear']) {
+      expect(bySelector(selector)?.optionUnits, selector).toEqual(gaugeBounds);
+    }
+    expect(bySelector('widget-numeric')?.optionUnits)
+      .toEqual({ yScaleMin: 'SI unit of numericPath', yScaleMax: 'SI unit of numericPath' });
+    const graphUnit = 'SI unit of datachartPath';
+    expect(bySelector('widget-data-chart')?.optionUnits).toEqual({
+      yScaleSuggestedMin: graphUnit, yScaleSuggestedMax: graphUnit, yScaleMin: graphUnit, yScaleMax: graphUnit
+    });
+  });
+
+  it('names nested SI options by their dotted path (Sea Horizon heel angles, AIS radar ranges and COG time)', () => {
+    const seaHorizon = bySelector('widget-sea-horizon');
+    expect(seaHorizon?.optionUnits).toEqual({ 'gauge.heelCautionAngle': 'rad', 'gauge.heelAlarmAngle': 'rad' });
+    const gauge = seaHorizon?.defaultConfig['gauge'] as Record<string, unknown>;
+    expect(gauge['heelCautionAngle']).toBeCloseTo(20 * Math.PI / 180, 15);
+    expect(gauge['heelAlarmAngle']).toBeCloseTo(30 * Math.PI / 180, 15);
+    expect(seaHorizon?.defaultConfig['siVersion']).toBe(21);
+
+    const ais = bySelector('widget-ais-radar');
+    expect(ais?.optionUnits).toEqual({ 'ais.rangeRings': 'm', 'ais.cogVectorsSeconds': 's' });
+    const aisConfig = ais?.defaultConfig['ais'] as Record<string, unknown>;
+    expect(aisConfig['rangeRings']).toEqual([1, 3, 6, 12, 24, 48].map(nm => nm * 1852));
+    expect(aisConfig['cogVectorsSeconds']).toBe(600);
+    expect('cogVectorsMinutes' in aisConfig).toBe(false);
+  });
+
   it('keeps a widget special config object verbatim (bms)', () => {
     const config = bySelector('widget-bms')?.defaultConfig as { bms?: unknown };
     expect(config.bms).toMatchObject({ trackedDevices: [], groups: [], banks: [] });

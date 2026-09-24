@@ -6,7 +6,7 @@ import { cloneDeep } from 'lodash-es';
 
 import { UUID } from '../utils/uuid.util';
 
-import { IConfig, IAppConfig, IConnectionConfig, IThemeConfig, INotificationConfig, ISignalKUrl } from "../interfaces/app-settings.interfaces";
+import { IConfig, IAppConfig, IConnectionConfig, IThemeConfig, INotificationConfig, ISignalKUrl, ISiScaleReset } from "../interfaces/app-settings.interfaces";
 import { DefaultAppConfig, DefaultConnectionConfig as DefaultConnectionConfig, DefaultThemeConfig } from '../../../default-config/config.blank.const';
 import { DefaultNotificationConfig } from '../../../default-config/config.blank.notification.const';
 import { MatSnackBar } from '@angular/material/snack-bar';
@@ -42,6 +42,7 @@ export class SettingsService {
   private readonly _keepScreenAwake = signal<boolean>(true);
   private readonly _autoRevealToolbar = signal<boolean>(true);
   private readonly _pinToolbar = signal<boolean>(false);
+  private readonly _siScaleResets = signal<ISiScaleReset[]>([]);
 
   public readonly themeName = this._themeName.asReadonly();
   public readonly keepScreenAwake = this._keepScreenAwake.asReadonly();
@@ -54,6 +55,7 @@ export class SettingsService {
   public readonly isRemoteControl = this._isRemoteControl.asReadonly();
   public readonly instanceName = this._instanceName.asReadonly();
   public readonly browserTabTitle = this._browserTabTitle.asReadonly();
+  public readonly siScaleResets = this._siScaleResets.asReadonly();
 
   // Persisted for config-version compatibility but no longer read by connection setup: routing always
   // serves the server's discovered API path from the app's own origin. proxyEnabled and the legacy
@@ -268,6 +270,7 @@ export class SettingsService {
     this._keepScreenAwake.set(app.keepScreenAwake === undefined ? true : app.keepScreenAwake);
     this._autoRevealToolbar.set(app.autoRevealToolbar === undefined ? true : app.autoRevealToolbar);
     this._pinToolbar.set(app.pinToolbar === undefined ? false : app.pinToolbar);
+    this._siScaleResets.set(app.siScaleResets ?? []);
 
     // Embed is strictly read-only: the in-memory defaults above are applied, but the persist-on-missing
     // self-heal write is suppressed so a framed read-only boot never PATCHes the profile's app config.
@@ -464,6 +467,12 @@ export class SettingsService {
     this.saveAppConfig();
   }
 
+  /** Forget the SI scale reset list once the user has seen it, on every device that loads this profile. */
+  public dismissSiScaleResets(): void {
+    this._siScaleResets.set([]);
+    this.saveAppConfig();
+  }
+
   public getNightModeBrightness(): number {
     return this.nightModeBrightness();
   }
@@ -567,6 +576,11 @@ export class SettingsService {
       keepScreenAwake: this.keepScreenAwake(),
       autoRevealToolbar: this.autoRevealToolbar(),
       pinToolbar: this.pinToolbar()
+    }
+    // Every whole-blob save replaces the stored app config, so the list rides along until dismissed.
+    const siScaleResets = this.siScaleResets();
+    if (siScaleResets.length) {
+      storageObject.siScaleResets = siScaleResets;
     }
     return storageObject;
   }

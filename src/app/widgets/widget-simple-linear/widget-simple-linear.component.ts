@@ -10,6 +10,7 @@ import { getColors } from '../../core/utils/themeColors.utils';
 import { getHighlights } from '../../core/utils/zones-highlight.utils';
 import { UnitsService } from '../../core/services/units.service';
 import { States } from '../../core/interfaces/signalk-interfaces';
+import { presentationValue, presentedScaleBounds } from '../../core/utils/si-presentation.util';
 
 @Component({
   selector: 'widget-simple-linear',
@@ -38,7 +39,7 @@ export class WidgetSimpleLinearComponent {
         convertUnitTo: 'unitless'
       }
     },
-    displayScale: { lower: 0, upper: 100, type: 'linear' },
+    displayScale: { lower: null, upper: null, type: 'linear' },
     gauge: { type: 'simpleLinear', unitLabelFormat: 'full' },
     numInt: 1,
     numDecimal: 2,
@@ -46,18 +47,25 @@ export class WidgetSimpleLinearComponent {
     color: 'contrast',
     updateInterval: 500,
     enableTimeout: false,
-    dataTimeout: 5
+    dataTimeout: 5,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'displayScale.lower': 'SI unit of gaugePath',
+    'displayScale.upper': 'SI unit of gaugePath'
   };
 
   // Inject directives/services
   protected readonly runtime = inject(WidgetRuntimeDirective); // expose in template if needed later
   private readonly streams = inject(WidgetStreamsDirective);
-  private readonly metadata = inject(WidgetMetadataDirective, { optional: true }); // Only used when ignoreZones=false
+  private readonly metadata = inject(WidgetMetadataDirective, { optional: true });
   private readonly unitsService = inject(UnitsService);
 
   // Signals (presentation state)
   private readonly effectiveUnit = signal<string>('');
-  // Unit SYMBOL derives from the measure the streams directive applied to the value (server-resolved
+  // Unit SYMBOL derives from the measure the streams directive tags the value with (server-resolved
   // for this display path), never the stored convertUnitTo, so the label and value cannot drift. An
   // empty measure yields an empty symbol — the neutral boot placeholder until displayUnits resolves.
   protected readonly unitsLabel = computed<string>(() => {
@@ -73,18 +81,23 @@ export class WidgetSimpleLinearComponent {
   protected readonly barColorGradient = signal<string>('');
   protected readonly barColorBackground = signal<string>('');
 
-  // Reinterpret the stored displayScale bounds (entered in the widget's stored convertUnitTo) into the
-  // effective server-resolved measure, so the gauge scale, zone highlights and the converted value the
-  // streams directive delivers all share one unit. A no-op when the measure equals the stored unit or
-  // has not resolved yet (empty measure => bound returned unchanged).
-  private reinterpretScaleBound(bound: number): number {
-    const stored = this.runtime.options()?.paths?.['gaugePath']?.convertUnitTo ?? '';
-    return this.unitsService.convertBetweenMeasures(stored, this.effectiveUnit(), bound);
-  }
-  protected readonly displayLower = computed<number>(() =>
-    this.reinterpretScaleBound(this.runtime.options()?.displayScale?.lower ?? 0));
-  protected readonly displayUpper = computed<number>(() =>
-    this.reinterpretScaleBound(this.runtime.options()?.displayScale?.upper ?? 100));
+  /**
+   * Measure the scale and zones are presented in: the tagged one, else the stored convertUnitTo
+   * before the measure resolves, so the boot scale and bands render instead of vanishing until the
+   * first value.
+   */
+  private readonly effectiveMeasure = computed<string>(() =>
+    this.effectiveUnit() || (this.runtime.options()?.paths?.['gaugePath']?.convertUnitTo ?? '')
+  );
+  private readonly scaleBounds = computed(() => presentedScaleBounds(
+    this.unitsService,
+    this.effectiveMeasure(),
+    this.runtime.options()?.displayScale,
+    this.metadata?.displayScale(),
+    { lower: 0, upper: 100 }
+  ));
+  protected readonly displayLower = computed<number>(() => this.scaleBounds().lower);
+  protected readonly displayUpper = computed<number>(() => this.scaleBounds().upper);
 
   // Computed signal for highlights (zones)
   protected highlights = computed<IDataHighlight[]>(() => {
@@ -95,11 +108,7 @@ export class WidgetSimpleLinearComponent {
     const zones = this.metadata.zones();
     if (!zones?.length) return [];
 
-    // Zones (base SI units) convert to the effective measure; bounds are reinterpreted to match.
-    // Before the measure resolves, fall back to the stored unit (like the ng gauges) so bands render
-    // in the same unit as the still-stored-unit boot scale instead of vanishing until the first value.
-    const zoneUnit = this.effectiveUnit() || (cfg.paths?.['gaugePath']?.convertUnitTo ?? '');
-    return getHighlights(zones, theme, zoneUnit, this.unitsService, this.displayLower(), this.displayUpper());
+    return getHighlights(zones, theme, this.effectiveMeasure(), this.unitsService, this.displayLower(), this.displayUpper());
   });
   private lastState: States | null = null; // simple cache to avoid redundant color sets
 
@@ -114,15 +123,15 @@ export class WidgetSimpleLinearComponent {
           const theme = this.theme();
           if (!cfg || !theme) return;
           this.effectiveUnit.set(pkt?.data?.measure ?? '');
-          const raw = pkt?.data?.value as number | null;
-            // Clamp & label formatting
-          if (raw == null) {
+          const si = pkt?.data?.value as number | null;
+          // Clamp and format in the presentation measure.
+          if (si == null) {
             this.dataValue.set(this.displayLower());
             this.dataLabelValue.set('--');
           } else {
             const lower = this.displayLower();
             const upper = this.displayUpper();
-            const clamped = Math.min(Math.max(raw, lower), upper);
+            const clamped = Math.min(Math.max(presentationValue(this.unitsService, this.effectiveUnit(), si), lower), upper);
             this.dataValue.set(clamped);
             this.dataLabelValue.set(clamped.toFixed(cfg.numDecimal));
           }
@@ -172,11 +181,11 @@ export class WidgetSimpleLinearComponent {
       });
     });
 
-    // Zones metadata observation (only when needed)
+    // Metadata observation: zones, and the meta scale for bounds that are not set
     effect(() => {
       const cfg = this.runtime.options();
       const metadata = this.metadata;
-      if (!cfg || cfg.ignoreZones || !metadata) return;
+      if (!cfg || !metadata) return;
       untracked(() => metadata.observe('gaugePath'));
     });
   }

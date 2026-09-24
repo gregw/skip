@@ -1,9 +1,10 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { StorageService } from './storage.service';
 import { SettingsService } from './settings.service';
-import { ConfigurationUpgradeService } from './configuration-upgrade.service';
 import { buildDefaultConfig } from '../../../default-config/config.default.factory';
 import { isValidConfigShape } from '../utils/config-shape.util';
+import type { IConfig } from '../interfaces/app-settings.interfaces';
+import { CONSOLE_MIGRATION_SINK, ConfigTooOldError, ConfigMigrationResult, migrateConfig } from '../utils/config-migration.util';
 
 export interface IProfileSummary {
   name: string;
@@ -20,6 +21,21 @@ const MAX_NAME_LENGTH = 64;
 const PROFILE_SCOPE = 'user';
 
 /**
+ * Migrate a config being imported. A file below the chain's floor came from an older KIP, which can
+ * still read it, so the import says how to bring it within reach.
+ */
+function migrateForImport(config: IConfig): ConfigMigrationResult {
+  try {
+    return migrateConfig(config, CONSOLE_MIGRATION_SINK);
+  } catch (error) {
+    if (error instanceof ConfigTooOldError) {
+      throw new Error(`${error.message} Load it into an older KIP, export it again, then import it here.`);
+    }
+    throw error;
+  }
+}
+
+/**
  * Owns profile (named config slot) lifecycle: list / switch / create / rename / duplicate / delete.
  * Orchestrates StorageService (slot CRUD, all hardcoded to the 'user' scope) and SettingsService
  * (active-profile name + reload). Mutations reject on storage failure; callers
@@ -29,7 +45,6 @@ const PROFILE_SCOPE = 'user';
 export class ProfileService {
   private readonly storage = inject(StorageService);
   private readonly settings = inject(SettingsService);
-  private readonly upgrade = inject(ConfigurationUpgradeService);
 
   private readonly _profiles = signal<IProfileSummary[]>([]);
   public readonly profiles = this._profiles.asReadonly();
@@ -110,7 +125,7 @@ export class ProfileService {
       if (!isValidConfigShape(config)) {
         throw new Error('The selected file is not a valid Skip configuration.');
       }
-      const { config: prepared, migrated } = this.upgrade.migrateImportedConfig(config);
+      const { config: prepared, migrated } = migrateForImport(config);
       await this.storage.setConfig(PROFILE_SCOPE, normalized, prepared);
       await this.refresh();
       return migrated;

@@ -9,7 +9,7 @@
  * @param configuredUrl  the user-configured Signal K URL, if any (takes precedence)
  * @returns the server root without a trailing slash, or `null` if it cannot be resolved
  */
-function resolveSignalKServerRoot(
+export function resolveSignalKServerRoot(
   httpServiceUrl: string | null | undefined,
   configuredUrl?: string | null
 ): string | null {

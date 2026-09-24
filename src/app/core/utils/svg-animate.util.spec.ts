@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { animateRotation, effectiveAnimationDuration } from './svg-animate.util';
+import { animateProgress, animateRotation, effectiveAnimationDuration } from './svg-animate.util';
 import { DEFAULT_WIDGET_UPDATE_INTERVAL_MS } from '../interfaces/widgets-interface';
 
 describe('effectiveAnimationDuration', () => {
@@ -69,5 +69,49 @@ describe('animateRotation interpolation', () => {
 
     // Linear: 0 + 100 * 0.25 = 25. An ease-in-out-cubic curve would give 6.25.
     expect(transform).toBe('rotate(25 500 500)');
+  });
+});
+
+describe('animateProgress', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const frameQueue = () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(cb => { pending.set(nextId, cb); return nextId++; });
+    vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(id => { pending.delete(id); });
+    vi.spyOn(performance, 'now').mockReturnValue(1000);
+    return {
+      run(now: number) {
+        const callbacks = [...pending.values()];
+        pending.clear();
+        callbacks.forEach(cb => cb(now));
+      },
+      get size() { return pending.size; }
+    };
+  };
+
+  it('reports linear progress each frame and stops at 1', () => {
+    const frames = frameQueue();
+    const seen: number[] = [];
+    animateProgress(1000, t => seen.push(t));
+
+    frames.run(1250);
+    frames.run(1500);
+    frames.run(2400);
+    expect(seen).toEqual([0.25, 0.5, 1]);
+    expect(frames.size).toBe(0);
+  });
+
+  it('cancels whichever frame is pending, not only the first', () => {
+    const frames = frameQueue();
+    const seen: number[] = [];
+    const cancel = animateProgress(1000, t => seen.push(t));
+
+    frames.run(1250);
+    cancel();
+    frames.run(1500);
+    expect(seen).toEqual([0.25]);
+    expect(frames.size).toBe(0);
   });
 });

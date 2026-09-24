@@ -16,9 +16,10 @@ import { getHighlights } from '../../core/utils/zones-highlight.utils';
 import { getColors } from '../../core/utils/themeColors.utils';
 import { SkipResizeObserverDirective } from '../../core/directives/skip-resize-observer.directive';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
-import { WidgetStreamsDirective, widgetPathSignature } from '../../core/directives/widget-streams.directive';
+import { WidgetStreamsDirective, widgetPathSignature, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
+import { presentationValue, presentedScaleBounds } from '../../core/utils/si-presentation.util';
 import { ITheme } from '../../core/services/app-service';
 
 @Component({
@@ -58,7 +59,7 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
         convertUnitTo: 'unitless'
       }
     },
-    displayScale: { lower: 0, upper: 100, type: 'linear' },
+    displayScale: { lower: null, upper: null, type: 'linear' },
     gauge: {
       type: 'ngRadial',
       subType: 'measuring',
@@ -75,7 +76,14 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
     enableTimeout: false,
     color: 'contrast',
     dataTimeout: 5,
-    ignoreZones: false
+    ignoreZones: false,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'displayScale.lower': 'SI unit of gaugePath',
+    'displayScale.upper': 'SI unit of gaugePath'
   };
 
   // Gauge option setting constant
@@ -86,6 +94,7 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
   readonly gauge = viewChild('radialGauge', { read: ElementRef });
 
   // Reactive state
+  /** The reading in the presentation measure, clamped to the scale: what the needle points at. */
   protected value = signal<number | null | undefined>(undefined);
   /** True while a non-null datapoint is in hand; needle and progress bar are suppressed when false. */
   protected dataAvailable = signal(false);
@@ -108,13 +117,18 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
   private effectiveMeasure = computed<string>(() =>
     this.effectiveUnit() || (this.runtime.options()?.paths?.['gaugePath']?.convertUnitTo ?? 'unitless')
   );
+  /** The scale bounds in the presentation measure, which the clamp shares. */
+  private scaleBounds = computed(() => presentedScaleBounds(
+    this.unitsService,
+    this.effectiveMeasure(),
+    this.runtime.options()?.displayScale,
+    this.metadata.displayScale(),
+    { lower: 0, upper: 100 }
+  ));
   protected adjustedScale = computed<IScale>(() => {
     const cfg = this.runtime.options();
     if (!cfg) return { min: 0, max: 100, majorTicks: [] };
-    const fromUnit = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-    const toMeasure = this.effectiveMeasure();
-    const lower = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.lower ?? 0);
-    const upper = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.upper ?? 100);
+    const { lower, upper } = this.scaleBounds();
     if (cfg.gauge?.subType === 'capacity') {
       return { min: lower, max: upper, majorTicks: [] };
     }
@@ -143,37 +157,16 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
   private pathDataState = signal<States | null>(null);
   private viewReady = signal(false);
   protected gaugeOptions: RadialGaugeOptions = {} as RadialGaugeOptions;
-  /**
-   * Identity of the path the reading state describes. Three states: `undefined` before the first
-   * effect run (nothing has been shown, so there is nothing to clear), `null` for a config with no
-   * usable path, and the signature otherwise. `null` is a real identity rather than a second
-   * "not yet" — a cleared path must still compare unequal to the path that follows it.
-   */
-  private lastPathSignature: string | null | undefined = undefined;
+  /** Path identity behind the reading below; see {@link WidgetRepointTracker}. */
+  private readonly repoint = new WidgetRepointTracker();
 
-  /**
-   * Drop the reading when the widget is re-pointed at another path.
-   *
-   * The subscription is rebuilt on every run of the data effect, a theme change included, and
-   * `suppressBootstrapNull` gives each rebuild a fresh suppression closure. Against a path that
-   * reports nothing the replayed leading null is therefore filtered and the stream callback never
-   * runs — leaving the previous path's needle and value on screen, presented as a live reading of
-   * the new one. Clearing unconditionally here is wrong for the same reason: this effect re-runs on
-   * theme changes, which would blink the needle off and back on at every switch.
-   *
-   * The reading comes back because `observe()` below is passed a new closure on every effect run:
-   * the directive compares callback identity as well as the signature, so it rebuilds and replays
-   * the new path's value into this component. A stable callback reference would make that
-   * early-return instead, and the gauge would stay blank on a live path until the next delta.
-   */
+  /** Drop the reading when the widget is re-pointed at another path (#585). */
   private clearReadingOnRepoint(signature: string | null): void {
-    if (this.lastPathSignature !== undefined && this.lastPathSignature !== signature) {
-      this.dataAvailable.set(false);
-      this.value.set(undefined);
-      this.effectiveUnit.set('');
-      this.pathDataState.set(null);
-    }
-    this.lastPathSignature = signature;
+    if (!this.repoint.repointed(signature)) return;
+    this.dataAvailable.set(false);
+    this.value.set(undefined);
+    this.effectiveUnit.set('');
+    this.pathDataState.set(null);
   }
 
   constructor() {
@@ -196,27 +189,25 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
 
         const measure = path.data.measure ?? '';
         this.effectiveUnit.set(measure);
-        const fromUnit = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
-        const toMeasure = measure || fromUnit;
-        const lower = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.lower ?? 0);
-        const upper = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.upper ?? 100);
+        const { lower, upper } = this.scaleBounds();
 
-        const raw = (path?.data?.value as number) ?? null;
-        this.dataAvailable.set(raw != null);
-        if (raw == null) {
+        const si = (path?.data?.value as number) ?? null;
+        this.dataAvailable.set(si != null);
+        if (si == null) {
           this.value.set(lower);
         } else {
-          // clamp
-          this.value.set(Math.min(Math.max(raw, lower), upper));
+          // The scale bounds are in the presentation measure, so the clamp is too.
+          const shown = presentationValue(this.unitsService, measure, si);
+          this.value.set(Math.min(Math.max(shown, lower), upper));
         }
         });
       });
     });
 
-    // Metadata observation (idempotent) – only when zones not ignored
+    // Metadata observation (idempotent): zones, and the meta scale for bounds that are not set
     effect(() => {
       const cfg = this.runtime.options();
-      if (!cfg || cfg.ignoreZones) return;
+      if (!cfg) return;
       untracked(() => this.metadata.observe('gaugePath'));
     });
 

@@ -1,14 +1,16 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EMPTY } from 'rxjs';
+import { EMPTY, Subject } from 'rxjs';
 import { UntypedFormControl, UntypedFormGroup } from '@angular/forms';
 import { IDynamicControl } from '../../core/interfaces/widgets-interface';
-import { IPathMetaData, ISkPathData } from '../../core/interfaces/app-interfaces';
+import { IMeta, IPathMetaData, IPathValueData, ISkPathData } from '../../core/interfaces/app-interfaces';
 
 import { PathControlConfigComponent } from './path-control-config.component';
 import { SignalKConnectionService } from '../../core/services/signalk-connection.service';
 import { DataService } from '../../core/services/data.service';
 import { UnitsService } from '../../core/services/units.service';
+import { SignalKDeltaService } from '../../core/services/signalk-delta.service';
+import type { ISkMetadata } from '../../core/interfaces/signalk-interfaces';
 
 const src = (...keys: string[]): ISkPathData['sources'] =>
   Object.fromEntries(keys.map(k => [k, { sourceTimestamp: '', sourceValue: 0 }]));
@@ -31,7 +33,7 @@ describe('PathControlConfigComponent', () => {
           provide: DataService,
           useValue: {
             getPathObject: () => pathObject,
-            getPathsAndMetaByType: () => publishedPaths,
+            getPathsAndFieldsByType: () => publishedPaths,
             getPathMeta: () => undefined
           }
         },
@@ -338,5 +340,284 @@ describe('PathControlConfigComponent', () => {
     pathObject.sources = src('gps.0', 'wmm.0');
     (choiceComponent as unknown as { onPathChoiceChange: () => void }).onPathChoiceChange();
     expect(choiceComponent.availableSources).toEqual(['default', 'gps.0', 'wmm.0']);
+  });
+});
+
+describe('PathControlConfigComponent re-pointing a scale widget', () => {
+  const TEMPERATURE = 'self.propulsion.main.temperature';
+  const RPM = 'self.propulsion.main.revolutions';
+  const conversions: Record<string, (v: number) => number> = {
+    unitless: v => v,
+    celsius: v => v - 273.15,
+    rpm: v => v * 60
+  };
+  let serverMeasures: Record<string, string>;
+  let metas: Record<string, ISkMetadata>;
+
+  const scaleMeta = (units: string, lower: number, upper: number): ISkMetadata =>
+    ({ description: '', properties: {}, units, displayScale: { lower, upper, type: 'linear' } });
+
+  function repoint(from: { path: string; unit: string; lower: number; upper: number }, to: string) {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [PathControlConfigComponent],
+      providers: [
+        { provide: SignalKConnectionService, useValue: { skServerVersion: '2.14.0', serverServiceEndpoint$: EMPTY, serverVersion$: EMPTY } },
+        {
+          provide: DataService,
+          useValue: {
+            getPathObject: (path: string) => metas[path] ? { sources: src('n2k.1'), type: 'number' } : null,
+            getPathsAndFieldsByType: () => [],
+            getPathMeta: (path: string) => metas[path] ?? null
+          }
+        },
+        {
+          provide: UnitsService,
+          useValue: {
+            skBaseUnits: [],
+            getConversionsForPath: (path: string) => ({ base: serverMeasures[path] ?? 'unitless', conversions: [] }),
+            resolvePathMeasure: (path: string) => serverMeasures[path] ?? 'unitless',
+            convertToUnit: (unit: string, value: number) => conversions[unit]?.(value) ?? null
+          }
+        }
+      ]
+    });
+    const slot = new UntypedFormGroup({
+      description: new UntypedFormControl('Numeric Data'),
+      path: new UntypedFormControl(from.path),
+      source: new UntypedFormControl('default'),
+      pathType: new UntypedFormControl('number'),
+      isPathConfigurable: new UntypedFormControl(true),
+      showPathSkUnitsFilter: new UntypedFormControl(false),
+      pathSkUnitsFilter: new UntypedFormControl(null),
+      convertUnitTo: new UntypedFormControl(from.unit)
+    });
+    const displayScale = new UntypedFormGroup({
+      lower: new UntypedFormControl(from.lower),
+      upper: new UntypedFormControl(from.upper),
+      type: new UntypedFormControl('linear')
+    });
+    new UntypedFormGroup({ displayScale, paths: new UntypedFormGroup({ gaugePath: slot }) });
+    const fixture = TestBed.createComponent(PathControlConfigComponent);
+    fixture.componentRef.setInput('pathFormGroup', slot);
+    fixture.componentRef.setInput('multiCTRLArray', [] as IDynamicControl[]);
+    fixture.componentRef.setInput('filterSelfPaths', false);
+    fixture.detectChanges();
+    slot.controls['path'].markAsDirty();
+    slot.controls['path'].setValue(to);
+    return { slot, displayScale };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    serverMeasures = { [TEMPERATURE]: 'celsius', [RPM]: 'rpm' };
+    metas = { [TEMPERATURE]: scaleMeta('K', 255.37, 310.93), [RPM]: scaleMeta('Hz', 0, 60) };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fills the new path's meta scale in the unit the server shows it in", async () => {
+    const { slot, displayScale } = repoint({ path: TEMPERATURE, unit: 'celsius', lower: 0, upper: 120 }, RPM);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(slot.controls['convertUnitTo'].value).toBe('rpm');
+    expect(displayScale.value).toEqual({ lower: 0, upper: 3600, type: 'linear' });
+  });
+
+  it('drops the float noise of the conversion', async () => {
+    const { displayScale } = repoint({ path: RPM, unit: 'rpm', lower: 0, upper: 3600 }, TEMPERATURE);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(displayScale.value).toEqual({ lower: -17.78, upper: 37.78, type: 'linear' });
+  });
+
+  it('fills the meta scale in SI when neither the server nor the slot gives a unit', async () => {
+    serverMeasures = {};
+    const { displayScale } = repoint({ path: TEMPERATURE, unit: 'celsius', lower: 0, upper: 120 }, RPM);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(displayScale.value).toEqual({ lower: 0, upper: 60, type: 'linear' });
+  });
+
+  it('keeps the numbers when the new path has no meta scale', async () => {
+    metas[RPM] = { description: '', properties: {}, units: 'Hz' };
+    const { displayScale } = repoint({ path: TEMPERATURE, unit: 'celsius', lower: 0, upper: 120 }, RPM);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(displayScale.value).toEqual({ lower: 0, upper: 120, type: 'linear' });
+  });
+});
+
+// The pickers against the real DataService and UnitsService, fed Signal K deltas, so pointer paths
+// go through the same lookups the running app uses.
+describe('PathControlConfigComponent with pointer paths', () => {
+  const POSITION_META: ISkMetadata = {
+    description: 'The position of the vessel',
+    properties: {
+      longitude: { type: 'number', units: 'deg', description: 'Longitude' },
+      latitude: { type: 'number', units: 'deg', description: 'Latitude' },
+      altitude: { type: 'number', units: 'm', description: 'Altitude' }
+    }
+  };
+  const ATTITUDE_META: ISkMetadata = {
+    description: 'Vessel attitude',
+    properties: {
+      roll: { type: 'number', units: 'rad', description: 'Vessel roll, +ve is list to starboard' },
+      pitch: { type: 'number', units: 'rad', description: 'Pitch' },
+      yaw: { type: 'number', units: 'rad', description: 'Yaw' }
+    }
+  };
+
+  let values$: Subject<IPathValueData>;
+  let metas$: Subject<IMeta>;
+
+  const pushValue = (path: string, value: unknown, source: string) =>
+    values$.next({ context: 'self', path, source, timestamp: '2026-09-24T10:00:00.000Z', value });
+
+  beforeEach(async () => {
+    values$ = new Subject<IPathValueData>();
+    metas$ = new Subject<IMeta>();
+    await TestBed.configureTestingModule({
+      imports: [PathControlConfigComponent],
+      providers: [
+        { provide: SignalKConnectionService, useValue: { skServerVersion: '2.14.0', serverServiceEndpoint$: EMPTY, serverVersion$: EMPTY } },
+        {
+          provide: SignalKDeltaService,
+          useValue: {
+            subscribeDataPathsUpdates: () => values$.asObservable(),
+            subscribeMetadataUpdates: () => metas$.asObservable(),
+            subscribeNotificationsUpdates: () => EMPTY,
+            subscribeSelfUpdates: () => EMPTY
+          }
+        },
+        UnitsService
+      ]
+    }).compileComponents();
+    TestBed.inject(DataService);
+
+    pushValue('navigation.position', { latitude: 60.08, longitude: 21.97 }, 'gps.0');
+    pushValue('navigation.position', { latitude: 60.09, longitude: 21.96 }, 'gps.1');
+    metas$.next({ context: 'self', path: 'navigation.position', meta: POSITION_META });
+    pushValue('navigation.attitude', { roll: -0.0384, pitch: 0.0091, yaw: null }, 'imu.0');
+    metas$.next({ context: 'self', path: 'navigation.attitude', meta: ATTITUDE_META });
+    pushValue('navigation.speedOverGround', 3.2, 'gps.0');
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const slotForm = (path: string | null, overrides: Record<string, unknown> = {}): UntypedFormGroup =>
+    new UntypedFormGroup({
+      description: new UntypedFormControl('Value'),
+      path: new UntypedFormControl(path),
+      pathID: new UntypedFormControl('uuid-p'),
+      source: new UntypedFormControl('default'),
+      pathType: new UntypedFormControl('number'),
+      supportsPut: new UntypedFormControl(false),
+      isPathConfigurable: new UntypedFormControl(true),
+      showPathSkUnitsFilter: new UntypedFormControl(false),
+      pathSkUnitsFilter: new UntypedFormControl(null),
+      convertUnitTo: new UntypedFormControl(''),
+      pathRequired: new UntypedFormControl(true),
+      ...Object.fromEntries(Object.entries(overrides).map(([k, v]) => [k, new UntypedFormControl(v)]))
+    });
+
+  const mount = (form: UntypedFormGroup) => {
+    const f = TestBed.createComponent(PathControlConfigComponent);
+    f.componentRef.setInput('pathFormGroup', form);
+    f.componentRef.setInput('multiCTRLArray', [] as IDynamicControl[]);
+    f.componentRef.setInput('filterSelfPaths', true);
+    f.detectChanges();
+    return f;
+  };
+
+  const type = async (form: UntypedFormGroup, path: string) => {
+    form.controls['path'].markAsDirty();
+    form.controls['path'].setValue(path);
+    await vi.advanceTimersByTimeAsync(400);
+  };
+
+  it('lists the latitude field when the user types "latitude"', async () => {
+    const form = slotForm('');
+    const f = mount(form);
+    await type(form, 'latitude');
+    expect(f.componentInstance.filteredPaths.value?.map(entry => entry.path)).toEqual(['self.navigation.position#/latitude']);
+  });
+
+  it('shows the field description on the option\'s second line', async () => {
+    const form = slotForm('');
+    const f = mount(form);
+    await type(form, 'latitude');
+    const input = (f.nativeElement as HTMLElement).querySelector('input') as HTMLInputElement;
+    input.dispatchEvent(new Event('focusin'));
+    f.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    f.detectChanges();
+    const option = document.querySelector('mat-option') as HTMLElement;
+    expect(option.querySelector('.mdc-list-item__primary-text > span')?.textContent).toBe('self.navigation.position#/latitude');
+    expect(option.querySelector('small.pathMetaDescription')?.textContent).toBe('Latitude');
+  });
+
+  it('fills Data Source with the base path\'s sources and offers Position units for a picked coordinate', async () => {
+    const form = slotForm('');
+    const f = mount(form);
+    await type(form, 'self.navigation.position#/latitude');
+    expect(f.componentInstance.availableSources).toEqual(['default', 'gps.0', 'gps.1']);
+    expect(form.controls['source'].value).toBe('default');
+    expect(form.controls['source'].enabled).toBe(true);
+    expect(f.componentInstance.unitList.conversions.map(group => group.group)).toEqual(['Position']);
+    expect(form.controls['convertUnitTo'].value).toBe(f.componentInstance.unitList.base);
+    expect(f.componentInstance.pathWarning()).toBeNull();
+  });
+
+  it('blocks Save on a pointer without the leading "/", with the error under the path field', async () => {
+    const form = slotForm('');
+    const f = mount(form);
+    await type(form, 'self.navigation.position#latitude');
+    form.controls['path'].markAsTouched();
+    f.detectChanges();
+    expect(form.controls['path'].errors).toEqual({ pointer: true });
+    expect(form.valid).toBe(false);
+    expect((f.nativeElement as HTMLElement).querySelector('mat-error')?.textContent?.trim())
+      .toBe('After "#", write the field name starting with "/", for example "#/latitude".');
+    expect(f.componentInstance.pathWarning()).toBeNull();
+  });
+
+  it('blocks Save on a pointer with no path before "#"', () => {
+    const form = slotForm('#/a');
+    mount(form);
+    expect(form.controls['path'].errors).toEqual({ pointer: true });
+    expect(form.valid).toBe(false);
+  });
+
+  it('warns about a field the metadata does not declare, without blocking Save', () => {
+    const form = slotForm('self.navigation.position#/speed');
+    const f = mount(form);
+    expect(f.componentInstance.pathWarning()).toContain('does not list a field "speed"');
+    expect(form.controls['path'].valid).toBe(true);
+  });
+
+  it('warns that the latest value lacks a declared field, without blocking Save', () => {
+    const form = slotForm('self.navigation.position#/altitude');
+    const f = mount(form);
+    expect(f.componentInstance.pathWarning()).toContain('its latest value has no "altitude"');
+    expect(form.controls['path'].valid).toBe(true);
+  });
+
+  it('warns about the field\'s number type in a text slot', () => {
+    const f = mount(slotForm('self.navigation.attitude#/roll', { pathType: 'string' }));
+    expect(f.componentInstance.pathWarning()).toContain('sends numeric values');
+  });
+
+  it('warns that a control cannot command a single field', () => {
+    const f = mount(slotForm('self.navigation.position#/latitude', { supportsPut: true }));
+    expect(f.componentInstance.pathWarning()).toContain('cannot target a single field');
+  });
+
+  it('opens an optional slot with no path without error', () => {
+    const form = slotForm(null, { pathRequired: false });
+    const f = mount(form);
+    expect(f.componentInstance.pathWarning()).toBeNull();
+    expect(form.controls['path'].valid).toBe(true);
   });
 });

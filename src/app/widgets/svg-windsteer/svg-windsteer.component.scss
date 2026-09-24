@@ -79,8 +79,21 @@ svg {
   stroke: var(--skip-grey-color);
 }
 
-.laylines {
-  stroke:  var(--skip-contrast-color);
+.close-hauled-line,
+.run-line {
+  fill: none;
+  stroke: var(--skip-contrast-color);
+  stroke-width: 5;
+  stroke-opacity: 0.6;
+}
+
+.close-hauled-line {
+  stroke-dasharray: 40, 20;
+}
+
+// Short dashes keep the run lines apart from the close-hauled lines in the single-hue night theme.
+.run-line {
+  stroke-dasharray: 8, 16;
 }
 
 .wind-sector-port {
@@ -91,8 +104,25 @@ svg {
   fill: var(--skip-starboard-color);
 }
 
-.drift-arrow {
-  stop-color: var(--skip-blue-color);
+.drift {
+  fill: var(--skip-blue-color);
+}
+
+.drift-label {
+  fill: var(--skip-blue-dim-color);
+}
+
+// The set arrow lies behind the drift readout, so it stays faint and the text carries a card halo.
+.drift-set-arrow {
+  fill: var(--skip-blue-color);
+  fill-opacity: 0.4;
+}
+
+.drift-halo {
+  paint-order: stroke;
+  stroke: var(--skip-widget-card-background-color);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .crosshair {
@@ -120,4 +150,39 @@ svg {
 
 .rudder-port {
   stroke: var(--skip-port-color);
+}
+
+// Polar overlay. Widths are viewBox units sized for the smallest tile (~215 px, 1 px ≈ 4.65 units):
+// the edge stays ≥ 1.5 px and the dot ≥ 6 px across. Polar and VMC modes differ by treatment
+// (bare line vs filled lobe), not only colour, so they stay apart in the single-hue night theme.
+.polar-curve,
+.vmc-edge {
+  stroke: var(--skip-purple-color);
+  stroke-width: 8;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.vmc-fill {
+  fill: var(--skip-purple-color);
+  fill-opacity: 0.3;
+}
+
+// A ring, not a filled dot, so the best-heading markers read apart from the present-VMC dot.
+.vmc-optimum {
+  fill: var(--skip-widget-card-background-color);
+  stroke: var(--skip-purple-color);
+  stroke-width: 6;
+}
+
+// The halo cuts a gap into the curve under the dot, so the dot stays apart from a same-colour line
+// (the night theme maps both to one red).
+.polar-dot-halo {
+  fill: var(--skip-widget-card-background-color);
+}
+
+.polar-dot {
+  fill: var(--skip-purple-color);
+  stroke: var(--skip-contrast-color);
+  stroke-width: 4;
 }

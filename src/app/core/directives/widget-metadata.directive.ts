@@ -2,7 +2,7 @@ import { Directive, DestroyRef, inject, input, signal, computed } from '@angular
 import { Subject, takeUntil, Subscription } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DataService } from '../services/data.service';
-import { ISkMetadata, ISkPossibleValue, ISkZone } from '../interfaces/signalk-interfaces';
+import { ISkDisplayScale, ISkMetadata, ISkPossibleValue, ISkZone } from '../interfaces/signalk-interfaces';
 import { IWidget, IWidgetSvcConfig } from '../interfaces/widgets-interface';
 
 @Directive({
@@ -80,6 +80,12 @@ export class WidgetMetadataDirective {
   });
 
   /**
+   * The observed path's `meta.displayScale`, in SI; undefined when the path has no metadata or its
+   * metadata sets no scale. Widgets fall back to it for scale bounds the user has not set.
+   */
+  public displayScale = computed<ISkDisplayScale | undefined>(() => this._meta()?.displayScale);
+
+  /**
    * Reactive signal containing `meta.possibleValues` for the observed path.
    *
    * This is primarily useful for Signal K "multiple"-type paths where the server provides
@@ -152,7 +158,9 @@ export class WidgetMetadataDirective {
    *
    * Responsibilities:
    * - Tear down any existing metadata subscription
-   * - Subscribe to `DataService.getPathMetaObservable(path)` and write to {@link zones}
+   * - Subscribe to `DataService.getPathMetaObservable(path)` and write to {@link zones}. For a
+   *   `path#/field` slot that is the field's own metadata, so the base path's zones and
+   *   `supportsPut` never apply to it.
    * - Handle lifecycle cleanup via `takeUntil(this.reset$)` and `takeUntilDestroyed(this.destroyRef)`
    *
    * Important:

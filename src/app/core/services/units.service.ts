@@ -1,4 +1,5 @@
 import { DataService } from './data.service';
+import { splitPointerPath } from '../utils/pointer-path.util';
 import { Injectable, inject } from '@angular/core';
 import Qty from 'js-quantities';
 
@@ -106,9 +107,10 @@ type UnitConverter = (v: any) => any;
  * A target with no entry that is not a measure of the path's own group degrades to 'unitless': the
  * raw SI value with no label. That is how #536 surfaced — the metric presets emit `L/h` where Skip's
  * measure is `l/h`. Targets Skip genuinely has no conversion for (kW, horsepower, Wh, mAh, atm, torr,
- * Bf, fps, the duration formats, every dataSize target, and the mass and area targets outside the
+ * Bf, fps, every dataSize target, and the mass and area targets outside the
  * kilogram/pound and square-metre/square-foot pairs — gram, ounce, stone, acre, hectare and the
- * rest) belong in that fallback and are deliberately absent here. A units.service.spec case pins this table against the full built-in
+ * rest) belong in that fallback and are deliberately absent here. The duration formats are not
+ * aliases either: they resolve to seconds plus a separate format (DURATION_FORMATTERS). A units.service.spec case pins this table against the full built-in
  * preset vocabulary; extend both together.
  */
 const SERVER_TARGET_UNIT_ALIASES: Record<string, string> = {
@@ -136,6 +138,105 @@ const SERVER_TARGET_UNIT_ALIASES: Record<string, string> = {
   'L/min': 'l/min',
   'gal/h': 'g/h',
 };
+
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+const pad2 = (n: number): string => n.toString().padStart(2, '0');
+
+/**
+ * A clock rendering that starts at its largest non-zero field, so 1800 s reads `30:00`. Whole-second
+ * formats truncate toward zero; the millisecond formats round to the nearest millisecond, which
+ * truncation of a float product would miss (0.57 * 1000 is 569.99…).
+ */
+function formatClock(seconds: number, opts: { days?: boolean; hours: boolean; millis?: boolean }): string {
+  const totalMs = opts.millis ? Math.round(seconds * SECOND_MS) : Math.trunc(seconds) * SECOND_MS;
+  let rest = Math.abs(totalMs);
+  let text = totalMs < 0 ? '-' : '';
+  let daysShown = false;
+  if (opts.days && rest >= DAY_MS) {
+    text += `${Math.floor(rest / DAY_MS)}d `;
+    rest %= DAY_MS;
+    daysShown = true;
+  }
+  const h = Math.floor(rest / HOUR_MS);
+  const s = Math.floor(rest / SECOND_MS) % 60;
+  if (opts.hours && (h > 0 || daysShown)) {
+    text += `${h}:${pad2(Math.floor(rest / MINUTE_MS) % 60)}:${pad2(s)}`;
+  } else {
+    text += `${Math.floor(rest / MINUTE_MS)}:${pad2(s)}`;
+  }
+  return opts.millis ? `${text}.${(rest % SECOND_MS).toString().padStart(3, '0')}` : text;
+}
+
+const DURATION_UNITS: { ms: number; short: string; long: string }[] = [
+  { ms: DAY_MS, short: 'd', long: 'day' },
+  { ms: HOUR_MS, short: 'h', long: 'hour' },
+  { ms: MINUTE_MS, short: 'm', long: 'minute' },
+  { ms: SECOND_MS, short: 's', long: 'second' },
+];
+
+/** Splits whole seconds (truncated toward zero) into day/hour/minute/second counts, largest first. */
+function durationParts(seconds: number): { sign: string; counts: number[] } {
+  const totalMs = Math.trunc(seconds) * SECOND_MS;
+  let rest = Math.abs(totalMs);
+  const counts = DURATION_UNITS.map(unit => {
+    const count = Math.floor(rest / unit.ms);
+    rest %= unit.ms;
+    return count;
+  });
+  return { sign: totalMs < 0 ? '-' : '', counts };
+}
+
+/** The two largest units from the first non-zero one, dropping the second when it is zero: `2h 30m`. */
+function formatCompact(seconds: number): string {
+  const { sign, counts } = durationParts(seconds);
+  const first = counts.findIndex(count => count > 0);
+  if (first === -1) { return '0s'; }
+  const shown = [first, first + 1].filter(i => i < counts.length && (i === first || counts[i] > 0));
+  return sign + shown.map(i => `${counts[i]}${DURATION_UNITS[i].short}`).join(' ');
+}
+
+/** Every non-zero unit spelled out: `2 hours 30 minutes 45 seconds`. */
+function formatVerbose(seconds: number): string {
+  const { sign, counts } = durationParts(seconds);
+  const words = counts.flatMap((count, i) => count > 0 ? [`${count} ${DURATION_UNITS[i].long}${count === 1 ? '' : 's'}`] : []);
+  return words.length > 0 ? sign + words.join(' ') : '0 seconds';
+}
+
+/**
+ * Formatters for the Signal K unit-preferences duration targets (`standard-units-definitions.json`,
+ * the `s` conversions whose formula calls a client-supplied `formatDuration*` helper). They render
+ * text only: a path with one of these targets stays numeric in seconds through the data pipeline,
+ * and a widget applies the format where it draws the value (#627).
+ */
+const DURATION_FORMATTERS = {
+  'HH:MM:SS': (v: number) => formatClock(v, { hours: true }),
+  'DD:HH:MM:SS': (v: number) => formatClock(v, { days: true, hours: true }),
+  'MM:SS': (v: number) => formatClock(v, { hours: false }),
+  'HH:MM:SS.mmm': (v: number) => formatClock(v, { hours: true, millis: true }),
+  'MM:SS.mmm': (v: number) => formatClock(v, { hours: false, millis: true }),
+  'duration-compact': formatCompact,
+  'duration-verbose': formatVerbose,
+} satisfies Record<string, (seconds: number) => string>;
+
+export type TDurationFormat = keyof typeof DURATION_FORMATTERS;
+
+const isDurationFormat = (target: string): target is TDurationFormat => Object.hasOwn(DURATION_FORMATTERS, target);
+
+/**
+ * Whether a path addresses the latitude or longitude of a position as `….position#/latitude`. Its
+ * unit is `deg`, but it takes only the Position group: the Angle group's conversions assume a value
+ * in radians.
+ */
+function isPositionCoordinate(path: string): boolean {
+  const split = splitPointerPath(path);
+  if (!split.valid || split.pointer?.length !== 1) return false;
+  const field = String(split.pointer[0]);
+  return (field === 'latitude' || field === 'longitude') && split.basePath.split('.').at(-1) === 'position';
+}
 
 @Injectable()
 
@@ -689,41 +790,6 @@ export class UnitsService {
   }
 
   /**
-   * Re-express a value already in `fromMeasure` as `toMeasure` within the same conversion group,
-   * for the case where a stored number is in one display unit while the value it must line up with
-   * is now converted to another (e.g. a gauge's user-set displayScale bounds after the server unit
-   * preference flip). Recovers the SI base from two forward evaluations of the affine
-   * `convertToUnit(fromMeasure, ·)` and forward-converts to the target, so no inverse table is needed.
-   *
-   * Returns the value unchanged (a safe no-op) whenever the round-trip is not a valid affine numeric
-   * conversion: identical measures, an unknown or cross-group pair (same-group is asserted, never
-   * assumed), a string-format measure (position/duration produce non-numeric output), a degenerate
-   * span, or a non-finite input.
-   */
-  public convertBetweenMeasures(fromMeasure: string, toMeasure: string, value: number): number {
-    if (!Number.isFinite(value)) { return value; }
-    if (fromMeasure === toMeasure) { return value; }
-    const group = this.measureGroup(fromMeasure);
-    if (!group || group !== this.measureGroup(toMeasure)) { return value; }
-    const f0 = this.convertToUnit(fromMeasure, 0);
-    const f1 = this.convertToUnit(fromMeasure, 1);
-    if (typeof f0 !== 'number' || typeof f1 !== 'number' || !Number.isFinite(f0) || !Number.isFinite(f1)) { return value; }
-    const span = f1 - f0;
-    if (span === 0 || !Number.isFinite(span)) { return value; }
-    const base = (value - f0) / span;
-    const out = this.convertToUnit(toMeasure, base);
-    return (typeof out === 'number' && Number.isFinite(out)) ? out : value;
-  }
-
-  /** The conversion group a measure belongs to, or undefined when it is not a known measure. */
-  private measureGroup(measure: string): string | undefined {
-    for (const group of this._conversionList) {
-      if (group.units.some(unit => unit.measure === measure)) { return group.group; }
-    }
-    return undefined;
-  }
-
-  /**
    * Resolves the display-only label for a measure (the on-screen unit symbol), falling back to the
    * measure key itself when no dedicated symbol is defined. This is the single seam every render site
    * uses so units are labelled consistently (no spelled-out words), independent of the internal key.
@@ -784,21 +850,14 @@ export class UnitsService {
     if (pathUnitType === null || pathUnitType === 'RFC 3339 (UTC)') {
       return { base: UNITLESS, conversions: this._conversionList };
     } else {
-      const groupList = this._conversionList.filter(unitGroup => {
-        if (unitGroup.group == 'Position' && (path.includes('position.latitude') || path.includes('position.longitude'))) {
-          return true;
-        }
-
-        const unitExists = unitGroup.units.find(unit => unit.measure == pathUnitType);
-        if (unitExists) {
-          return true;
-        }
-
-        return false;
-      });
+      const coordinate = isPositionCoordinate(path);
+      const groupList = this._conversionList.filter(unitGroup => coordinate
+        ? unitGroup.group === 'Position'
+        : unitGroup.units.some(unit => unit.measure == pathUnitType));
 
       if (groupList.length > 0) {
-        const serverDefault = this.resolveServerDefaultMeasure(path, groupList);
+        // A coordinate's degrees take the preset's plain-degree target, which the Position group has no measure for.
+        const serverDefault = coordinate ? undefined : this.resolveServerDefaultMeasure(path, groupList);
         return { base: serverDefault ?? UNITLESS, conversions: groupList };
       }
 
@@ -817,6 +876,22 @@ export class UnitsService {
    */
   public resolvePathMeasure(path: string): string {
     return this.getConversionsForPath(path).base;
+  }
+
+  /**
+   * The server's duration format for a path, when its targetUnit is one and the path is in seconds.
+   * The path's measure stays 's' (resolvePathMeasure), so numeric consumers keep working in seconds;
+   * only a widget that draws the value as text applies the format, through formatDuration.
+   */
+  public resolvePathDurationFormat(path: string): TDurationFormat | undefined {
+    const targetUnit = this.data.getPathDisplayUnits(path)?.targetUnit;
+    if (!targetUnit || !isDurationFormat(targetUnit)) { return undefined; }
+    return this.resolvePathMeasure(path) === 's' ? targetUnit : undefined;
+  }
+
+  /** Renders a duration in seconds as text in the given server duration format. */
+  public formatDuration(format: TDurationFormat, seconds: number): string {
+    return DURATION_FORMATTERS[format](seconds);
   }
 
   /**
@@ -842,6 +917,7 @@ export class UnitsService {
     if (inGroup(targetUnit)) { return targetUnit; }
     const aliased = SERVER_TARGET_UNIT_ALIASES[targetUnit];
     if (aliased && inGroup(aliased)) { return aliased; }
+    if (isDurationFormat(targetUnit) && inGroup('s')) { return 's'; }
     this.warnUnmappableTarget(path, targetUnit);
     return undefined;
   }

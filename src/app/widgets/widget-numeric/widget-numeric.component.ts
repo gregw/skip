@@ -5,14 +5,16 @@ import { MinigraphComponent } from '../minigraph/minigraph.component';
 import { reduceMinMax } from './numeric-minmax.util';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
+import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
+import { presentedScaleBounds } from '../../core/utils/si-presentation.util';
 import { IPathUpdate } from '../../core/services/data.service';
 import { CanvasService } from '../../core/services/canvas.service';
-import { UnitsService } from '../../core/services/units.service';
+import { TDurationFormat, UnitsService } from '../../core/services/units.service';
 import { ITheme } from '../../core/services/app-service';
 import { getColors } from '../../core/utils/themeColors.utils';
 import { States } from '../../core/interfaces/signalk-interfaces';
 
-/** Measures whose value arrives already formatted as a string, so it is drawn verbatim. */
+/** Measures whose conversion returns formatted text rather than a number, so it is drawn verbatim. */
 const PRE_FORMATTED_MEASURES = ['latitudeSec', 'latitudeMin', 'longitudeSec', 'longitudeMin', 'D HH:MM:SS'];
 /** Measures whose '%' this widget appends to the value text itself. */
 const PERCENT_MEASURES = ['percent', 'percentraw'];
@@ -53,18 +55,26 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     showMin: false,
     numDecimal: 1,
     showMiniChart: false,
-    yScaleMin: 0,
-    yScaleMax: 10,
+    yScaleMin: null,
+    yScaleMax: null,
     inverseYAxis: false,
     verticalChart: false,
     color: 'contrast',
     updateInterval: 500,
     enableTimeout: false,
     dataTimeout: 5,
-    ignoreZones: false
+    ignoreZones: false,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    yScaleMin: 'SI unit of numericPath',
+    yScaleMax: 'SI unit of numericPath'
   };
   private readonly runtime = inject(WidgetRuntimeDirective);
   private readonly stream = inject(WidgetStreamsDirective);
+  private readonly metadata = inject(WidgetMetadataDirective);
 
   private readonly canvas = inject(CanvasService);
   private readonly unitsService = inject(UnitsService);
@@ -80,8 +90,10 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   private foregroundBitmap: HTMLCanvasElement | null = null;
   private foregroundBitmapText: string | null = null;
 
+  /** The latest sample and its tracked extremes, in SI; each is converted to the measure when drawn. */
   private dataValue: number | null = null;
   private effectiveUnit = signal<string>('');
+  private durationFormat = signal<TDurationFormat | undefined>(undefined);
   private maxValue: number | null = null;
   private minValue: number | null = null;
   private valueColor: string | undefined = undefined;
@@ -94,6 +106,18 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   private pathDataState: States | null = null;
   private isDestroyed = false;
   private lastSubscriptionSignature: string | null = null;
+
+  /** The minigraph's y range in the measure the value is shown in, which the minigraph converts its data to. */
+  private miniGraphRange = computed(() => {
+    const cfg = this.runtime.options();
+    return presentedScaleBounds(
+      this.unitsService,
+      this.effectiveUnit(),
+      { lower: cfg?.yScaleMin, upper: cfg?.yScaleMax },
+      this.metadata.displayScale(),
+      { lower: 0, upper: 10 }
+    );
+  });
 
   private subscriptionSignature = computed(() => {
     const cfg = this.runtime?.options();
@@ -114,6 +138,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     const dataValue = newValue.data.value as number | null;
     this.dataValue = dataValue;
     this.effectiveUnit.set(newValue.data.measure ?? '');
+    this.durationFormat.set(newValue.data.durationFormat);
     const minMax = reduceMinMax(this.minValue, this.maxValue, dataValue);
     this.minValue = minMax.min;
     this.maxValue = minMax.max;
@@ -171,10 +196,12 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
         this.dataValue = null;
         this.pathDataState = null;
         this.effectiveUnit.set('');
+        this.durationFormat.set(undefined);
         this.lastSubscriptionSignature = sig;
 
         if (sig) {
           this.stream?.observe('numericPath', this.onNumericValue);
+          this.metadata.observe('numericPath');
           this.streamRegistered = true;
           this.updateMiniGraphVisibility();
         }
@@ -187,14 +214,15 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
       const cfg = this.runtime?.options();
       const pathInfo = cfg?.paths?.['numericPath'];
       const effUnit = this.effectiveUnit();
+      const range = this.miniGraphRange();
       const miniGraphSignature = [
         cfg?.showMiniChart ? '1' : '0',
         pathInfo?.path ?? '',
         pathInfo?.source ?? 'default',
         effUnit,
         cfg?.numDecimal ?? '',
-        cfg?.yScaleMin ?? '',
-        cfg?.yScaleMax ?? '',
+        range.lower,
+        range.upper,
         cfg?.inverseYAxis ? '1' : '0',
         cfg?.verticalChart ? '1' : '0',
         cfg?.color ?? ''
@@ -235,6 +263,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     // This is a sanity check in case subscription effect hasn't fired yet
     if (!this.streamRegistered && this.subscriptionSignature()) {
       this.stream?.observe('numericPath', this.onNumericValue);
+      this.metadata.observe('numericPath');
       this.streamRegistered = true;
       this.updateMiniGraphVisibility();
     }
@@ -280,8 +309,9 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     graph.color = cfg.color ?? 'contrast';
     graph.convertUnitTo = this.effectiveUnit();
     graph.numDecimal = cfg.numDecimal ?? 1;
-    graph.yScaleMin = cfg.yScaleMin ?? 0;
-    graph.yScaleMax = cfg.yScaleMax ?? 10;
+    const range = this.miniGraphRange();
+    graph.yScaleMin = range.lower;
+    graph.yScaleMax = range.upper;
     graph.inverseYAxis = cfg.inverseYAxis ?? false;
     graph.verticalChart = cfg.verticalChart ?? false;
   }
@@ -301,7 +331,7 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
     if (!ctx) return;
     const cfg = this.runtime.options();
     if (!cfg) return;
-    const unit = this.effectiveUnit();
+    const unit = this.labelMeasure();
     const displayName = cfg.displayName ?? 'Gauge Label';
     // Background-color halo: invisible over the empty card, carves the value out only where the
     // floored label/unit overlap it. Requires the label/unit to be composited above the value below.
@@ -421,30 +451,46 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   private getValueText(): string {
     const dataValue = this.dataValue;
     if (dataValue === null) return "--";
-    const cfg = this.runtime.options();
-    // The format decision must follow the measure the value was actually converted to (the tagged
-    // effective measure), not the stored convertUnitTo: a display path's resolved measure can differ,
-    // and a position/duration format measure arrives as a pre-formatted string — testing the stored
-    // unit here would call toFixed() on that string (crash) or print a raw number for a format measure.
+    return this.formatNumber(dataValue, this.runtime.options()?.numDecimal);
+  }
+
+  /** A duration-formatted value is read as a clock, not a number of seconds, so it carries no unit. */
+  private labelMeasure(): string {
+    return this.durationFormat() ? '' : this.effectiveUnit();
+  }
+
+  /**
+   * An SI value as text in the tagged measure, not the stored convertUnitTo: a display path's resolved
+   * measure can differ. A measure the converter does not know leaves nothing to show.
+   */
+  private formatNumber(si: number, numDecimal: number | undefined): string {
+    const format = this.durationFormat();
+    if (format) return this.unitsService.formatDuration(format, si);
     const measure = this.effectiveUnit();
-    if (PRE_FORMATTED_MEASURES.includes(measure)) {
-      return dataValue.toString();
+    const presented = measure ? this.unitsService.convertToUnit(measure, si) : si;
+    if (presented === null) return '--';
+    if (PRE_FORMATTED_MEASURES.includes(measure)) return String(presented);
+    return this.applyDecorations(presented.toFixed(numDecimal));
+  }
+
+  private getMinMaxText(): string {
+    const cfg = this.runtime.options();
+    if (!cfg) return '';
+    let valueText = '';
+    if (cfg.showMin) {
+      valueText = this.minValue != null ? ` Min: ${this.formatNumber(this.minValue, cfg.numDecimal)}` : ' Min: --';
     }
-    return this.applyDecorations(dataValue.toFixed(cfg?.numDecimal));
+    if (cfg.showMax) {
+      valueText += this.maxValue != null ? ` Max: ${this.formatNumber(this.maxValue, cfg.numDecimal)}` : ' Max: --';
+    }
+    return valueText.trim();
   }
 
   private drawMinMax(ctx: CanvasRenderingContext2D): void {
     const cfg = this.runtime.options();
     if (!cfg) return;
     if (!cfg.showMin && !cfg.showMax) return;
-    let valueText = '';
-    if (cfg.showMin) {
-      valueText = this.minValue != null ? ` Min: ${this.applyDecorations(this.minValue.toFixed(cfg.numDecimal))}` : ' Min: --';
-    }
-    if (cfg.showMax) {
-      valueText += this.maxValue != null ? ` Max: ${this.applyDecorations(this.maxValue.toFixed(cfg.numDecimal))}` : ' Max: --';
-    }
-    valueText = valueText.trim();
+    const valueText = this.getMinMaxText();
     const marginX = 10 * this.canvas.scaleFactor;
     const marginY = 5 * this.canvas.scaleFactor;
     this.canvas.drawText(
@@ -462,8 +508,8 @@ export class WidgetNumericComponent implements OnInit, AfterViewInit, OnDestroy 
   }
 
   private applyDecorations(txtValue: string): string {
-    // Percent decoration follows the applied measure, not the stored convertUnitTo — same reason as
-    // getValueText: a display path's value is scaled per the resolved measure, so the '%' must too.
+    // Percent decoration follows the tagged measure, which the value is scaled by, not the stored
+    // convertUnitTo.
     return PERCENT_MEASURES.includes(this.effectiveUnit()) ? `${txtValue}%` : txtValue;
   }
 

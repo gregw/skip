@@ -12,6 +12,7 @@ import {
   findArrayLiteral,
   findLazyLoadedModuleSpecifier,
   findPropertyInitializer,
+  findOptionalStaticPropertyInitializer,
   findStaticPropertyInitializer,
   getObjectProperties,
   literalToValue,
@@ -49,6 +50,40 @@ const CONFIG_VERSIONS_CONST = 'src/app/core/constants/config-versions.const.ts';
 const THEME_NAMES: readonly string[] = ['', 'light-theme', 'night-theme'];
 
 const SCHEMA_VERSION = 1;
+
+/**
+ * Skip converts a widget config without the SI marker as if it held the units used before the
+ * options moved to SI, so a config written in the published units must carry the marker.
+ */
+/**
+ * Units of the numeric widget options that configure the widget itself rather than hold a measured
+ * quantity, which are the only numeric options not in SI. A spec fails when a widget gains a
+ * numeric option that is in neither this map nor its OPTION_UNITS.
+ */
+const WIDGET_SETTING_UNITS: Record<string, string> = {
+  updateInterval: 'ms',
+  dataTimeout: 's',
+  windSectorWindowSeconds: 's',
+  timerLength: 's',
+  'gauge.damping': 's',
+  'gauge.scaleStart': 'deg (the dial start angle)',
+  period: "the unit named by the widget's timeScale",
+  numInt: 'count of integer digits',
+  numDecimal: 'count of decimals',
+  'gauge.highlightsWidth': "width in the gauge's own drawing units",
+  nextDashboard: 'dashboard index',
+};
+
+const OPTION_UNITS_RULE =
+  'Skip receives every Signal K number in SI, and every widget option that holds a measured quantity is stored in ' +
+  'SI. The numeric options that configure the widget itself are the exception; meta.widgetSettingUnits gives their ' +
+  "units. A widget's optionUnits maps an option, named by its dotted path inside the widget config, to the unit it is " +
+  'stored in; for an array option the unit applies to each element. A widget config that holds any of these ' +
+  "options must also carry siVersion set to the widget's defaultConfig.siVersion, when the defaultConfig has one. " +
+  'Skip reads such a widget config without siVersion as holding the older, pre-SI units and converts it, so SI ' +
+  'values written without the marker are converted a second time. A unit written as \'SI unit of <slot>\' is the Signal K SI unit of the path that ' +
+  'path slot (or path option) points at, such as K for a temperature. A scale bound set to null is unset: the ' +
+  "widget uses the path's own display scale, and a data graph scales itself.";
 
 /**
  * Extracts Skip's widget catalog (`_widgetDefinition`) from widget.service.ts.
@@ -109,8 +144,25 @@ export function extractWidgetSchemas(opts: GenerateOptions): WidgetSchemaEntry[]
     }
     const bindingKind = deriveBindingKind(defaultConfig);
     const pathSlots = bindingKind === 'paths-record' ? extractPathSlots(defaultConfig) : [];
-    return { ...entry, bindingKind, defaultConfig, pathSlots };
+    const optionUnits = readOptionUnits(componentSource, entry.componentClassName, resolveConst);
+    return { ...entry, bindingKind, defaultConfig, pathSlots, ...(optionUnits ? { optionUnits } : {}) };
   });
+}
+
+/** A widget's static OPTION_UNITS, checked to be a map of option name to unit string. */
+function readOptionUnits(
+  source: ts.SourceFile,
+  className: string,
+  resolveConst: ReturnType<typeof collectModuleConstants>,
+): Record<string, string> | undefined {
+  const initializer = findOptionalStaticPropertyInitializer(source, className, 'OPTION_UNITS');
+  if (!initializer) return undefined;
+  const value = literalToValue(initializer, resolveConst);
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !Object.values(value).every((unit) => typeof unit === 'string')) {
+    throw new Error(`OPTION_UNITS of ${className} is not a map of option name to unit`);
+  }
+  return value as Record<string, string>;
 }
 
 /** Derives how a widget binds Signal K data from its DEFAULT_CONFIG shape. */
@@ -282,6 +334,8 @@ export function buildSchema(opts: GenerateOptions): SkipDashboardSchema {
       skipVersion: readSkipVersion(opts.projectRoot),
       configFileVersion: versions.fileVersion,
       configVersion: versions.appVersion,
+      optionUnitsRule: OPTION_UNITS_RULE,
+      widgetSettingUnits: WIDGET_SETTING_UNITS,
     },
     widgets: extractWidgetSchemas(opts),
     designSystem: extractDesignSystem(opts),

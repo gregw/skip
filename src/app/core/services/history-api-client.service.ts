@@ -38,7 +38,8 @@ export interface IHistoryValuesResponse {
     to: string;
   };
   values: IHistoryValueMetadata[];
-  data: (string | number | null | number[])[][];
+  /** Rows of `[timestamp, ...values]`; an object-valued path's values are the objects themselves. */
+  data: (string | number | null | number[] | Record<string, unknown>)[][];
 }
 
 /**

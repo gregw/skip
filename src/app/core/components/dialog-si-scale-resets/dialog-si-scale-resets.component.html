@@ -1,0 +1,27 @@
+<div class="dialogue-header">
+  <h5 mat-dialog-title>Scale ranges reset</h5>
+  <button mat-icon-button class="dialog-close-icon" [mat-dialog-close]="false">
+    <mat-icon>close</mat-icon>
+  </button>
+</div>
+<mat-dialog-content>
+  <p>
+    Skip now stores scale ranges in SI units. The ranges of these widgets had no known unit to convert
+    from, so they were cleared and the widgets use their path's own scale. Open each widget's options
+    to set its range again.
+  </p>
+  @for (group of dashboards; track group.dashboard) {
+    <div class="reset-dashboard">
+      <strong class="reset-dashboard-name">{{ group.dashboard }}</strong>
+      <ul>
+        @for (widget of group.widgets; track $index) {
+          <li>{{ widget }}</li>
+        }
+      </ul>
+    </div>
+  }
+</mat-dialog-content>
+<mat-dialog-actions align="end">
+  <button mat-flat-button [mat-dialog-close]="false">Later</button>
+  <button mat-flat-button [mat-dialog-close]="true">Dismiss</button>
+</mat-dialog-actions>

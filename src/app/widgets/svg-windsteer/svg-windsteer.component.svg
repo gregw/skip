@@ -22,17 +22,6 @@
          offset="1" />
     </linearGradient>
     <linearGradient
-       id="linearGradient13">
-      <stop
-        class="drift-arrow"
-        style="stop-opacity:1;"
-        offset="0.41176471" />
-      <stop
-        class="drift-arrow"
-        style="stop-opacity:0;"
-        offset="1" />
-    </linearGradient>
-    <linearGradient
        id="swatch4">
       <stop
          style="stop-color:#000000;stop-opacity:1;"
@@ -50,15 +39,6 @@
          rx="194.27342"
          ry="181.83022" />
     </clipPath>
-    <linearGradient
-       xlink:href="#linearGradient13"
-       id="linearGradient14"
-       x1="453.48047"
-       y1="583.62891"
-       x2="638.11328"
-       y2="583.62891"
-       gradientUnits="userSpaceOnUse"
-       gradientTransform="matrix(0.00723393,1.2388183,-1.0538241,0.00615367,1111.2051,-179.73465)" />
     <linearGradient
        xlink:href="#linearGradient16"
        id="linearGradient17"
@@ -556,28 +536,37 @@
         }
       </g>
       <!-- Moved inside rotating dial so they rotate passively with the boat -->
-      <g id="LayerLayline" [style.display]="closeHauledLineEnabled() && trueWindFresh() ? 'inline' : 'none'">
-        <path id="StbdLayline"
-          [attr.d]="closeHauledLineStbdPath()"
-          style="fill:none;stroke-width:5;stroke-dasharray:40, 20;stroke-dashoffset:0;stroke-opacity:0.6"
-          class="laylines" />
-        <path id="PortLayline"
-          [attr.d]="closeHauledLinePortPath()"
-          class="laylines"
-          style="fill:none;stroke-width:5;stroke-dasharray:40, 20;stroke-dashoffset:0;stroke-opacity:0.6" />
+      <g id="LayerCloseHauledLines" [style.display]="closeHauledLineEnabled() && trueWindFresh() ? 'inline' : 'none'">
+        <path id="StbdTackCloseHauledLine" class="close-hauled-line" [attr.d]="stbdTackCloseHauledLine.path() || null" />
+        <path id="PortTackCloseHauledLine" class="close-hauled-line" [attr.d]="portTackCloseHauledLine.path() || null" />
+      </g>
+      <g id="LayerRunLines" [style.display]="runLineAngle() !== null && trueWindFresh() ? 'inline' : 'none'">
+        <path id="StbdTackRunLine" class="run-line" [attr.d]="stbdTackRunLine.path() || null" />
+        <path id="PortTackRunLine" class="run-line" [attr.d]="portTackRunLine.path() || null" />
       </g>
       <g id="LayerWindShift" [style.display]="windSectorEnabled() ? 'inline' : 'none'">
-        <path id="portSectorShift"
-          [style.display]="portWindSectorPath() ? 'inline' : 'none'"
-          [attr.d]="portWindSectorPath() || null"
+        <path id="PortTackSector"
+          [style.display]="portTackSectorPath() ? 'inline' : 'none'"
+          [attr.d]="portTackSectorPath() || null"
           class="wind-sector-port"
           style="fill-opacity:0.5;stroke:none" />
-        <path id="StbdSectorShift"
-          [style.display]="stbdWindSectorPath() ? 'inline' : 'none'"
-          [attr.d]="stbdWindSectorPath() || null"
+        <path id="StbdTackSector"
+          [style.display]="stbdTackSectorPath() ? 'inline' : 'none'"
+          [attr.d]="stbdTackSectorPath() || null"
           class="wind-sector-stbd"
           style="fill-opacity:0.5;stroke:none" />
      </g>
+      <!-- VMC curve: compass frame (angle = true heading), so it turns with the dial like the waypoint marker -->
+      <g id="layerVmcCurve" [style.display]="vmcFillPath() ? 'inline' : 'none'">
+        <path class="vmc-fill" [attr.d]="vmcFillPath() || null" />
+        <path class="vmc-edge" [attr.d]="vmcEdgePath() || null" />
+        @if (portOptimumCenter(); as center) {
+          <circle id="PortTackVmcOptimum" class="vmc-optimum" [attr.cx]="center.x" [attr.cy]="center.y" r="14" />
+        }
+        @if (stbdOptimumCenter(); as center) {
+          <circle id="StbdTackVmcOptimum" class="vmc-optimum" [attr.cx]="center.x" [attr.cy]="center.y" r="14" />
+        }
+      </g>
       <g #wptIndicator
         [attr.display]="waypointActive() && compassModeEnabled() ? 'inline' : 'none'">
         <path
@@ -595,13 +584,11 @@
           rx="17.361122"
           ry="17.361118" />
       </g>
-      <g #setIndicator
-        [style.display]="driftActive() && setFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
-        <path id="setArrow"
-          style="fill:url(#linearGradient14);stroke:none;stroke-width:1.18648"
-          d="m 563.93337,480.60403 -64.4901,-94.9673 -63.37665,95.71396 58.48691,-30.71299 0.77713,133.08346 c 0.0992,16.99331 2.52916,30.65913 5.44822,30.64209 2.91911,-0.0171 5.18926,-13.71032 5.09001,-30.70362 l -0.77782,-133.20444 z" />
-      </g>
     </g>
+  </g>
+  <!-- Polar curve: wind frame; the group turns by the water TWA so the present TWA's sample is on the bow -->
+  <g #polarOverlay id="layerPolarCurve" [style.display]="polarCurvePath() ? 'inline' : 'none'">
+    <path class="polar-curve" [attr.d]="polarCurvePath() || null" />
   </g>
   <g id="layerCrosshair"
      style="display:inline">
@@ -609,6 +596,11 @@
       d="M 500,48 L 500,360 M 500,640 L 500,952" />
     <path class="crosshair"
       d="M 48,500 L 360,500 M 640,500 L 952,500" />
+  </g>
+  <!-- Overlay dot: always on the bow axis, in the fixed boat frame so it never lags a rotating parent -->
+  <g id="layerPolarDot" [style.display]="overlayDotY() !== null ? 'inline' : 'none'">
+    <circle class="polar-dot-halo" cx="500" [attr.cy]="overlayDotY()" r="23" />
+    <circle class="polar-dot" cx="500" [attr.cy]="overlayDotY()" r="16" />
   </g>
   <g id="layerRudder"
      [style.display]="rudderEnabled() ? 'inline' : 'none'">
@@ -671,17 +663,35 @@
        id="text39-7">AWS</text>
     </g>
   </g>
+  <g #setIndicator
+    [style.display]="setArrowActive() && setFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
+    <path id="setArrow"
+      class="drift-set-arrow"
+      [attr.transform]="setArrowTranslate"
+      d="M 0,-80 44,-18 15,-18 15,78 -15,78 -15,-18 -44,-18 Z" />
+  </g>
   <g id="layerCurrent"
-     [style.display]="driftActive() && driftFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
-    <text id="text11"
-       xml:space="preserve"
-       class="contrast-text"
-       style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:66.6667px;font-family:Roboto;font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:center;text-anchor:middle;stroke:none"
-       x="499.78842"
-       y="523.55145"
-      >{{ (driftFlow() | number:'1.1-1') ?? '--' }}@if (driftUnit()) {<tspan
-        style="font-size:34.6667px"
-        dx="8">{{ driftUnit() }}</tspan>}</text>
+     [style.display]="driftFresh() && driftEnabled() && compassModeEnabled() ? 'inline' : 'none'">
+    <text
+      class="drift-label drift-halo"
+      style="font-weight:bold;font-size:34.6667px;font-family:Roboto;text-anchor:middle"
+      x="905.25897"
+      y="873.7"
+      id="driftLabel">DRIFT</text>
+    <text
+      class="drift drift-halo"
+      style="font-weight:bold;font-size:66.6667px;font-family:Roboto;text-anchor:middle"
+      x="904"
+      y="935.7"
+      id="driftValue">{{ (driftFlow() | number:'1.1-1') ?? '--' }}</text>
+    @if (driftUnit()) {
+    <text
+      class="drift-label drift-halo"
+      style="font-weight:bold;font-size:34.6667px;font-family:Roboto;text-anchor:middle"
+      x="904.27722"
+      y="971.7"
+      id="driftUnit">{{ driftUnit() }}</text>
+    }
   </g>
   <g id="layerIndicators"
     style="display:inline">

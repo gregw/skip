@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Subject, of } from 'rxjs';
 import { signal, WritableSignal } from '@angular/core';
 import { AppComponent } from './app.component';
 import { ConnectionState, IConnectionStatus } from './core/services/connection-state-machine.service';
@@ -17,7 +17,7 @@ import { DialogService } from './core/services/dialog.service';
 import { ToastService } from './core/services/toast.service';
 import { ReloadService } from './core/services/reload.service';
 import { ToolbarComponent } from './core/components/toolbar/toolbar.component';
-import { IConfig } from './core/interfaces/app-settings.interfaces';
+import { IConfig, ISiScaleReset } from './core/interfaces/app-settings.interfaces';
 import { LATEST_APP_CONFIG_VERSION } from './core/constants/config-versions.const';
 
 // A minimal stand-in for the KeyboardEvent fields the handler reads.
@@ -168,13 +168,25 @@ describe('AppComponent', () => {
   describe('connection status notifications', () => {
     // Exercised through the private handler directly: mapping IConnectionStatus.state to the right
     // toast is the behavior under test, and driving it through the real root ConnectionStateMachine
-    // would hinge on its retry timers and debounce. bootstrapStatus is 'ready', so
-    // silentDuringBootstrap is false.
+    // would hinge on its retry timers and debounce. bootstrapStatus is 'ready', and
+    // sound.playConnectionSound defaults to off, so the toasts are silent.
     function notify(state: ConnectionState, message = 'status message'): void {
       const app = create() as unknown as AppComponentNotifyApi;
       toast.show.mockClear();
       app.displayConnectionsStatusNotification({ state, message, timestamp: new Date() });
     }
+
+    /** Back the read with a real signal so the handler sees the opted-in value. */
+    function withConnectionSound(enabled: boolean): void {
+      const settings = TestBed.inject(SettingsService);
+      const config = signal({
+        ...settings.notificationConfig(),
+        sound: { ...settings.notificationConfig().sound, playConnectionSound: enabled }
+      });
+      vi.spyOn(settings, 'notificationConfig').mockImplementation(() => config());
+    }
+
+    afterEach(() => vi.restoreAllMocks());
 
     it('shows a transient toast when disconnected', () => {
       notify(ConnectionState.Disconnected, 'Not connected');
@@ -183,12 +195,36 @@ describe('AppComponent', () => {
 
     it('warns while retrying the connection', () => {
       notify(ConnectionState.WebSocketRetrying, 'Retrying');
-      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, false, 'warn');
+      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, true, 'warn');
     });
 
     it('shows a persistent toast on permanent failure', () => {
       notify(ConnectionState.PermanentFailure, 'Gave up');
+      expect(toast.show).toHaveBeenCalledWith('Gave up', 0, true);
+    });
+
+    it('plays a sound on the retry and permanent-failure toasts once the user opts in', () => {
+      withConnectionSound(true);
+      const app = create() as unknown as AppComponentNotifyApi;
+      toast.show.mockClear();
+
+      app.displayConnectionsStatusNotification({ state: ConnectionState.WebSocketRetrying, message: 'Retrying', timestamp: new Date() });
+      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, false, 'warn');
+
+      toast.show.mockClear();
+      app.displayConnectionsStatusNotification({ state: ConnectionState.PermanentFailure, message: 'Gave up', timestamp: new Date() });
       expect(toast.show).toHaveBeenCalledWith('Gave up', 0, false);
+    });
+
+    it('keeps the opted-in sound off while the app is still bootstrapping', () => {
+      withConnectionSound(true);
+      appNetworkInitServiceStub.bootstrapStatus$.next('starting');
+      const app = create() as unknown as AppComponentNotifyApi;
+      TestBed.tick();
+      toast.show.mockClear();
+
+      app.displayConnectionsStatusNotification({ state: ConnectionState.WebSocketRetrying, message: 'Retrying', timestamp: new Date() });
+      expect(toast.show).toHaveBeenCalledWith('Retrying', 3000, true, 'warn');
     });
 
     it('stays silent while connecting or connected', () => {
@@ -215,7 +251,7 @@ describe('AppComponent', () => {
       toast.show.mockClear();
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       app.displayConnectionsStatusNotification({ state: 'Bogus' as ConnectionState, message: 'weird', timestamp: new Date() });
-      expect(toast.show).toHaveBeenCalledWith(expect.stringContaining('Unknown connection status'), 0, false, 'error');
+      expect(toast.show).toHaveBeenCalledWith(expect.stringContaining('Unknown connection status'), 0, true, 'error');
       expect(errorSpy).toHaveBeenCalled();
       errorSpy.mockRestore();
     });
@@ -760,6 +796,26 @@ describe('AppComponent — embed read-only invariants (#216 E6)', () => {
     expect(runUpgradeSpy).toHaveBeenCalledWith(18);
   });
 
+  it('runs the config migration in the full app for an upgradeable v19 config (the first SI step)', async () => {
+    const { runUpgradeSpy } = await render({ embed: false, configUpgrade: true, configVersion: 19 });
+    expect(runUpgradeSpy).toHaveBeenCalledWith(19);
+  });
+
+  it('runs the config migration in the full app for an upgradeable v20 config', async () => {
+    const { runUpgradeSpy } = await render({ embed: false, configUpgrade: true, configVersion: 20 });
+    expect(runUpgradeSpy).toHaveBeenCalledWith(20);
+  });
+
+  it('runs the config migration in the full app for an upgradeable v21 config', async () => {
+    const { runUpgradeSpy } = await render({ embed: false, configUpgrade: true, configVersion: 21 });
+    expect(runUpgradeSpy).toHaveBeenCalledWith(21);
+  });
+
+  it('runs the config migration in the full app for an upgradeable v22 config (the pointer-path gate)', async () => {
+    const { runUpgradeSpy } = await render({ embed: false, configUpgrade: true, configVersion: 22 });
+    expect(runUpgradeSpy).toHaveBeenCalledWith(22);
+  });
+
   it('does NOT show the missing-shared-config create prompt under embed', async () => {
     const { toast, bootstrapIssue$ } = await render({ embed: true });
     toast.show.mockClear();
@@ -858,5 +914,107 @@ describe('AppComponent — embed boot performs zero server-config writes (#216 E
   it('the same boot NOT under embed DOES fire the self-heal writes (the guard is embed-specific)', async () => {
     const { patchSpy } = await bootAndCountWrites(false);
     expect(patchSpy).toHaveBeenCalled();
+  });
+});
+
+describe('AppComponent — SI scale reset notice', () => {
+  const RESETS: ISiScaleReset[] = [
+    { dashboardId: 'id-helm', dashboard: 'Helm', widget: 'Engine RPM', type: 'widget-gauge-ng-radial', options: ['displayScale.lower', 'displayScale.upper'] }
+  ];
+
+  async function render(opts: { embed?: boolean; canPersist?: boolean; resets?: ISiScaleReset[]; dialogResult?: boolean | undefined; upgrading?: boolean; configUpgrade?: boolean }) {
+    TestBed.configureTestingModule({
+      imports: [AppComponent],
+      providers: [
+        { provide: AppNetworkInitService, useValue: { bootstrapStatus$: new BehaviorSubject('ready'), bootstrapIssue$: new BehaviorSubject({ reason: 'none' }) } },
+        { provide: DashboardService, useValue: { isDashboardStatic: signal(true), activeDashboard: signal<number | null>(null), dashboards: signal<unknown[]>([]), navigateToNextDashboard: vi.fn(), navigateToPreviousDashboard: vi.fn(), setStaticDashboard: vi.fn(), isReadOnlySession: signal(false), widgetAction$: new Subject() } },
+        { provide: uiEventService, useValue: { isDragging: signal(false), addHotkeyListener: vi.fn(), removeHotkeyListener: vi.fn(), toggleFullScreen: vi.fn(), setKeepAwake: vi.fn() } },
+        { provide: AppService, useValue: { toggleNightMode: vi.fn() } },
+        { provide: ChromeVisibilityService, useValue: { revealed: signal(false), pinned: signal(false), reveal: vi.fn(), revealAuto: vi.fn(), setAutoReveal: vi.fn(), setPinned: vi.fn(), hide: vi.fn(), pulsePeek: vi.fn() } },
+        { provide: ToastService, useValue: { show: vi.fn().mockReturnValue({ onAction: () => new Subject() }) } },
+        { provide: ReloadService, useValue: { reload: vi.fn() } },
+        { provide: EmbedModeService, useValue: { embed: () => opts.embed ?? false, profile: () => null } },
+      ],
+    });
+    TestBed.overrideComponent(ToolbarComponent, { set: { template: '<span class="stub-toolbar"></span>', imports: [] } });
+    await TestBed.compileComponents();
+
+    const settings = TestBed.inject(SettingsService);
+    vi.spyOn(TestBed.inject(StorageService), 'canPersist').mockReturnValue(opts.canPersist ?? true);
+    const resets = signal<ISiScaleReset[]>(opts.resets ?? RESETS);
+    vi.spyOn(settings, 'siScaleResets').mockImplementation(() => resets());
+    vi.spyOn(settings, 'getConfigVersion').mockReturnValue(LATEST_APP_CONFIG_VERSION);
+    settings.configUpgrade.set(opts.configUpgrade ?? false);
+    const dismissSpy = vi.spyOn(settings, 'dismissSiScaleResets').mockImplementation(() => undefined);
+    const upgrade = TestBed.inject(ConfigurationUpgradeService);
+    vi.spyOn(upgrade, 'runUpgrade').mockResolvedValue(undefined);
+    upgrade.upgrading.set(opts.upgrading ?? false);
+    const dialogSpy = vi.spyOn(TestBed.inject(DialogService), 'openSiScaleResetsDialog').mockReturnValue(of(opts.dialogResult));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+    TestBed.tick();
+    return { dialogSpy, dismissSpy, resets, upgrade };
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('shows the list to a writable session whose profile holds resets', async () => {
+    const { dialogSpy } = await render({});
+    expect(dialogSpy).toHaveBeenCalledTimes(1);
+    expect(dialogSpy).toHaveBeenCalledWith(RESETS);
+  });
+
+  it('does not show it under embed', async () => {
+    const { dialogSpy } = await render({ embed: true });
+    expect(dialogSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not show it to a session that cannot write', async () => {
+    const { dialogSpy } = await render({ canPersist: false });
+    expect(dialogSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not show an empty list', async () => {
+    const { dialogSpy } = await render({ resets: [] });
+    expect(dialogSpy).not.toHaveBeenCalled();
+  });
+
+  it('waits for a running persistent upgrade to finish', async () => {
+    const { dialogSpy, upgrade } = await render({ upgrading: true });
+    expect(dialogSpy).not.toHaveBeenCalled();
+
+    upgrade.upgrading.set(false);
+    TestBed.tick();
+    expect(dialogSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show it while the profile still awaits its persistent upgrade', async () => {
+    const { dialogSpy } = await render({ configUpgrade: true });
+    expect(dialogSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows a list that arrives with a profile loaded later', async () => {
+    const { dialogSpy, resets } = await render({ resets: [] });
+    expect(dialogSpy).not.toHaveBeenCalled();
+
+    resets.set(RESETS);
+    TestBed.tick();
+    expect(dialogSpy).toHaveBeenCalledWith(RESETS);
+  });
+
+  it('forgets the list when the user dismisses it', async () => {
+    const { dismissSpy } = await render({ dialogResult: true });
+    expect(dismissSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the list when the user closes it without dismissing', async () => {
+    const { dismissSpy } = await render({ dialogResult: false });
+    expect(dismissSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the list when the dialog closes from the backdrop', async () => {
+    const { dismissSpy } = await render({ dialogResult: undefined });
+    expect(dismissSpy).not.toHaveBeenCalled();
   });
 });

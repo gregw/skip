@@ -2,12 +2,15 @@ import { WritableSignal, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WidgetNumericComponent } from './widget-numeric.component';
+import { MinigraphComponent } from '../minigraph/minigraph.component';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
-import { UnitsService } from '../../core/services/units.service';
+import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
+import { TDurationFormat, UnitsService } from '../../core/services/units.service';
 import { CanvasService } from '../../core/services/canvas.service';
-import { IPathUpdate } from '../../core/services/data.service';
+import { DataService, IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
+import { ISkDisplayScale } from '../../core/interfaces/signalk-interfaces';
 
 const unitsServiceStub = {
   getUnitDisplaySymbol: (measure: string | null | undefined) => measure ?? '',
@@ -17,88 +20,245 @@ const unitsServiceStub = {
 };
 
 interface NumericInternals {
-  onNumericValue: (u: IPathUpdate) => void;
   getValueText: () => string;
+  getMinMaxText: () => string;
+  labelMeasure: () => string;
+  setMiniGraph: (graph: MinigraphComponent) => void;
 }
 
+type MiniGraphInputs = Pick<MinigraphComponent,
+  'dataPath' | 'dataSource' | 'convertUnitTo' | 'numDecimal' | 'yScaleMin' | 'yScaleMax' | 'inverseYAxis' | 'verticalChart'>;
+
 /**
- * Regression tests for the crash-fix in ddfb377c.
+ * What the widget shows for a set of SI inputs: the value text, the min/max row, the measure the
+ * unit label is drawn for, and what it hands the minigraph. Pins the output so a change of the unit
+ * the widget computes in cannot move anything on screen.
  *
- * getValueText/applyDecorations now key on the tagged effectiveUnit() — the measure the value was
- * actually converted to — rather than the stored convertUnitTo. Two things had to change together:
- *  - a position/duration FORMAT measure ('latitudeSec', 'D HH:MM:SS', ...) arrives as a pre-formatted
- *    STRING; the old code called toFixed() on it and threw, so it must be returned as-is via toString().
- *  - a percent measure ('percent'/'percentraw') must still get a '%' appended, and a normal numeric
- *    measure must be toFixed'd with no '%'.
- *
- * The component is driven headless: onNumericValue (the stream callback that sets dataValue +
- * effectiveUnit) is invoked directly, and getValueText (the smallest seam producing the drawn text)
- * is read back. onNumericValue calls drawWidget(), which now reads the required `theme()` input (for
- * the halo card color) — but drawWidget bails at its `if (!canvasCtx) return` guard here, because the
- * component is constructed via `new` without ngOnInit so the canvas context is never set and theme()
- * is never reached. ignoreZones:true likewise keeps onNumericValue out of the zone branch that reads
- * theme(). Adding ngOnInit/detectChanges to this spec would make drawWidget reach this.theme() and
- * throw NG0950 (required input not set).
+ * The component is driven headless: it is constructed without ngOnInit, so drawWidget bails before
+ * reading the required `theme()` input, and ignoreZones keeps the callback out of the zone branch
+ * that reads it too. ngAfterViewInit registers the stream callback through the streams fake.
  */
-describe('WidgetNumericComponent value text (crash-fix ddfb377c)', () => {
-  let component: WidgetNumericComponent;
+describe('WidgetNumericComponent output from SI inputs', () => {
+  const KNOTS_PER_MS = 3600 / 1852;
   let internals: NumericInternals;
   let options: WritableSignal<IWidgetSvcConfig | undefined>;
+  let next: ((u: IPathUpdate) => void) | undefined;
+  let metaScale: WritableSignal<ISkDisplayScale | undefined>;
+  let metaObserved: string[];
 
-  const makeConfig = (numDecimal = 1): IWidgetSvcConfig => ({
-    ...WidgetNumericComponent.DEFAULT_CONFIG,
-    numDecimal,
-    ignoreZones: true
-  });
+  const makeConfig = (overrides: Partial<IWidgetSvcConfig> = {}, convertUnitTo = 'unitless'): IWidgetSvcConfig => {
+    const defaults = structuredClone(WidgetNumericComponent.DEFAULT_CONFIG);
+    return {
+      ...defaults,
+      paths: {
+        numericPath: { ...defaults.paths!['numericPath'], path: 'self.environment.test', convertUnitTo }
+      },
+      ignoreZones: true,
+      ...overrides
+    } as IWidgetSvcConfig;
+  };
 
-  const update = (value: unknown, measure?: string): IPathUpdate =>
-    ({ data: { value, timestamp: null, measure }, state: 'normal' });
+  /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
+  const feed = (si: number | null, measure: string, durationFormat?: TDurationFormat): void => {
+    if (!next) throw new Error('numericPath is not observed');
+    next({ data: { value: si, timestamp: null, measure, durationFormat }, state: 'normal' } as IPathUpdate);
+  };
+
+  const miniGraphInputs = (): MiniGraphInputs => {
+    const graph = {} as MinigraphComponent;
+    internals.setMiniGraph(graph);
+    const { dataPath, dataSource, convertUnitTo, numDecimal, yScaleMin, yScaleMax, inverseYAxis, verticalChart } = graph;
+    return { dataPath, dataSource, convertUnitTo, numDecimal, yScaleMin, yScaleMax, inverseYAxis, verticalChart };
+  };
+
+  const render = (config: IWidgetSvcConfig): void => {
+    options.set(config);
+    const component = TestBed.runInInjectionContext(() => new WidgetNumericComponent());
+    internals = component as unknown as NumericInternals;
+    component.ngAfterViewInit();
+  };
 
   beforeEach(() => {
-    options = signal<IWidgetSvcConfig | undefined>(makeConfig());
-    const streamsMock = { observe: () => undefined };
+    options = signal<IWidgetSvcConfig | undefined>(undefined);
+    next = undefined;
+    metaScale = signal<ISkDisplayScale | undefined>(undefined);
+    metaObserved = [];
+    const streamsFake = {
+      observe: (pathName: string, cb: (u: IPathUpdate) => void) => {
+        next = cb;
+      }
+    };
     TestBed.configureTestingModule({
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
-        { provide: WidgetStreamsDirective, useValue: streamsMock },
-        { provide: UnitsService, useValue: unitsServiceStub }
+        { provide: WidgetStreamsDirective, useValue: streamsFake },
+        { provide: WidgetMetadataDirective, useValue: { displayScale: metaScale, observe: (key: string) => { metaObserved.push(key); } } },
+        // The widget's conversions read no path state, so the real service needs no DataService.
+        { provide: DataService, useValue: {} },
+        UnitsService
       ]
     });
-    component = TestBed.runInInjectionContext(() => new WidgetNumericComponent());
-    internals = component as unknown as NumericInternals;
   });
 
-  it('returns a latitudeSec format-measure value as its pre-formatted string, not toFixed', () => {
-    // Pre-formatted position string tagged with a format measure: the old code called
-    // ("12° 34.5' N").toFixed() and threw a TypeError. Returning the string proves the fix.
-    internals.onNumericValue(update("12° 34.5' N", 'latitudeSec'));
-    expect(internals.getValueText()).toBe("12° 34.5' N");
-  });
-
-  it('returns a D HH:MM:SS duration format-measure value as its string form without crashing', () => {
-    internals.onNumericValue(update('1 12:00:00', 'D HH:MM:SS'));
-    expect(internals.getValueText()).toBe('1 12:00:00');
-  });
-
-  it("appends '%' to a value tagged 'percent'", () => {
-    internals.onNumericValue(update(55.5, 'percent'));
-    expect(internals.getValueText()).toBe('55.5%');
-  });
-
-  it("appends '%' to a value tagged 'percentraw'", () => {
-    internals.onNumericValue(update(80, 'percentraw'));
-    expect(internals.getValueText()).toBe('80.0%');
-  });
-
-  it("toFixes a normal numeric measure with no '%' appended", () => {
-    internals.onNumericValue(update(12.345, 'm/s'));
-    const text = internals.getValueText();
-    expect(text).toBe('12.3');
-    expect(text).not.toContain('%');
+  it('presents the tracked extremes in the measure current when they are drawn', () => {
+    render(makeConfig({ showMin: true, showMax: true }, 'knots'));
+    feed(5, 'knots');
+    feed(8, 'knots');
+    feed(6, 'kph');
+    expect({ value: internals.getValueText(), minMax: internals.getMinMaxText() })
+      .toEqual({ value: '21.6', minMax: 'Min: 18.0 Max: 28.8' });
   });
 
   it('renders the placeholder before any value arrives', () => {
+    render(makeConfig());
     expect(internals.getValueText()).toBe('--');
+  });
+
+  it('shows a speed in the display measure, with that measure as the label', () => {
+    render(makeConfig({}, 'knots'));
+    feed(5, 'knots');
+    expect({ value: internals.getValueText(), label: internals.labelMeasure() })
+      .toEqual({ value: '9.7', label: 'knots' });
+  });
+
+  it('follows the server measure where it differs from the stored unit', () => {
+    render(makeConfig({ showMiniChart: true }, 'celsius'));
+    feed(293.15, 'fahrenheit');
+    expect({
+      value: internals.getValueText(),
+      label: internals.labelMeasure(),
+      graphUnit: miniGraphInputs().convertUnitTo
+    }).toEqual({ value: '68.0', label: 'fahrenheit', graphUnit: 'fahrenheit' });
+  });
+
+  it('shows the value as it arrives while the measure is still empty', () => {
+    render(makeConfig());
+    feed(12.345, '');
+    expect({ value: internals.getValueText(), label: internals.labelMeasure() })
+      .toEqual({ value: '12.3', label: '' });
+  });
+
+  it('goes back to the placeholder on a null sample and keeps the extremes', () => {
+    render(makeConfig({ showMin: true, showMax: true }, 'knots'));
+    feed(5, 'knots');
+    feed(8, 'knots');
+    feed(null, 'knots');
+    expect({ value: internals.getValueText(), minMax: internals.getMinMaxText() })
+      .toEqual({ value: '--', minMax: 'Min: 9.7 Max: 15.6' });
+  });
+
+  it('tracks min and max in the display measure', () => {
+    render(makeConfig({ showMin: true, showMax: true, numDecimal: 2 }, 'knots'));
+    feed(5, 'knots');
+    feed(2, 'knots');
+    feed(8, 'knots');
+    feed(4, 'knots');
+    expect(internals.getMinMaxText()).toBe('Min: 3.89 Max: 15.55');
+  });
+
+  it('writes a value beyond the chart range as it is, and hands the chart its stored range', () => {
+    render(makeConfig({ showMiniChart: true, yScaleMin: 0, yScaleMax: 10 / KNOTS_PER_MS, numDecimal: 0 }, 'knots'));
+    feed(100, 'knots');
+    expect({ value: internals.getValueText(), graph: miniGraphInputs() }).toEqual({
+      value: '194',
+      graph: {
+        dataPath: 'self.environment.test',
+        dataSource: 'default',
+        convertUnitTo: 'knots',
+        numDecimal: 0,
+        yScaleMin: 0,
+        yScaleMax: expect.closeTo(10),
+        inverseYAxis: false,
+        verticalChart: false
+      }
+    });
+  });
+
+  describe('minigraph y range', () => {
+    const range = () => { const g = miniGraphInputs(); return [g.yScaleMin, g.yScaleMax]; };
+
+    it('hands the chart an SI range in the measure the value is shown in', () => {
+      render(makeConfig({ showMiniChart: true, yScaleMin: 0, yScaleMax: 10 / KNOTS_PER_MS }, 'knots'));
+      feed(3, 'knots');
+      expect(range()).toEqual([0, expect.closeTo(10)]);
+      feed(3, 'm/s');
+      expect(range()).toEqual([0, expect.closeTo(5.14)]);
+    });
+
+    it("takes the path's meta scale for bounds that are not set", () => {
+      render(makeConfig({ showMiniChart: true, yScaleMin: null, yScaleMax: null }, 'knots'));
+      metaScale.set({ lower: 0, upper: 20 / KNOTS_PER_MS, type: 'linear' });
+      feed(3, 'knots');
+      expect(range()).toEqual([0, expect.closeTo(20)]);
+    });
+
+    it('uses 0..10 in the presentation measure when neither the config nor meta sets a bound', () => {
+      render(makeConfig({ showMiniChart: true, yScaleMin: null, yScaleMax: null }, 'knots'));
+      feed(3, 'knots');
+      expect(range()).toEqual([0, 10]);
+    });
+
+    it('observes its path meta for the scale', () => {
+      render(makeConfig({ showMiniChart: true }, 'knots'));
+      expect(metaObserved).toContain('numericPath');
+    });
+  });
+
+  it("appends '%' to a ratio shown as percent", () => {
+    render(makeConfig());
+    feed(0.555, 'percent');
+    expect({ value: internals.getValueText(), label: internals.labelMeasure() })
+      .toEqual({ value: '55.5%', label: 'percent' });
+  });
+
+  it("appends '%' to a ratio shown as percentraw", () => {
+    render(makeConfig());
+    feed(0.8, 'percentraw');
+    expect(internals.getValueText()).toBe('0.8%');
+  });
+
+  it('writes a latitude in degrees, minutes and seconds', () => {
+    render(makeConfig());
+    feed(60.5125, 'latitudeSec');
+    expect(internals.getValueText()).toBe('60° 30\' 45.00" N');
+  });
+
+  it('writes the extremes of a latitude in degrees, minutes and seconds too', () => {
+    render(makeConfig({ showMin: true, showMax: true }));
+    feed(60.5125, 'latitudeSec');
+    feed(60.25, 'latitudeSec');
+    feed(61, 'latitudeSec');
+    expect(internals.getMinMaxText()).toBe('Min: 60° 15\' 00.00" N Max: 61° 0\' 00.00" N');
+  });
+
+  it('writes a longitude in degrees and decimal minutes', () => {
+    render(makeConfig());
+    feed(-24.5, 'longitudeMin');
+    expect(internals.getValueText()).toBe('24° 30.00\' W');
+  });
+
+  it('writes a duration measure as days and clock time', () => {
+    render(makeConfig({}, 'D HH:MM:SS'));
+    feed(93784, 'D HH:MM:SS');
+    expect({ value: internals.getValueText(), label: internals.labelMeasure() })
+      .toEqual({ value: '1d 2:03:04', label: 'D HH:MM:SS' });
+  });
+
+  it('formats a seconds value in the server duration format, with no unit label (#627)', () => {
+    render(makeConfig());
+    feed(1800, 's', 'HH:MM:SS');
+    expect({ value: internals.getValueText(), label: internals.labelMeasure() })
+      .toEqual({ value: '30:00', label: '' });
+    feed(1800, 's');
+    expect({ value: internals.getValueText(), label: internals.labelMeasure() })
+      .toEqual({ value: '1800.0', label: 's' });
+  });
+
+  it('formats min and max in the duration format too', () => {
+    render(makeConfig({ showMin: true, showMax: true }));
+    feed(1800, 's', 'HH:MM:SS');
+    feed(3725, 's', 'HH:MM:SS');
+    expect(internals.getMinMaxText()).toBe('Min: 30:00 Max: 1:02:05');
   });
 });
 
@@ -193,6 +353,7 @@ describe('WidgetNumericComponent label row layout', () => {
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
         { provide: WidgetStreamsDirective, useValue: { observe: () => undefined } },
+        { provide: WidgetMetadataDirective, useValue: { displayScale: () => undefined, observe: () => undefined } },
         { provide: UnitsService, useValue: unitsServiceStub },
         { provide: CanvasService, useValue: canvasFake }
       ]

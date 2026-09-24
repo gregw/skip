@@ -31,6 +31,8 @@ import { NotificationOverlayService } from './core/services/notification-overlay
 import { DialogService } from './core/services/dialog.service';
 import { resolveBrowserTabTitle } from './core/utils/browser-tab-title.util';
 import { HOTKEY_KEYS, isInteractiveKeyTarget, isBlockingOverlayOpen } from './core/utils/hotkey-target.util';
+import { MIN_MIGRATABLE_APP_CONFIG_VERSION, skipsPersistentUpgrade } from './core/utils/config-migration.util';
+import { LATEST_APP_CONFIG_VERSION } from './core/constants/config-versions.const';
 
 const MOUSE_PEEK_THROTTLE_MS = 250;
 
@@ -73,6 +75,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   private upgradeMessagesRef = viewChild<ElementRef<HTMLUListElement> | undefined>('upgradeMessages');
   private _upgradeShown = false;
+  private _siScaleResetsShown = false;
 
   // Exposed for the shell template.
   protected readonly dashboardStatic = this._dashboard.isDashboardStatic;
@@ -105,13 +108,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       // reloads the app), nor surface the manual upgrade-instructions dialog. Defer both to a
       // full-app session. Any session storage refuses writes from is in the same position — it
       // cannot rewrite the config, and the instructions ask for actions it cannot take.
-      if (this.embed() || !this._storage.canPersist()) {
+      if (skipsPersistentUpgrade(this._embedMode, this._storage)) {
         return;
       }
       if (this.settings.configUpgrade()) {
         const liveVersion = this.settings.getConfigVersion();
 
-        if (liveVersion === 11 || liveVersion === 12 || liveVersion === 13 || liveVersion === 14 || liveVersion === 15 || liveVersion === 16 || liveVersion === 17 || liveVersion === 18) {
+        if (liveVersion !== undefined && liveVersion >= MIN_MIGRATABLE_APP_CONFIG_VERSION && liveVersion < LATEST_APP_CONFIG_VERSION) {
           this.upgrade.runUpgrade(liveVersion);
         }
 
@@ -127,6 +130,20 @@ export class AppComponent implements AfterViewInit, OnDestroy {
           }
         }
       }
+    });
+
+    // The SI migration's list of widgets whose scale range it reset. Only a session that can clear it
+    // shows it, and not before the persistent upgrade that may still add to it has finished.
+    effect(() => {
+      const resets = this.settings.siScaleResets();
+      if (!resets.length || this._siScaleResetsShown) return;
+      if (skipsPersistentUpgrade(this._embedMode, this._storage) || this.settings.configUpgrade() || this.upgrade.upgrading()) return;
+      this._siScaleResetsShown = true;
+      untracked(() => this._dialog.openSiScaleResetsDialog(resets))
+        .pipe(takeUntilDestroyed(this._destroyRef))
+        .subscribe(dismissed => {
+          if (dismissed) this.settings.dismissSiScaleResets();
+        });
     });
 
     effect(() => {
@@ -339,7 +356,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   private displayConnectionsStatusNotification(connectionStatus: IConnectionStatus) {
     const message = connectionStatus.message;
-    const silentDuringBootstrap = this.bootstrapStatus() !== 'ready';
+    // Connection toasts are silent unless the user opts in, and always silent during bootstrap.
+    const silent = !this.settings.notificationConfig().sound.playConnectionSound || this.bootstrapStatus() !== 'ready';
     switch (connectionStatus.state) {
       case ConnectionState.Disconnected:
         this.toast.show(message, 5000, true);
@@ -354,14 +372,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       case ConnectionState.WebSocketError:
       case ConnectionState.HTTPRetrying:
       case ConnectionState.WebSocketRetrying:
-        this.toast.show(message, 3000, silentDuringBootstrap, 'warn');
+        this.toast.show(message, 3000, silent, 'warn');
         break;
       case ConnectionState.PermanentFailure:
-        this.toast.show(message, 0, silentDuringBootstrap);
+        this.toast.show(message, 0, silent);
         break;
       default:
         console.error('[AppComponent] Unknown connection state:', connectionStatus.state);
-        this.toast.show(`Unknown connection status: ${connectionStatus.state}`, 0, silentDuringBootstrap, 'error');
+        this.toast.show(`Unknown connection status: ${connectionStatus.state}`, 0, silent, 'error');
     }
   }
 

@@ -7,7 +7,7 @@ import { StorageService } from './storage.service';
 import { ReloadService } from './reload.service';
 import { ensureLocalStorage } from '../../../test-helpers/local-storage.test-helper';
 import { DefaultAppConfig, DefaultConnectionConfig, DefaultThemeConfig } from '../../../default-config/config.blank.const';
-import { IAppConfig, IConfig, IConnectionConfig, INotificationConfig, IThemeConfig } from '../interfaces/app-settings.interfaces';
+import { IAppConfig, IConfig, IConnectionConfig, INotificationConfig, ISiScaleReset, IThemeConfig } from '../interfaces/app-settings.interfaces';
 import { LATEST_APP_CONFIG_VERSION, CONNECTION_CONFIG_VERSION } from '../constants/config-versions.const';
 import { Dashboard } from './dashboard.service';
 import { AuthenticationService } from './authentication.service';
@@ -914,5 +914,43 @@ describe('SettingsService — reloadApp target (query-string preservation, #216 
     } finally {
       window.location.search = original;
     }
+  });
+});
+
+describe('SettingsService — SI scale reset list', () => {
+  const RESETS: ISiScaleReset[] = [
+    { dashboardId: 'id-helm', dashboard: 'Helm', widget: 'Engine RPM', type: 'widget-gauge-ng-radial', options: ['displayScale.lower', 'displayScale.upper'] },
+    { dashboardId: 'id-2', dashboard: '2', widget: 'widget-data-graph', type: 'widget-data-graph', options: ['yScaleMin'] }
+  ];
+
+  it('exposes the list the loaded profile holds', () => {
+    const { service } = setupHydrated({ app: { ...loadedAppConfig(), siScaleResets: RESETS }, theme: null, dashboards: [] });
+    expect(service.siScaleResets()).toEqual(RESETS);
+  });
+
+  it('is empty when the loaded profile holds none', () => {
+    const { service } = setupHydrated({ app: loadedAppConfig(), theme: null, dashboards: [] });
+    expect(service.siScaleResets()).toEqual([]);
+  });
+
+  it('keeps the list in the app blob when another app setting is saved', () => {
+    const { service, patchSpy } = setupHydrated({ app: { ...loadedAppConfig(), siScaleResets: RESETS }, theme: null, dashboards: [] });
+
+    service.setPinToolbar(true);
+
+    expect(patchSpy).toHaveBeenCalledWith('IAppConfig', expect.objectContaining({ pinToolbar: true, siScaleResets: RESETS }));
+  });
+
+  it('dismissing clears the list and saves the app blob without the key', () => {
+    const { service, patchSpy } = setupHydrated({ app: { ...loadedAppConfig(), siScaleResets: RESETS }, theme: null, dashboards: [] });
+
+    service.dismissSiScaleResets();
+
+    expect(service.siScaleResets()).toEqual([]);
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+    const [objType, blob] = patchSpy.mock.calls[0];
+    expect(objType).toBe('IAppConfig');
+    expect(blob).not.toHaveProperty('siScaleResets');
+    expect(blob.browserTabTitle).toBe('My Boat');
   });
 });

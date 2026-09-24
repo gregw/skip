@@ -49,6 +49,12 @@ export class WidgetSliderComponent implements OnInit, OnDestroy {
     dataTimeout: 5,
     color: 'contrast'
   };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    'displayScale.lower': 'SI unit of gaugePath',
+    'displayScale.upper': 'SI unit of gaugePath'
+  };
   protected readonly runtime = inject(WidgetRuntimeDirective); // public for template access
   private readonly streams = inject(WidgetStreamsDirective);
   private svgElement = viewChild.required<ElementRef<SVGElement>>('svgSlider');

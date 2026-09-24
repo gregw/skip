@@ -1,7 +1,14 @@
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { UnitsService } from './units.service';
+import { TDurationFormat, UnitsService } from './units.service';
 import { DataService } from './data.service';
+import { CONSOLE_MIGRATION_SINK, migrateWidgetConfig } from '../utils/config-migration.util';
+import { IWidgetPath, IWidgetSvcConfig } from '../interfaces/widgets-interface';
+import { ISkDisplayUnits } from '../interfaces/signalk-interfaces';
+import { IMeta } from '../interfaces/app-interfaces';
+import { BehaviorSubject, EMPTY, Subject } from 'rxjs';
+import { SignalKDeltaService } from './signalk-delta.service';
+import { displayUnitsBySiUnit, UnitPreferencesService } from './unit-preferences.service';
 
 describe('UnitsService', () => {
   function setup(): UnitsService {
@@ -64,56 +71,6 @@ describe('UnitsService', () => {
       expect(service.getRenderableUnitSymbol(' ')).toBe('');
       expect(service.getRenderableUnitSymbol(null)).toBe('');
       expect(service.getRenderableUnitSymbol('')).toBe('');
-    });
-  });
-
-  describe('convertBetweenMeasures (affine round-trip)', () => {
-    it('returns the value unchanged when from === to', () => {
-      const s = setup();
-      expect(s.convertBetweenMeasures('m', 'm', 42)).toBe(42);
-    });
-
-    it('converts within the Length group (m -> feet) and back exactly', () => {
-      const s = setup();
-      const feet = s.convertBetweenMeasures('m', 'feet', 10);
-      expect(feet).toBeCloseTo(32.8084, 3);
-      expect(s.convertBetweenMeasures('feet', 'm', feet)).toBeCloseTo(10, 9);
-    });
-
-    it('converts an offset (Temperature) measure: 293.15 K <-> 20 C', () => {
-      const s = setup();
-      expect(s.convertBetweenMeasures('K', 'celsius', 293.15)).toBeCloseTo(20, 9);
-      expect(s.convertBetweenMeasures('celsius', 'K', 20)).toBeCloseTo(293.15, 9);
-    });
-
-    it('converts a scaled Ratio measure: ratio 0.5 -> 50 percent', () => {
-      const s = setup();
-      expect(s.convertBetweenMeasures('ratio', 'percent', 0.5)).toBeCloseTo(50, 9);
-    });
-
-    it('is identity across different groups (never fabricates a cross-dimension value)', () => {
-      const s = setup();
-      expect(s.convertBetweenMeasures('knots', 'celsius', 7)).toBe(7);
-      expect(s.convertBetweenMeasures('m', 'V', 3)).toBe(3);
-    });
-
-    it('is identity when either same-group endpoint is a string-format measure', () => {
-      const s = setup();
-      // Time group mixes numeric ('s') with a string-format measure ('D HH:MM:SS').
-      expect(s.convertBetweenMeasures('D HH:MM:SS', 's', 5)).toBe(5);
-      expect(s.convertBetweenMeasures('s', 'D HH:MM:SS', 5)).toBe(5);
-    });
-
-    it('is identity for an unknown measure or a unitless endpoint', () => {
-      const s = setup();
-      expect(s.convertBetweenMeasures('not-a-unit', 'm', 5)).toBe(5);
-      expect(s.convertBetweenMeasures('unitless', 'knots', 5)).toBe(5);
-    });
-
-    it('passes a non-finite value through unchanged', () => {
-      const s = setup();
-      expect(s.convertBetweenMeasures('m', 'feet', NaN)).toBeNaN();
-      expect(s.convertBetweenMeasures('m', 'feet', Infinity)).toBe(Infinity);
     });
   });
 
@@ -401,6 +358,212 @@ describe('UnitsService', () => {
       const service = setupWithData('K', { targetUnit: 'C' });
       const path = 'self.environment.water.temperature';
       expect(service.resolvePathMeasure(path)).toBe(service.getConversionsForPath(path).base);
+    });
+
+    // --- Duration formats (#627): the server's clock-style time targets ---
+    const DURATION_TARGETS = ['HH:MM:SS', 'DD:HH:MM:SS', 'MM:SS', 'HH:MM:SS.mmm', 'MM:SS.mmm', 'duration-compact', 'duration-verbose'];
+
+    it('keeps a duration-format path in seconds and names the format separately', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        for (const target of DURATION_TARGETS) {
+          const service = setupWithData('s', { targetUnit: target });
+          const path = 'self.navigation.racing.timeToStart';
+          expect(service.resolvePathMeasure(path), target).toBe('s');
+          expect(service.resolvePathDurationFormat(path), target).toBe(target);
+        }
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('names no duration format for a numeric time target or no server preference', () => {
+      expect(setupWithData('s', { targetUnit: 'hour' }).resolvePathDurationFormat('self.navigation.racing.timeToStart')).toBeUndefined();
+      expect(setupWithData('s', undefined).resolvePathDurationFormat('self.navigation.racing.timeToStart')).toBeUndefined();
+    });
+
+    it('does not honour a duration format on a path that is not in seconds', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const service = setupWithData('m', { targetUnit: 'HH:MM:SS' });
+        expect(service.resolvePathMeasure('self.navigation.trip.log')).toBe('unitless');
+        expect(service.resolvePathDurationFormat('self.navigation.trip.log')).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  describe('formatDuration', () => {
+    const CASES: [TDurationFormat, number, string][] = [
+      ['HH:MM:SS', 0, '0:00'],
+      ['HH:MM:SS', 45, '0:45'],
+      ['HH:MM:SS', 1800, '30:00'],
+      ['HH:MM:SS', 1799.9, '29:59'],
+      ['HH:MM:SS', 3725, '1:02:05'],
+      ['HH:MM:SS', 90000, '25:00:00'],
+      ['HH:MM:SS', -1800, '-30:00'],
+      ['HH:MM:SS', -0.4, '0:00'],
+      ['MM:SS', 45, '0:45'],
+      ['MM:SS', 3725, '62:05'],
+      ['DD:HH:MM:SS', 1800, '30:00'],
+      ['DD:HH:MM:SS', 90061, '1d 1:01:01'],
+      ['DD:HH:MM:SS', -90061, '-1d 1:01:01'],
+      ['HH:MM:SS.mmm', 0.57, '0:00.570'],
+      ['HH:MM:SS.mmm', 1800.25, '30:00.250'],
+      ['HH:MM:SS.mmm', 3725.04, '1:02:05.040'],
+      ['MM:SS.mmm', 3725.5, '62:05.500'],
+      ['duration-compact', 0, '0s'],
+      ['duration-compact', 45, '45s'],
+      ['duration-compact', 1799, '29m 59s'],
+      ['duration-compact', 1800, '30m'],
+      ['duration-compact', 3600, '1h'],
+      ['duration-compact', 9045, '2h 30m'],
+      ['duration-compact', 90061, '1d 1h'],
+      ['duration-compact', -1800, '-30m'],
+      ['duration-verbose', 0, '0 seconds'],
+      ['duration-verbose', 1, '1 second'],
+      ['duration-verbose', 3601, '1 hour 1 second'],
+      ['duration-verbose', 9045, '2 hours 30 minutes 45 seconds'],
+      ['duration-verbose', 86400, '1 day'],
+      ['duration-verbose', -61, '-1 minute 1 second'],
+    ];
+
+    it.each(CASES)('formats %s %d s as %s', (format, seconds, expected) => {
+      expect(setup().formatDuration(format, seconds)).toBe(expected);
+    });
+  });
+
+  describe('getConversionsForPath for position coordinates and pointer paths', () => {
+    // SI units as DataService reports them: a pointer path answers with its field's units.
+    const UNITS: Record<string, string> = {
+      'self.navigation.position#/latitude': 'deg',
+      'self.navigation.position#/longitude': 'deg',
+      'self.navigation.position#/altitude': 'm',
+      'self.navigation.courseGreatCircle.nextPoint.position#/latitude': 'deg',
+      'self.navigation.attitude#/roll': 'rad',
+      'self.navigation.headingTrue': 'rad',
+      'self.environment.sunlight.position#/elevation': 'deg',
+    };
+
+    function setupWithUnits(displayUnits: Record<string, ISkDisplayUnits> = {}): UnitsService {
+      TestBed.resetTestingModule();
+      const dataStub: Partial<DataService> = {
+        getPathUnitType: path => UNITS[path] ?? null,
+        getPathDisplayUnits: path => displayUnits[path],
+      };
+      TestBed.configureTestingModule({
+        providers: [UnitsService, { provide: DataService, useValue: dataStub }],
+      });
+      return TestBed.inject(UnitsService);
+    }
+
+    const groups = (service: UnitsService, path: string) => service.getConversionsForPath(path).conversions.map(g => g.group);
+
+    it.each([
+      'self.navigation.position#/latitude',
+      'self.navigation.position#/longitude',
+      'self.navigation.courseGreatCircle.nextPoint.position#/latitude',
+    ])('offers only the Position group for %s', path => {
+      expect(groups(setupWithUnits(), path)).toEqual(['Position']);
+    });
+
+    it('offers the Length group for #/altitude, from the field\'s own unit', () => {
+      expect(groups(setupWithUnits(), 'self.navigation.position#/altitude')).toEqual(['Length']);
+    });
+
+    it('offers the Angle group for a degree field that is not a coordinate', () => {
+      expect(groups(setupWithUnits(), 'self.environment.sunlight.position#/elevation')).toEqual(['Angle']);
+      expect(groups(setupWithUnits(), 'self.navigation.attitude#/roll')).toEqual(['Angle']);
+    });
+
+    it('still offers the Position-group unit a migrated v20 latitude slot stores', () => {
+      const v20 = { paths: { numericPath: { path: 'self.navigation.position.latitude', convertUnitTo: 'latitudeMin' } } } as unknown as IWidgetSvcConfig;
+      const slot = (migrateWidgetConfig('widget-numeric', v20, 20, CONSOLE_MIGRATION_SINK).paths as Record<string, IWidgetPath>)['numericPath'];
+
+      expect(slot.path).toBe('self.navigation.position#/latitude');
+      expect(slot.convertUnitTo).toBe('latitudeMin');
+      const offered = setupWithUnits().getConversionsForPath(slot.path as string).conversions.flatMap(g => g.units.map(u => u.measure));
+      expect(offered).toContain('latitudeMin');
+    });
+
+    it('resolves a field without a server preference to unitless, so the slot\'s stored unit applies', () => {
+      expect(setupWithUnits().resolvePathMeasure('self.navigation.attitude#/roll')).toBe('unitless');
+    });
+
+    it('resolves a field to the display unit the server preferences give its SI unit', () => {
+      const service = setupWithUnits({ 'self.navigation.attitude#/roll': { category: 'angle', targetUnit: 'degree' } });
+
+      const measure = service.resolvePathMeasure('self.navigation.attitude#/roll');
+
+      expect(measure).toBe('deg');
+      expect(service.convertToUnit(measure, -0.0384)?.toFixed(1)).toBe('-2.2');
+    });
+
+    it('keeps a coordinate out of the angle preference its degrees would otherwise take', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const service = setupWithUnits({ 'self.navigation.position#/latitude': { category: 'angleDegrees', targetUnit: 'deg' } });
+
+      expect(service.getConversionsForPath('self.navigation.position#/latitude')).toMatchObject({ base: 'unitless' });
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+  });
+
+  describe('object fields with server unit preferences', () => {
+    function setup(): { service: UnitsService; meta$: Subject<IMeta> } {
+      TestBed.resetTestingModule();
+      const meta$ = new Subject<IMeta>();
+      const units = displayUnitsBySiUnit(
+        { categoryToBaseUnit: { angle: 'rad', angleDegrees: 'deg', distance: 'm', depth: 'm' } },
+        { categories: {
+          angle: { baseUnit: 'rad', targetUnit: 'degree', symbol: '°' },
+          angleDegrees: { baseUnit: 'deg', targetUnit: 'deg' },
+          distance: { baseUnit: 'm', targetUnit: 'naut-mile' },
+        } },
+      );
+      TestBed.configureTestingModule({
+        providers: [
+          UnitsService,
+          DataService,
+          {
+            provide: SignalKDeltaService,
+            useValue: {
+              subscribeDataPathsUpdates: () => EMPTY,
+              subscribeMetadataUpdates: () => meta$.asObservable(),
+              subscribeNotificationsUpdates: () => EMPTY,
+              subscribeSelfUpdates: () => EMPTY,
+            },
+          },
+          { provide: UnitPreferencesService, useValue: { displayUnits$: new BehaviorSubject(units) } },
+        ],
+      });
+      return { service: TestBed.inject(UnitsService), meta$ };
+    }
+
+    it('seeds the same resolved unit for each attitude field a slot is re-pointed to', () => {
+      const { service, meta$ } = setup();
+      meta$.next({ context: 'self', path: 'navigation.attitude', meta: { description: 'Attitude', properties: {
+        roll: { type: 'number', units: 'rad' },
+        pitch: { type: 'number', units: 'rad' },
+      } } });
+
+      expect(service.getConversionsForPath('self.navigation.attitude#/roll').base).toBe('deg');
+      expect(service.getConversionsForPath('self.navigation.attitude#/pitch').base).toBe('deg');
+    });
+
+    it('keeps a field in SI when several categories share its SI unit', () => {
+      const { service, meta$ } = setup();
+      meta$.next({ context: 'self', path: 'navigation.position', meta: { description: 'Position', properties: {
+        latitude: { type: 'number', units: 'deg' },
+        altitude: { type: 'number', units: 'm' },
+      } } });
+
+      expect(service.resolvePathMeasure('self.navigation.position#/altitude')).toBe('unitless');
+      expect(service.getConversionsForPath('self.navigation.position#/latitude')).toMatchObject({ base: 'unitless' });
+      expect(service.getConversionsForPath('self.navigation.position#/latitude').conversions.map(g => g.group)).toEqual(['Position']);
     });
   });
 });

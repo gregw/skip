@@ -28,6 +28,11 @@ import {FormsModule} from '@angular/forms';
 import {MatButtonModule} from '@angular/material/button';
 import {MatTooltipModule} from '@angular/material/tooltip';
 
+// TTS colour thresholds in s: alert below the first, warn below the second. In the warn band a
+// negative DTS (m) marks the boat OCS.
+const TTS_ALERT_S = 60;
+const TTS_WARN_S = 10;
+
 /** A helm needs to know quickly that a start time did not take. */
 const PENDING_START_TIME_TIMEOUT_MS = 5000;
 
@@ -106,8 +111,8 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
   protected mode = signal<number>(1); // mimic legacy mode state machine
   /** The mode whose @case renders the absolute start-time form. */
   private static readonly SET_START_TIME_MODE = 4;
-  private ttsValue: number | null = null;
-  private dtsValue: number | null = null;
+  private ttsValue: number | null = null;  // s
+  private dtsValue: number | null = null;  // m
   private valueColor = '';
   private valueStateColor = '';
   protected startAtTime = signal<string>('00:00:00');
@@ -359,8 +364,8 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
     if (cfg.ignoreZones) {
       if (!this.ttsValue) this.valueStateColor = this.valueColor;
       else if (this.ttsValue === 0) this.valueStateColor = this.valueColor;
-      else if (this.ttsValue < 10) this.valueStateColor = (this.dtsValue ?? 0) < 0 ? theme.zoneAlarm : theme.zoneWarn;
-      else if (this.ttsValue < 60) this.valueStateColor = theme.zoneAlert;
+      else if (this.ttsValue < TTS_WARN_S) this.valueStateColor = (this.dtsValue ?? 0) < 0 ? theme.zoneAlarm : theme.zoneWarn;
+      else if (this.ttsValue < TTS_ALERT_S) this.valueStateColor = theme.zoneAlert;
       else this.valueStateColor = this.valueColor;
     } else {
       this.valueStateColor = this.valueColor; // states path not used; kept for future

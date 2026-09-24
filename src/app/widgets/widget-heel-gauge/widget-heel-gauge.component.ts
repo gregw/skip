@@ -4,6 +4,7 @@ import { getColors } from '../../core/utils/themeColors.utils';
 import { ITheme } from '../../core/services/app-service';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
+import { RAD_TO_DEG } from '../../core/utils/si-presentation.util';
 
 // Internal helper interfaces
 interface ITickPoint { x1: number; y1: number; x2: number; y2: number; major: boolean; }
@@ -29,7 +30,13 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
   private readonly finePathRef = viewChild<ElementRef<SVGPathElement>>('finePath');
   private readonly coarsePathRef = viewChild<ElementRef<SVGPathElement>>('coarsePath');
 
-  protected angleDeg = signal<number | null>(0);
+  /** Roll in rad, +ve = starboard after invertAngle; null with no reading. */
+  private readonly angle = signal<number | null>(0);
+  /** The roll in degrees, for the readout and for placing the pointers on the degree scales. */
+  protected readonly angleDeg = computed(() => {
+    const v = this.angle();
+    return v == null ? null : v * RAD_TO_DEG;
+  });
   protected readonly absAngle = computed(() => {
     const v = this.angleDeg();
     return v == null ? null : Math.abs(v);
@@ -76,9 +83,9 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
     filterSelfPaths: true,
     paths: {
       // pathType stays 'number' though the path is the whole navigation.attitude object: the
-      // streams pipeline extracts the 'roll' sub-field (observe below) BEFORE the number-type
-      // conversion runs, so it converts the scalar rad->deg. Switching to 'object' would skip that
-      // conversion and render radians. The path is fixed (isPathConfigurable:false) — no Paths tab.
+      // streams pipeline resolves the '/roll' field (observe below) BEFORE the number-type
+      // handling runs, so the scalar arrives in rad with 'deg' as its presentation measure.
+      // The path is fixed (isPathConfigurable:false) — no Paths tab.
       angle: {
         description: 'Heel / Roll Angle',
         path: 'self.navigation.attitude',
@@ -111,16 +118,16 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
       const angleCfg = cfg.paths?.['angle'];
       if (!angleCfg?.path) return; // nothing to observe if path empty
       // Establish observation outside reactive tracking of angle updates. The path is the whole
-      // navigation.attitude compound leaf; the widget reads its 'roll' sub-field.
+      // navigation.attitude compound leaf; the widget reads its '/roll' field.
       untracked(() => this.streams.observe('angle', pkt => {
         const raw = (pkt?.data?.value as number | undefined);
         if (raw == null) {
-          this.angleDeg.set(null);
+          this.angle.set(null);
           return;
         }
         const inv = cfg.gauge?.invertAngle ? -raw : raw;
-        this.angleDeg.set(inv);
-      }, 'roll'));
+        this.angle.set(inv);
+      }, '/roll'));
     });
 
     // Theme + color config effect
@@ -151,8 +158,8 @@ export class WidgetHeelGaugeComponent implements AfterViewInit {
           this.coarseLabels.set(s2.labels);
         }
         // Initialize to 0° if no data yet so pointers start centered
-        if (this.angleDeg() == null) {
-          this.angleDeg.set(0);
+        if (this.angle() == null) {
+          this.angle.set(0);
         }
         this.ready.set(true);
       });

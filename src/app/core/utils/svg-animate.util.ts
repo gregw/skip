@@ -291,6 +291,22 @@ export function animateAngleTransition(
   return frameId;
 }
 
+/**
+ * Calls apply(progress) each frame with linear progress in (0, 1] over duration, ending at 1.
+ * Runs outside Angular when ngZone is given. Returns a function that cancels the pending frame.
+ */
+export function animateProgress(duration: number, apply: (progress: number) => void, ngZone?: NgZone): () => void {
+  let frameId = 0;
+  const step = (start: number) => (now: number) => {
+    const progress = Math.min((now - start) / duration, 1);
+    apply(progress);
+    if (progress < 1) frameId = requestAnimationFrame(step(start));
+  };
+  const begin = () => { frameId = requestAnimationFrame(step(performance.now())); };
+  if (ngZone) ngZone.runOutsideAngular(begin); else begin();
+  return () => cancelAnimationFrame(frameId);
+}
+
 export interface SectorAngles { min: number; mid: number; max: number; }
 
 /** Linear interpolate sector angles */

@@ -35,6 +35,21 @@ export interface IAppConfig {
   keepScreenAwake?: boolean;
   autoRevealToolbar?: boolean;
   pinToolbar?: boolean;
+  /** Widgets whose scale bounds the SI migration could not convert and reset, until the user dismisses the list. */
+  siScaleResets?: ISiScaleReset[];
+}
+
+/** A widget whose stored scale bounds had no known unit to convert from, so the SI migration reset them. */
+export interface ISiScaleReset {
+  /** The dashboard's id, which keeps two dashboards with the same name apart. */
+  dashboardId: string;
+  /** The dashboard's name, or its 1-based position when it has none. */
+  dashboard: string;
+  /** The widget's displayName, or its type when it has none. */
+  widget: string;
+  type: string;
+  /** The reset options as dotted paths inside the widget config, such as `displayScale.lower`. */
+  options: string[];
 }
 
 export interface IThemeConfig {
@@ -58,6 +73,9 @@ export interface INotificationConfig {
   },
   sound: {
     disableSound: boolean;
+    /** Play a sound with the Signal K connection-problem toasts. Absent in configs written before
+     *  the option existed, which means off. */
+    playConnectionSound?: boolean;
     muteNormal: boolean;
     muteNominal: boolean;
     muteWarn: boolean;

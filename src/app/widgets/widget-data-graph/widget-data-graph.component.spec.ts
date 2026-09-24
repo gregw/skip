@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // cannot instantiate under jsdom, and a per-spec vi.mock only wins when this file is the
 // first in its worker to load the module, which is what made #544 look like a flake.
 
-import { signal } from '@angular/core';
+import { Provider, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { EMPTY, Subject } from 'rxjs';
+import { EMPTY, NEVER, Subject } from 'rxjs';
 import { WidgetDataGraphComponent } from './widget-data-graph.component';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { HistoryGraphStreamService, HISTORY_UNAVAILABLE } from '../../core/services/history-graph-stream.service';
@@ -15,6 +15,8 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { UnitsService } from '../../core/services/units.service';
 import { CanvasService } from '../../core/services/canvas.service';
 import type { ITheme } from '../../core/services/app-service';
+import { SignalKDeltaService } from '../../core/services/signalk-delta.service';
+import type { IMeta } from '../../core/interfaces/app-interfaces';
 
 // Any color property the graph-options builder reads resolves to a valid string.
 const themeMock = new Proxy({}, { get: () => '#000000' }) as unknown as ITheme;
@@ -38,7 +40,7 @@ describe('WidgetDataGraphComponent', () => {
   const unitsMock = { convertToUnit: (_unit: string, value: number) => value, getUnitDisplaySymbol: (measure: string) => measure, resolvePathMeasure: () => 'knots' };
   const canvasMock = { releaseCanvas: vi.fn() };
 
-  const setup = async (config: IWidgetSvcConfig): Promise<void> => {
+  const setup = async (config: IWidgetSvcConfig, extraProviders: Provider[] = []): Promise<void> => {
     options.set(config);
 
     await TestBed.configureTestingModule({
@@ -47,7 +49,8 @@ describe('WidgetDataGraphComponent', () => {
         { provide: WidgetRuntimeDirective, useValue: runtimeMock },
         { provide: HistoryGraphStreamService, useValue: historyMock },
         { provide: UnitsService, useValue: unitsMock },
-        { provide: CanvasService, useValue: canvasMock }
+        { provide: CanvasService, useValue: canvasMock },
+        ...extraProviders
       ]
     }).compileComponents();
 
@@ -167,6 +170,44 @@ describe('WidgetDataGraphComponent', () => {
     expect(title).not.toContain('celsius');
   });
 
+  it('resolves a pointer datachartPath through the field metadata, to unitless', async () => {
+    const emissions$ = new Subject<IGraphDatapoint>();
+    historyMock.getBackfillThenLive.mockReturnValue(emissions$);
+    const metadataUpdates$ = new Subject<IMeta>();
+
+    await setup(makeConfig({ datachartPath: 'self.navigation.attitude#/roll', numDecimal: 4 }), [
+      { provide: UnitsService, useClass: UnitsService },
+      {
+        provide: SignalKDeltaService,
+        useValue: {
+          subscribeDataPathsUpdates: () => NEVER,
+          subscribeMetadataUpdates: () => metadataUpdates$.asObservable(),
+          subscribeNotificationsUpdates: () => NEVER,
+          subscribeSelfUpdates: () => NEVER
+        }
+      }
+    ]);
+    const units = TestBed.inject(UnitsService);
+    const resolveSpy = vi.spyOn(units, 'resolvePathMeasure');
+
+    metadataUpdates$.next({
+      context: 'self',
+      path: 'navigation.attitude',
+      meta: { description: 'Vessel attitude', units: 'm', properties: { roll: { type: 'number', units: 'rad', description: 'Roll' } } }
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    emissions$.next({ timestamp: 1000, data: { value: -0.0384 } });
+    fixture.detectChanges();
+
+    expect(resolveSpy).toHaveBeenCalledWith('self.navigation.attitude#/roll');
+    // The field's rad selects the Angle group, never the base path's own m.
+    expect(units.getConversionsForPath('self.navigation.attitude#/roll').conversions.map(g => g.group)).toEqual(['Angle']);
+    // A field carries no displayUnits, so the measure is unitless and the value stays in SI.
+    expect(resolveSpy).toHaveLastReturnedWith('unitless');
+    expect(readTitle()).toBe('-0.0384');
+  });
+
   interface AxisState {
     type?: string;
     ticks?: { mirror?: boolean; padding?: number; textStrokeColor?: string; textStrokeWidth?: number; color?: string };
@@ -274,6 +315,38 @@ describe('WidgetDataGraphComponent', () => {
       expect(axis?.ticks?.color).toBe('contrastDim');
       expect(axis?.ticks?.textStrokeColor).toBe('cardColor');
     }
+  });
+
+  describe('y range', () => {
+    interface RangeState { min?: number; max?: number; suggestedMin?: number; suggestedMax?: number }
+    const KNOTS_PER_MS = 3600 / 1852;
+    // The value axis is x on a vertical graph and y otherwise.
+    const readRange = (axis: 'x' | 'y'): RangeState =>
+      (fixture.componentInstance.lineChartOptions.scales as unknown as Record<string, RangeState>)[axis];
+
+    beforeEach(() => {
+      vi.spyOn(unitsMock, 'convertToUnit').mockImplementation((unit: string, value: number) =>
+        unit === 'knots' ? value * KNOTS_PER_MS : value);
+    });
+
+    it('presents a fixed SI range in the measure the path resolves to', async () => {
+      await setup(makeConfig({ enableMinMaxScaleLimit: true, yScaleMin: 0, yScaleMax: 10 / KNOTS_PER_MS }));
+      const y = readRange('y');
+      expect(y.min).toBe(0);
+      expect(y.max).toBeCloseTo(10);
+    });
+
+    it('presents suggested SI bounds the same way, on the value axis of a vertical graph too', async () => {
+      await setup(makeConfig({ verticalChart: true, yScaleSuggestedMin: 1 / KNOTS_PER_MS, yScaleSuggestedMax: 20 / KNOTS_PER_MS }));
+      const x = readRange('x');
+      expect(x.suggestedMin).toBeCloseTo(1);
+      expect(x.suggestedMax).toBeCloseTo(20);
+    });
+
+    it('auto-scales a bound that is not set', async () => {
+      await setup(makeConfig({ enableMinMaxScaleLimit: true, yScaleMin: null, yScaleMax: null }));
+      expect(readRange('y')).toMatchObject({ min: undefined, max: undefined });
+    });
   });
 
   it('draws the value line with a hair of tension so it avoids the fast pixel-bucketing path', async () => {

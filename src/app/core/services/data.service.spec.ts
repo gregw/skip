@@ -3,10 +3,11 @@ import { HttpTestingController } from '@angular/common/http/testing';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IMeta, IPathValueData, IPathMetaData } from '../interfaces/app-interfaces';
-import { ISignalKDataValueUpdate, ISkMetadata, States } from '../interfaces/signalk-interfaces';
+import { ISignalKDataValueUpdate, ISkDisplayUnits, ISkMetadata, States } from '../interfaces/signalk-interfaces';
 import { DataService, IPathUpdate, IPathUpdateWithPath } from './data.service';
 import { SignalKDeltaService } from './signalk-delta.service';
 import { SignalKConnectionService } from './signalk-connection.service';
+import { UnitPreferencesService } from './unit-preferences.service';
 
 describe('DataService', () => {
   let service: DataService;
@@ -15,12 +16,14 @@ describe('DataService', () => {
   let metadataUpdates$: Subject<IMeta>;
   let notificationUpdates$: Subject<ISignalKDataValueUpdate>;
   let selfUpdates$: Subject<string>;
+  let displayUnits$: BehaviorSubject<ReadonlyMap<string, ISkDisplayUnits> | null>;
 
   beforeEach(() => {
     dataPathUpdates$ = new Subject<IPathValueData>();
     metadataUpdates$ = new Subject<IMeta>();
     notificationUpdates$ = new Subject<ISignalKDataValueUpdate>();
     selfUpdates$ = new Subject<string>();
+    displayUnits$ = new BehaviorSubject<ReadonlyMap<string, ISkDisplayUnits> | null>(null);
 
     TestBed.configureTestingModule({
       providers: [
@@ -34,6 +37,7 @@ describe('DataService', () => {
             subscribeSelfUpdates: () => selfUpdates$.asObservable(),
           },
         },
+        { provide: UnitPreferencesService, useValue: { displayUnits$ } },
       ],
     });
 
@@ -940,6 +944,274 @@ describe('DataService', () => {
     });
   });
 
+  describe('pointer paths', () => {
+    const POSITION = 'self.navigation.position';
+    const POSITION_META: ISkMetadata = {
+      description: 'Position',
+      properties: {
+        longitude: { type: 'number', units: 'deg', description: 'Longitude' },
+        latitude: { type: 'number', units: 'deg', description: 'Latitude' },
+        altitude: { type: 'number', units: 'm', description: 'Altitude' },
+      },
+    };
+
+    function pushMeta(path: string, meta: ISkMetadata, context = 'self'): void {
+      metadataUpdates$.next({ context, path, meta });
+    }
+
+    function pushValue(path: string, value: unknown, source = 'gps-1', context = 'self'): void {
+      dataPathUpdates$.next({ context, path, source, timestamp: '2026-01-01T00:00:01.000Z', value });
+    }
+
+    const DEGREES: ISkDisplayUnits = { category: 'angle', targetUnit: 'degree', symbol: '°' };
+
+    const pointerPaths = (entries: IPathMetaData[]) => entries.map(entry => entry.path).filter(path => path.includes('#'));
+
+    it('answers lookups for an unset slot path with nothing instead of throwing', () => {
+      // Stored widget config leaves an optional slot's path null, and the config UI looks it up.
+      const unset = null as unknown as string;
+
+      expect(service.getPathObject(unset)).toBeNull();
+      expect(service.getPathMeta(unset)).toBeNull();
+      expect(service.getPathUnitType(unset)).toBeNull();
+      expect(service.getPathDisplayUnits(unset)).toBeUndefined();
+      let emitted: ISkMetadata | null | undefined;
+      service.getPathMetaObservable(unset).subscribe(meta => emitted = meta).unsubscribe();
+      expect(emitted).toBeNull();
+    });
+
+    describe('getPathsAndFieldsByType', () => {
+      it('lists declared number fields with their units right after their base path', () => {
+        pushValue('navigation.speedOverGround', 3.2);
+        pushValue('navigation.position', { latitude: 60.1, longitude: 24.9 });
+        pushMeta('navigation.position', POSITION_META);
+        pushValue('navigation.courseOverGroundTrue', 1.2);
+
+        const entries = service.getPathsAndFieldsByType('number');
+
+        expect(entries.map(entry => entry.path)).toEqual([
+          'self.navigation.speedOverGround',
+          `${POSITION}#/longitude`,
+          `${POSITION}#/latitude`,
+          `${POSITION}#/altitude`,
+          'self.navigation.courseOverGroundTrue',
+        ]);
+        expect(entries.filter(entry => entry.path.includes('#')).map(entry => entry.meta?.units)).toEqual(['deg', 'deg', 'm']);
+        expect(entries.find(entry => entry.path === `${POSITION}#/latitude`)?.meta?.description).toBe('Latitude');
+      });
+
+      it('keeps the object base path where it is today: only in object requests', () => {
+        pushValue('navigation.position', { latitude: 60.1, longitude: 24.9 });
+        pushMeta('navigation.position', POSITION_META);
+
+        expect(service.getPathsAndFieldsByType('object').map(entry => entry.path)).toEqual([POSITION]);
+        expect(service.getPathsAndFieldsByType('number').map(entry => entry.path)).not.toContain(POSITION);
+      });
+
+      it('lists string fields and never an array field', () => {
+        // Same shape as a notification value; notifications themselves never reach the path store.
+        pushMeta('sensors.bilge.status', {
+          description: 'Bilge status',
+          properties: {
+            state: { type: 'string' },
+            message: { type: 'string' },
+            method: { type: 'array' },
+          },
+        });
+
+        expect(pointerPaths(service.getPathsAndFieldsByType('string'))).toEqual([
+          'self.sensors.bilge.status#/state',
+          'self.sensors.bilge.status#/message',
+        ]);
+        expect(pointerPaths(service.getPathsAndFieldsByType('array'))).toEqual([]);
+      });
+
+      it('lists no fields for an object path whose metadata declares none, until metadata arrives', () => {
+        pushValue('navigation.position', { latitude: 60.1, longitude: 24.9 });
+        expect(pointerPaths(service.getPathsAndFieldsByType('number'))).toEqual([]);
+
+        pushMeta('navigation.position', POSITION_META);
+        expect(pointerPaths(service.getPathsAndFieldsByType('number'))).toEqual([
+          `${POSITION}#/longitude`,
+          `${POSITION}#/latitude`,
+          `${POSITION}#/altitude`,
+        ]);
+      });
+
+      it('lists declared fields before any value arrives', () => {
+        pushMeta('navigation.position', POSITION_META);
+
+        expect(pointerPaths(service.getPathsAndFieldsByType('number'))).toHaveLength(3);
+      });
+
+      it('walks nested properties into deeper pointers and skips a leaf object field', () => {
+        pushMeta('environment.current', {
+          description: 'Current',
+          properties: {
+            drift: { type: 'number', units: 'm/s' },
+            set: {
+              type: 'object',
+              properties: { true: { type: 'number', units: 'rad' }, magnetic: { type: 'integer', units: 'rad' } },
+            },
+            extra: { type: 'object' },
+          },
+        });
+
+        expect(pointerPaths(service.getPathsAndFieldsByType('number'))).toEqual([
+          'self.environment.current#/drift',
+          'self.environment.current#/set/true',
+          'self.environment.current#/set/magnetic',
+        ]);
+        expect(pointerPaths(service.getPathsAndFieldsByType('object'))).toEqual([]);
+      });
+
+      it('escapes "/" and "~" in field names so the pointer resolves back to the field', () => {
+        pushMeta('sensors.odd', {
+          description: 'Odd keys',
+          properties: { 'a/b': { type: 'number', units: 'V' }, 'c~d': { type: 'number', units: 'A' } },
+        });
+
+        const paths = pointerPaths(service.getPathsAndFieldsByType('number'));
+        expect(paths).toEqual(['self.sensors.odd#/a~1b', 'self.sensors.odd#/c~0d']);
+        expect(paths.map(path => service.getPathUnitType(path))).toEqual(['V', 'A']);
+      });
+
+      it('offers no fields to supportsPut or zonesOnly requests', () => {
+        pushMeta('navigation.position', { ...POSITION_META, supportsPut: true, zones: [{ lower: 0, upper: 1, state: States.Alarm }] });
+
+        expect(pointerPaths(service.getPathsAndFieldsByType('number', true))).toEqual([]);
+        expect(pointerPaths(service.getPathsAndFieldsByType('number', false, true))).toEqual([]);
+      });
+
+      it('applies selfOnly to the base path', () => {
+        pushMeta('navigation.position', POSITION_META, 'vessels.urn:mrn:imo:mmsi:100000001');
+
+        expect(pointerPaths(service.getPathsAndFieldsByType('number'))).toEqual([]);
+        expect(pointerPaths(service.getPathsAndFieldsByType('number', false, false, false))).toContain(
+          'vessels.urn:mrn:imo:mmsi:100000001.navigation.position#/latitude',
+        );
+      });
+    });
+
+    describe('read-side lookups', () => {
+      it('answers unit and meta lookups from the field and value/source lookups from the base path', () => {
+        pushValue('navigation.position', { latitude: 60.1, longitude: 24.9 });
+        pushMeta('navigation.position', POSITION_META);
+
+        expect(service.getPathUnitType(`${POSITION}#/latitude`)).toBe('deg');
+        expect(service.getPathMeta(`${POSITION}#/latitude`)).toEqual({ type: 'number', units: 'deg', description: 'Latitude' });
+
+        const pathObject = service.getPathObject(`${POSITION}#/latitude`);
+        expect(pathObject?.path).toBe(POSITION);
+        expect(pathObject?.pathValue).toEqual({ latitude: 60.1, longitude: 24.9 });
+        expect(Object.keys(pathObject?.sources ?? {})).toEqual(['gps-1']);
+      });
+
+      it('returns null for a field the metadata does not declare, including inherited object keys', () => {
+        pushMeta('navigation.position', POSITION_META);
+
+        expect(service.getPathMeta(`${POSITION}#/speed`)).toBeNull();
+        expect(service.getPathUnitType(`${POSITION}#/speed`)).toBeNull();
+        expect(service.getPathMeta(`${POSITION}#/constructor`)).toBeNull();
+        expect(service.getPathMeta(`${POSITION}#/latitude/deeper`)).toBeNull();
+      });
+
+      it('never gives a field the base path displayUnits', () => {
+        pushMeta('navigation.position', {
+          ...POSITION_META,
+          displayUnits: { category: 'angle', targetUnit: 'rad' },
+        });
+
+        expect(service.getPathDisplayUnits(POSITION)?.targetUnit).toBe('rad');
+        expect(service.getPathDisplayUnits(`${POSITION}#/latitude`)).toBeUndefined();
+        expect(service.getPathMeta(`${POSITION}#/latitude`)?.displayUnits).toBeUndefined();
+      });
+
+      it('gives a field the display units the server preferences give its SI unit', () => {
+        const ATTITUDE_META: ISkMetadata = {
+          description: 'Attitude',
+          properties: { roll: { type: 'number', units: 'rad', description: 'Roll' } },
+        };
+        pushMeta('navigation.attitude', ATTITUDE_META);
+        displayUnits$.next(new Map([['rad', DEGREES]]));
+
+        expect(service.getPathDisplayUnits('self.navigation.attitude#/roll')).toEqual(DEGREES);
+        expect(service.getPathMeta('self.navigation.attitude#/roll')?.displayUnits).toEqual(DEGREES);
+      });
+
+      it('gives no display units to a field whose SI unit the preferences leave out', () => {
+        pushMeta('navigation.position', POSITION_META);
+        displayUnits$.next(new Map([['rad', DEGREES]]));
+
+        expect(service.getPathDisplayUnits(`${POSITION}#/altitude`)).toBeUndefined();
+      });
+
+      it('treats a malformed pointer path like an unknown path', () => {
+        pushValue('navigation.position', { latitude: 60.1, longitude: 24.9 });
+        pushMeta('navigation.position', POSITION_META);
+        const malformed = `${POSITION}#latitude`;
+
+        expect(service.getPathObject(malformed)).toBeNull();
+        expect(service.getPathMeta(malformed)).toBeNull();
+        expect(service.getPathUnitType(malformed)).toBeNull();
+        expect(service.getPathDisplayUnits(malformed)).toBeUndefined();
+
+        const metas: (ISkMetadata | null)[] = [];
+        service.getPathMetaObservable(malformed).subscribe(meta => metas.push(meta));
+        pushMeta('navigation.position', POSITION_META);
+        expect(metas).toEqual([null]);
+      });
+    });
+
+    describe('getPathMetaObservable', () => {
+      it('emits the field meta from the base path stream as base meta arrives and changes', () => {
+        const metas: (ISkMetadata | null)[] = [];
+        service.getPathMetaObservable(`${POSITION}#/latitude`).subscribe(meta => metas.push(meta));
+        expect(metas).toEqual([null]);
+
+        pushMeta('navigation.position', POSITION_META);
+        expect(metas.at(-1)).toEqual({ type: 'number', units: 'deg', description: 'Latitude' });
+
+        pushMeta('navigation.position', {
+          description: 'Position',
+          properties: { latitude: { type: 'number', units: 'deg', description: 'Geodetic latitude' } },
+        });
+        expect(metas).toHaveLength(3);
+        expect(metas.at(-1)?.description).toBe('Geodetic latitude');
+      });
+
+      it('emits null for a field the base meta does not declare', () => {
+        const metas: (ISkMetadata | null)[] = [];
+        service.getPathMetaObservable(`${POSITION}#/speed`).subscribe(meta => metas.push(meta));
+
+        pushMeta('navigation.position', POSITION_META);
+
+        expect(metas).toEqual([null, null]);
+      });
+
+      it('re-emits the field meta with display units when the server preferences load', () => {
+        pushMeta('navigation.position', POSITION_META);
+        const metas: (ISkMetadata | null)[] = [];
+        service.getPathMetaObservable(`${POSITION}#/latitude`).subscribe(meta => metas.push(meta));
+
+        displayUnits$.next(new Map([['deg', { category: 'angleDegrees', targetUnit: 'deg' }]]));
+
+        expect(metas).toHaveLength(2);
+        expect(metas[0]?.displayUnits).toBeUndefined();
+        expect(metas[1]?.displayUnits).toEqual({ category: 'angleDegrees', targetUnit: 'deg' });
+      });
+
+      it('seeds from base meta that is already cached', () => {
+        pushMeta('navigation.position', POSITION_META);
+
+        const metas: (ISkMetadata | null)[] = [];
+        service.getPathMetaObservable(`${POSITION}#/altitude`).subscribe(meta => metas.push(meta));
+
+        expect(metas).toEqual([{ type: 'number', units: 'm', description: 'Altitude' }]);
+      });
+    });
+  });
+
   it('derives path type from meta units when meta precedes the value', () => {
     metadataUpdates$.next({
       context: 'self',
@@ -1048,6 +1320,7 @@ describe('DataService REST meta backfill', () => {
           provide: SignalKConnectionService,
           useValue: { serverServiceEndpoint$: endpoint$, serverVersion$: new BehaviorSubject('2.27.0') },
         },
+        { provide: UnitPreferencesService, useValue: { displayUnits$: new BehaviorSubject(null) } },
       ],
     });
 
