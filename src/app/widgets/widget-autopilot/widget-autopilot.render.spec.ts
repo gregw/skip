@@ -12,6 +12,7 @@ import { SignalkRequestsService } from '../../core/services/signalk-requests.ser
 import { DashboardService } from '../../core/services/dashboard.service';
 import { UnitsService } from '../../core/services/units.service';
 import { DataService, IPathUpdate } from '../../core/services/data.service';
+import { WidgetService } from '../../core/services/widget.service';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 
 const DEG = Math.PI / 180;
@@ -99,6 +100,9 @@ describe('WidgetAutopilotComponent rendering from SI inputs', () => {
       imports: [WidgetAutopilotComponent],
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
+        // The embedded route readouts would lazy-load widget-numeric through the real WidgetService;
+        // on a slow runner that import lands after this file's environment is torn down.
+        { provide: WidgetService, useValue: { getComponentType: () => Promise.resolve(undefined) } },
         { provide: WidgetStreamsDirective, useValue: streamsMock },
         { provide: SignalkRequestsService, useValue: { subscribeRequest: () => EMPTY, putRequest: vi.fn() } },
         { provide: HttpClient, useValue: { post: vi.fn(() => of({ statusCode: 200 })), put: vi.fn(() => of({ statusCode: 200 })), delete: vi.fn(() => of({ statusCode: 200 })) } },
