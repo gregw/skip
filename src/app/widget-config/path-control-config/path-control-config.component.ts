@@ -18,6 +18,7 @@ import { SignalKConnectionService } from '../../core/services/signalk-connection
 import { IDynamicControl } from '../../core/interfaces/widgets-interface';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { IPathSlotRequirements, pathRequiredValidator, pathSlotWarning } from '../../core/utils/path-validators.util';
+import { pathOptionMeasure, presentationValue, presentedOption } from '../../core/utils/si-presentation.util';
 
 @Component({
     selector: 'path-control-config',
@@ -298,6 +299,11 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
     }
   }
 
+  /**
+   * Fills the widget's scale from the new path's meta scale, which is SI, in the unit the options
+   * dialog shows the new path's scale in; the dialog switches the fields to that unit. Without a
+   * meta scale the fields keep their numbers, and the dialog saves them from the new unit.
+   */
   private updatePathMetaBoundDisplayScale(path: string) {
     const pathFormGroup = this.pathFormGroup();
     if (!pathFormGroup.parent?.parent?.value || !Object.prototype.hasOwnProperty.call(pathFormGroup.parent.parent.value, 'displayScale')) { return; }
@@ -306,13 +312,14 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
     if (meta?.displayScale) {
       const displayScale = pathFormGroup.parent.parent.get('displayScale') as FormGroup | null;
       if (!displayScale) { return; }
-      const unit = pathFormGroup.controls['convertUnitTo'].value;
+      const unit = pathOptionMeasure(this._units, path, pathFormGroup.controls['convertUnitTo'].value);
+      const shown = (si: number) => presentedOption(presentationValue(this._units, unit, si));
 
       if (meta.displayScale.lower !== null && meta.displayScale.lower !== undefined) {
-        displayScale.controls['lower'].setValue(this._units.convertToUnit(unit, meta.displayScale.lower));
+        displayScale.controls['lower'].setValue(shown(meta.displayScale.lower));
       }
       if (meta.displayScale.upper !== null && meta.displayScale.upper !== undefined) {
-        displayScale.controls['upper'].setValue(this._units.convertToUnit(unit, meta.displayScale.upper));
+        displayScale.controls['upper'].setValue(shown(meta.displayScale.upper));
       }
       if (meta.displayScale.type !== null && meta.displayScale.type !== undefined){
         displayScale.controls['type'].setValue(meta.displayScale.type);

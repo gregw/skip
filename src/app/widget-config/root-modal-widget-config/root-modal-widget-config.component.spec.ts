@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { UntypedFormArray, UntypedFormControl, UntypedFormGroup, Validators } from '@angular/forms';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RootModalWidgetConfigComponent } from './root-modal-widget-config.component';
 import { IConversionPathList, UnitsService } from '../../core/services/units.service';
 import { AppService } from '../../core/services/app-service';
@@ -854,6 +854,8 @@ describe('ModalWidgetComponent scale bounds stored in SI', () => {
     vi.spyOn(data, 'getPathDisplayUnits').mockImplementation(path => metaOf(path).value?.displayUnits);
     vi.spyOn(data, 'getPathMeta').mockImplementation(path => metaOf(path).value);
     vi.spyOn(data, 'getPathMetaObservable').mockImplementation(path => metaOf(path).asObservable());
+    vi.spyOn(data, 'getPathObject').mockImplementation(path =>
+      metaOf(path).value ? { path, pathValue: null, pathTimestamp: '', type: 'number', state: 'normal', sources: {}, meta: metaOf(path).value! } as ReturnType<DataService['getPathObject']> : null);
     const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
     fixture.detectChanges();
     return fixture;
@@ -971,35 +973,44 @@ describe('ModalWidgetComponent scale bounds stored in SI', () => {
     expect(lastSaved().displayScale?.upper).toBe(400);
   });
 
-  it('on a re-point takes the unit of the new path and stores what the fields hold in it', () => {
-    metaOf(TEMPERATURE).next(meta('K', 'celsius'));
-    metaOf(RPM).next(meta('Hz', 'rpm', { lower: 0, upper: 60, type: 'linear' }));
-    const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'celsius', 273.15, 393.15));
-    // What path-control-config writes on a re-point: the new slot unit, then the meta scale in it.
-    slot(fixture, 'gaugePath').get('path')?.setValue(RPM);
-    slot(fixture, 'gaugePath').get('convertUnitTo')?.setValue('rpm');
-    scale(fixture).get('upper')?.setValue(3600);
-    // The lower bound reads 0 in both units: 0 rpm, not 0 °C.
-    expect(scale(fixture).get('lower')?.value).toBe(0);
-    expect(suffix(fixture, 'lower')).toBe('rpm');
+  describe('with the path picker', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
 
-    fixture.componentInstance.submitConfig();
-    expect(lastSaved().displayScale?.lower).toBe(0);
-    expect(lastSaved().displayScale?.upper).toBeCloseTo(60, 9);
-  });
+    const pick = async (fixture: ComponentFixture<RootModalWidgetConfigComponent>, slotName: string, path: string) => {
+      const control = slot(fixture, slotName).get('path')!;
+      control.markAsDirty();
+      control.setValue(path);
+      await vi.advanceTimersByTimeAsync(400);
+    };
 
-  it('keeps the numbers of a re-pointed numeric and stores them from the new unit', () => {
-    metaOf(SPEED).next(meta('m/s', 'knots'));
-    metaOf(DEPTH).next(meta('m', 'feet'));
-    const fixture = open('widget-numeric', numeric(SPEED, 'knots', 0, 5.144));
-    expect(fixture.componentInstance.formMaster.get('yScaleMax')?.value).toBeCloseTo(10, 2);
-    slot(fixture, 'numericPath').get('path')?.setValue(DEPTH);
-    slot(fixture, 'numericPath').get('convertUnitTo')?.setValue('feet');
-    expect(suffix(fixture, 'yScaleMax')).toBe('ft');
+    it('re-points a gauge from a celsius path to an rpm path: meta scale in rpm, saved in Hz', async () => {
+      metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+      metaOf(RPM).next(meta('Hz', 'rpm', { lower: 0, upper: 60, type: 'linear' }));
+      const fixture = open('widget-gauge-ng-radial', gauge(TEMPERATURE, 'celsius', 273.15, 393.15));
+      await pick(fixture, 'gaugePath', RPM);
+      expect(scale(fixture).get('lower')?.value).toBe(0);
+      expect(scale(fixture).get('upper')?.value).toBe(3600);
+      expect(suffix(fixture, 'upper')).toBe('rpm');
 
-    fixture.componentInstance.submitConfig();
-    const shown = fixture.componentInstance.formMaster.get('yScaleMax')?.value as number;
-    expect(lastSaved().yScaleMax).toBeCloseTo(shown * 0.3048, 6);
+      fixture.componentInstance.submitConfig();
+      // 0 °C was 273.15 K; the new lower bound is 0 rpm.
+      expect(lastSaved().displayScale?.lower).toBe(0);
+      expect(lastSaved().displayScale?.upper).toBeCloseTo(60, 9);
+    });
+
+    it('re-points a numeric to a path without meta scale: same numbers, new unit', async () => {
+      metaOf(SPEED).next(meta('m/s', 'knots'));
+      metaOf(DEPTH).next(meta('m', 'feet'));
+      const fixture = open('widget-numeric', numeric(SPEED, 'knots', 0, 5.144));
+      const shown = fixture.componentInstance.formMaster.get('yScaleMax')?.value as number;
+      await pick(fixture, 'numericPath', DEPTH);
+      expect(fixture.componentInstance.formMaster.get('yScaleMax')?.value).toBe(shown);
+      expect(suffix(fixture, 'yScaleMax')).toBe('ft');
+
+      fixture.componentInstance.submitConfig();
+      expect(lastSaved().yScaleMax).toBeCloseTo(shown * 0.3048, 6);
+    });
   });
 
   it("converts a data graph's y bounds with the unit of its path, also after a path change", () => {
