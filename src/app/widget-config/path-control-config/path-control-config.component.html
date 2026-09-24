@@ -67,6 +67,10 @@
           <mat-error>
             Path is required. Please enter a valid Signal K path.
           </mat-error>
+        } @else if (pathFormGroup().controls['path'].errors?.['pointer']) {
+          <mat-error>
+            After "#", write the field name starting with "/", for example "#/latitude".
+          </mat-error>
         }
         <mat-autocomplete #pathAutoComplete="matAutocomplete">
           @for (option of filteredPaths | async; track option.path) {

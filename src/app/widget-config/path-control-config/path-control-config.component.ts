@@ -17,7 +17,7 @@ import { compare } from 'compare-versions';
 import { SignalKConnectionService } from '../../core/services/signalk-connection.service';
 import { IDynamicControl } from '../../core/interfaces/widgets-interface';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { IPathSlotRequirements, pathRequiredValidator, pathSlotWarning } from '../../core/utils/path-validators.util';
+import { IPathSlotRequirements, pathPointerValidator, pathRequiredValidator, pathSlotWarning } from '../../core/utils/path-validators.util';
 import { pathOptionMeasure, presentationValue, presentedOption } from '../../core/utils/si-presentation.util';
 
 @Component({
@@ -77,7 +77,7 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
       this.showPathSkUnitsFilter = pathFormGroup.value.showPathSkUnitsFilter;
     }
 
-    pathFormGroup.controls['path'].setValidators([pathRequiredValidator]);
+    pathFormGroup.controls['path'].setValidators([pathRequiredValidator, pathPointerValidator]);
     pathFormGroup.controls['path'].updateValueAndValidity({onlySelf: true, emitEvent: false});
     this.refreshPathWarning();
     // Subscribe to pathRequired changes to re-validate path
@@ -141,7 +141,9 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
   /** Both the offered list and the path can move; recompute after either changes. */
   private refreshPathWarning(): void {
     const path = this.pathFormGroup().controls['path'].value;
-    this.pathWarning.set(pathSlotWarning(path, this._data.getPathObject(path), this.slotRequirements()));
+    this.pathWarning.set(path
+      ? pathSlotWarning(path, this._data.getPathObject(path), this.slotRequirements(), this._data.getPathMeta(path))
+      : null);
   }
 
   /** What this slot demands of a path — the filters behind both the offered list and the warning. */
@@ -173,7 +175,7 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
 
   private getPaths(): IPathMetaData[] {
     const req = this.slotRequirements();
-    return this._data.getPathsAndMetaByType(req.pathType, req.supportsPutOnly, req.zonesOnly, req.selfOnly).sort();
+    return this._data.getPathsAndFieldsByType(req.pathType, req.supportsPutOnly, req.zonesOnly, req.selfOnly).sort();
   }
 
   public filterPaths(searchString: string) {
@@ -235,7 +237,7 @@ export class PathControlConfigComponent implements OnInit, OnChanges {
   private enableFormFields(setValues?: boolean): void {
     const path = this.pathFormGroup().controls['path'].value;
     this._derivedForPath = path;
-    const pathObject = this._data.getPathObject(path);
+    const pathObject = path ? this._data.getPathObject(path) : null;
     if (pathObject != null) {
       const pathFormGroup = this.pathFormGroup();
       if (pathFormGroup.controls['pathType'].value == 'number') { // the dialog builds a convertUnitTo control only for a number slot that stores one
