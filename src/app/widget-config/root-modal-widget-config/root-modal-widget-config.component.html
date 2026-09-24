@@ -260,16 +260,16 @@
                   <mat-hint>Apparent wind is measured from the bow, so the direction reference does not apply to it.</mat-hint>
                 </mat-form-field>
               }
-              @if ((widgetConfig?.laylineEnable !== undefined)) {
+              @if ((widgetConfig?.closeHauledLineEnable !== undefined)) {
                 <mat-checkbox
                   class="fields"
-                  name="laylineEnable"
-                  formControlName="laylineEnable"
+                  name="closeHauledLineEnable"
+                  formControlName="closeHauledLineEnable"
                 >
                   Close-hauled Lines
                 </mat-checkbox>
               }
-              @if ((widgetConfig?.laylineEnable !== undefined)) {
+              @if ((widgetConfig?.closeHauledLineEnable !== undefined)) {
                 <mat-form-field>
                   <mat-label>Optimal Close-hauled Angle</mat-label>
                   <input
@@ -278,8 +278,8 @@
                     max="90"
                     matInput
                     placeholder="Select angle..."
-                    name="laylineAngle"
-                    formControlName="laylineAngle"
+                    name="closeHauledLineAngle"
+                    formControlName="closeHauledLineAngle"
                   />
                   <span matTextSuffix>&deg;</span>
                   <mat-hint>Close-hauled angle line locations, measured from the true wind angle.</mat-hint>

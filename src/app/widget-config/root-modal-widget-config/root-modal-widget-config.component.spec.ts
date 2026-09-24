@@ -14,6 +14,7 @@ import { WidgetAutopilotComponent } from '../../widgets/widget-autopilot/widget-
 import { WidgetSteelCompassComponent } from '../../widgets/widget-gauge-steel-compass/widget-gauge-steel-compass.component';
 import { WidgetSeaHorizonComponent } from '../../widgets/widget-sea-horizon/widget-sea-horizon.component';
 import { WidgetWindComponent } from '../../widgets/widget-windsteer/widget-windsteer.component';
+import { WidgetRacesteerComponent } from '../../widgets/widget-racesteer/widget-racesteer.component';
 import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
 import { DataService, IPathUpdate } from '../../core/services/data.service';
 import { signal } from '@angular/core';
@@ -553,6 +554,60 @@ describe('ModalWidgetComponent updateInterval Display-tab placement', () => {
   });
 });
 
+describe('ModalWidgetComponent options stored in SI', () => {
+  function open(config: IWidgetSvcConfig): ComponentFixture<RootModalWidgetConfigComponent> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [RootModalWidgetConfigComponent],
+      providers: [
+        UnitsService,
+        { provide: AppService, useValue: { configurableThemeColors: [] } },
+        { provide: MAT_DIALOG_DATA, useValue: config },
+        { provide: MatDialogRef, useValue: { close: vi.fn() } },
+        { provide: ActivePolarService, useValue: { status: signal({ kind: 'loading' }), message: signal(null), refreshIfFailed: () => undefined } }
+      ]
+    });
+    ensureTestIconsReady();
+    vi.spyOn(TestBed.inject(DataService), 'acquirePath').mockImplementation(() =>
+      ({ data$: new BehaviorSubject<IPathUpdate>({ data: { value: null, timestamp: null }, state: 'normal' } as IPathUpdate), release: () => undefined }));
+    const fixture = TestBed.createComponent(RootModalWidgetConfigComponent);
+    fixture.detectChanges();
+    return fixture;
+  }
+  const windsteer = (closeHauledLineAngle: number): IWidgetSvcConfig =>
+    ({ ...structuredClone(WidgetWindComponent.DEFAULT_CONFIG), closeHauledLineAngle, widgetName: 'Wind Steer' } as IWidgetSvcConfig);
+  const saved = (): IWidgetSvcConfig =>
+    ((TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>).mock.calls[0][0]) as IWidgetSvcConfig;
+
+  it('shows the close-hauled angle stored in rad in degrees', () => {
+    const fixture = open(windsteer(Math.PI / 4));
+    expect(fixture.componentInstance.formMaster.get('closeHauledLineAngle')?.value).toBe(45);
+    const input = fixture.nativeElement.querySelector('input[name="closeHauledLineAngle"]') as HTMLInputElement;
+    expect(Number(input.value)).toBe(45);
+  });
+
+  it('stores an entered angle in rad', () => {
+    const fixture = open(windsteer(Math.PI / 4));
+    fixture.componentInstance.formMaster.get('closeHauledLineAngle')?.setValue(50);
+    fixture.componentInstance.submitConfig();
+    expect(saved().closeHauledLineAngle).toBeCloseTo(50 * Math.PI / 180, 6);
+  });
+
+  it('leaves a stored angle bit-identical when the dialog is saved without editing it', () => {
+    const stored = 0.7; // 40.107045659... degrees: not a round trip through the rounded display value
+    const fixture = open(windsteer(stored));
+    expect(fixture.componentInstance.formMaster.get('closeHauledLineAngle')?.value).toBe(40.10704566);
+    fixture.componentInstance.submitConfig();
+    expect(saved().closeHauledLineAngle).toBe(stored);
+  });
+
+  it('shows no close-hauled section for a widget without the option', () => {
+    const fixture = open({ ...structuredClone(WidgetRacesteerComponent.DEFAULT_CONFIG), widgetName: 'Race Steer' } as IWidgetSvcConfig);
+    expect(fixture.nativeElement.querySelector('input[name="closeHauledLineAngle"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="closeHauledLineEnable"]')).toBeNull();
+  });
+});
+
 describe('ModalWidgetComponent polar overlay status', () => {
   const TWS = 'self.environment.wind.speedTrue';
   const WATER_TWA = 'self.environment.wind.angleTrueWater';
@@ -587,7 +642,7 @@ describe('ModalWidgetComponent polar overlay status', () => {
     TestBed.configureTestingModule({
       imports: [RootModalWidgetConfigComponent],
       providers: [
-        { provide: UnitsService, useValue: { getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }), skBaseUnits: [] } },
+        { provide: UnitsService, useValue: { getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }), skBaseUnits: [], convertToUnit: (unit: string, value: number) => unit === 'deg' ? value * 180 / Math.PI : value } },
         { provide: AppService, useValue: { configurableThemeColors: [] } },
         { provide: MAT_DIALOG_DATA, useValue: config },
         { provide: MatDialogRef, useValue: { close: vi.fn() } },

@@ -28,6 +28,53 @@ export const V16_MIGRATION_OUTPUT_VERSION = 16;
 export const V17_MIGRATION_OUTPUT_VERSION = 17;
 export const V18_MIGRATION_OUTPUT_VERSION = 18;
 export const V19_MIGRATION_OUTPUT_VERSION = 19;
+export const V20_MIGRATION_OUTPUT_VERSION = 20;
+
+/**
+ * The per-widget SI marker: the version of the last SI step whose shape a widget config is in.
+ * An SI step converts stored numbers to SI, which must happen exactly once per widget, and the
+ * app-config stamp cannot guarantee that: a tab still on an older build can lower the stamp or
+ * write back widget configs it loaded before the upgrade. So each SI step converts a widget only
+ * when this marker is below the step's version, runs on every load of every config copy, and
+ * marks what it processed. A widget's DEFAULT_CONFIG carries the marker of its latest SI step.
+ */
+export const SI_VERSION_KEY = 'siVersion';
+
+type WidgetConfigRecord = Record<string, unknown>;
+
+interface SiStep {
+  version: number;
+  types: ReadonlySet<string>;
+  /** Converts an unmarked widget config in place. */
+  convert(config: WidgetConfigRecord): void;
+  /** Pre-SI keys an older build can merge back into a marked config; deleted without being read. */
+  staleKeys: readonly string[];
+}
+
+// Frozen for this step: a released step's factors never change, so what it writes cannot drift
+// with the renderer's conversion table.
+const V20_RAD_PER_DEG = 0.017453292519943295;
+
+/**
+ * v20: Wind Steer's close-hauled options are renamed from the misnomer `layline…` (#616) and the
+ * angle is stored in rad instead of degrees.
+ */
+const V20_WINDSTEER_SI_STEP: SiStep = {
+  version: V20_MIGRATION_OUTPUT_VERSION,
+  types: new Set(['widget-wind-steer']),
+  staleKeys: ['laylineEnable', 'laylineAngle'],
+  convert(config) {
+    if (typeof config['laylineEnable'] === 'boolean') {
+      config['closeHauledLineEnable'] = config['laylineEnable'];
+    }
+    const angle = config['laylineAngle'];
+    if (typeof angle === 'number' && Number.isFinite(angle)) {
+      config['closeHauledLineAngle'] = angle * V20_RAD_PER_DEG;
+    }
+  }
+};
+
+const SI_STEPS: readonly SiStep[] = [V20_WINDSTEER_SI_STEP];
 
 /**
  * v17 -> v18 target shape for the wind-family widgets' swept paths, keyed by runtime widget `type`
@@ -148,9 +195,6 @@ export function migrateConfig(config: IConfig, sink: MigrationMessageSink): Conf
   if (typeof version !== 'number' || !Number.isInteger(version)) {
     throw new Error('This configuration has no recognizable version number.');
   }
-  if (version === LATEST_APP_CONFIG_VERSION) {
-    return { config, migrated: false };
-  }
   if (version > LATEST_APP_CONFIG_VERSION) {
     throw new Error(`This configuration is version ${version}, which is newer than this version of Skip supports (version ${LATEST_APP_CONFIG_VERSION}). Update Skip to use it.`);
   }
@@ -169,7 +213,46 @@ export function migrateConfig(config: IConfig, sink: MigrationMessageSink): Conf
     working = upgraded;
     current = nextVersion;
   }
-  return { config: working, migrated: true };
+  const siChanged = applySiSteps(working, sink);
+  return { config: working, migrated: version !== LATEST_APP_CONFIG_VERSION || siChanged };
+}
+
+/**
+ * Runs every SI step up to `upToVersion` over a config's widgets, in place, gated only by each
+ * widget's {@link SI_VERSION_KEY} marker and never by the app-config stamp. Every load of every
+ * config copy goes through here before any code merges widget defaults, which carry the latest
+ * marker, into a widget config. Returns whether anything changed.
+ */
+export function applySiSteps(config: IConfig, sink: MigrationMessageSink, upToVersion = Number.POSITIVE_INFINITY): boolean {
+  if (!Array.isArray(config.dashboards)) return false;
+  let converted = 0;
+  let cleaned = 0;
+  for (const dash of config.dashboards) {
+    if (!dash || !Array.isArray(dash.configuration)) continue;
+    for (const widget of dash.configuration) {
+      const wp = (widget as { input?: { widgetProperties?: { type?: unknown; config?: unknown } } })?.input?.widgetProperties;
+      if (!wp || typeof wp.type !== 'string' || !wp.config || typeof wp.config !== 'object') continue;
+      const cfg = wp.config as WidgetConfigRecord;
+      for (const step of SI_STEPS) {
+        if (step.version > upToVersion || !step.types.has(wp.type)) continue;
+        const marker = cfg[SI_VERSION_KEY];
+        if (typeof marker !== 'number' || marker < step.version) {
+          step.convert(cfg);
+          cfg[SI_VERSION_KEY] = step.version;
+          converted++;
+        }
+        for (const key of step.staleKeys) {
+          if (key in cfg) {
+            delete cfg[key];
+            cleaned++;
+          }
+        }
+      }
+    }
+  }
+  if (converted) sink.info(`[Upgrade] Converted ${converted} widget config(s) to SI units.`);
+  if (cleaned) sink.info(`[Upgrade] Removed ${cleaned} pre-SI option(s) from widget configs.`);
+  return converted > 0 || cleaned > 0;
 }
 
 // The dashboard entry shape the steps walk to reach a widget config.
@@ -209,6 +292,7 @@ export function migrateOneAppVersion(config: IConfig, fromVersion: number, sink:
     case 16: return upgradeConfigV16toV17(config, sink);
     case 17: return upgradeConfigV17toV18(config, sink);
     case 18: return upgradeConfigV18toV19(config, sink);
+    case 19: return upgradeConfigV19toV20(config, sink);
     default: return null;
   }
 }
@@ -665,6 +749,48 @@ function upgradeConfigV18toV19(config: IConfig, sink: MigrationMessageSink): ICo
     return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
   } catch (error) {
     sink.error(`[Upgrade Service] Error upgrading v18->v19: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * v19 -> v20: the first SI step, for Wind Steer (see V20_WINDSTEER_SI_STEP). Also deletes racesteer's
+ * `laylineEnable`/`laylineAngle`, which nothing in racesteer ever read.
+ */
+function upgradeConfigV19toV20(config: IConfig, sink: MigrationMessageSink): IConfig | null {
+  try {
+    const appConfig = config.app;
+    if (!appConfig || appConfig.configVersion !== 19) {
+      sink.error(`[Upgrade Service] Config version ${appConfig?.configVersion} is not an upgradable v19 config. Skipping...`);
+      return null;
+    }
+
+    applySiSteps(config, sink, V20_MIGRATION_OUTPUT_VERSION);
+
+    let removed = 0;
+    if (Array.isArray(config.dashboards)) {
+      for (const dash of config.dashboards) {
+        if (!dash || !Array.isArray(dash.configuration)) continue;
+        for (const widget of dash.configuration) {
+          const wp = (widget as { input?: { widgetProperties?: { type?: unknown; config?: WidgetConfigRecord } } })?.input?.widgetProperties;
+          if (!wp || wp.type !== 'widget-racesteer' || !wp.config) continue;
+          for (const key of ['laylineEnable', 'laylineAngle']) {
+            if (key in wp.config) {
+              delete wp.config[key];
+              removed++;
+            }
+          }
+        }
+      }
+    }
+    if (removed) {
+      sink.info(`[Upgrade] Removed ${removed} unused racesteer option(s).`);
+    }
+
+    appConfig.configVersion = V20_MIGRATION_OUTPUT_VERSION;
+    return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
+  } catch (error) {
+    sink.error(`[Upgrade Service] Error upgrading v19->v20: ${(error as Error).message}`);
     return null;
   }
 }

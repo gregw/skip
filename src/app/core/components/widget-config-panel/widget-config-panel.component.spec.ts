@@ -91,7 +91,7 @@ describe('WidgetConfigPanelComponent', () => {
   });
 
   it('merges the saved config onto the current default so upgrade-added fields stay editable', async () => {
-    const savedFromOldVersion = { laylineAngle: 30 }; // has the old field, lacks the new default field
+    const savedFromOldVersion = { windSectorWindowSeconds: 30 }; // has the old field, lacks the new default field
     h.connectExtension.mockResolvedValue({
       close: vi.fn(),
       call: vi.fn().mockResolvedValue({}),
@@ -101,14 +101,27 @@ describe('WidgetConfigPanelComponent', () => {
     const { openWidgetOptions, component } = setup({
       getWidgetName: () => 'Wind Steer',
       getComponentType: vi.fn(async () => { loaded = true; return {}; }),
-      getDefaultConfig: vi.fn(() => (loaded ? ({ laylineAngle: 40, waypointEnable: true } as IWidgetSvcConfig) : undefined))
+      getDefaultConfig: vi.fn(() => (loaded ? ({ windSectorWindowSeconds: 5, waypointEnable: true } as IWidgetSvcConfig) : undefined))
     } as unknown as Partial<WidgetService>);
 
     await component.ngOnInit();
 
     const config = configPassedTo(openWidgetOptions);
-    expect(config['laylineAngle']).toBe(30);   // saved overrides default
+    expect(config['windSectorWindowSeconds']).toBe(30); // saved overrides default
     expect(config['waypointEnable']).toBe(true); // new default field survives the merge (not saved-alone)
+  });
+
+  it('seeds the form from an unstamped Wind Steer tile with its close-hauled angle converted to rad', async () => {
+    hostWithState({ config: { laylineEnable: false, laylineAngle: 30 } });
+    const { openWidgetOptions, component } = setup(loadedWidget({ closeHauledLineEnable: true, closeHauledLineAngle: Math.PI / 4, siVersion: 20 }));
+
+    await component.ngOnInit();
+
+    const config = configPassedTo(openWidgetOptions);
+    expect(config['closeHauledLineEnable']).toBe(false);
+    expect(config['closeHauledLineAngle']).toBeCloseTo(30 * Math.PI / 180, 15);
+    expect(config['laylineAngle']).toBeUndefined();
+    expect(config['laylineEnable']).toBeUndefined();
   });
 
   function hostWithState(values: Record<string, unknown>) {
@@ -150,9 +163,9 @@ describe('WidgetConfigPanelComponent', () => {
   });
 
   it('saves the edited config stamped with the current version, which the tile then applies as saved', async () => {
-    const saved = { updateInterval: 2500 } as IWidgetSvcConfig;
+    const saved = { updateInterval: 2500, siVersion: 20 } as IWidgetSvcConfig;
     const set = hostWithState({ config: { updateInterval: 3000 } });
-    const { component } = setup(loadedWidget({ updateInterval: 1000 }), 'widget-wind-steer', saved);
+    const { component } = setup(loadedWidget({ updateInterval: 1000, siVersion: 20 }), 'widget-wind-steer', saved);
 
     await component.ngOnInit();
 
@@ -205,7 +218,7 @@ describe('WidgetConfigPanelComponent polar overlay status', () => {
           }
         },
         { provide: ActivePolarService, useValue: polar },
-        { provide: UnitsService, useValue: { getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }), skBaseUnits: [] } },
+        { provide: UnitsService, useValue: { getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }), skBaseUnits: [], convertToUnit: (unit: string, value: number) => unit === 'deg' ? value * 180 / Math.PI : value } },
         { provide: AppService, useValue: { configurableThemeColors: [] } }
       ]
     });

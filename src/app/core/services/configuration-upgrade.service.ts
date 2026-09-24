@@ -19,6 +19,7 @@ import {
   V17_MIGRATION_OUTPUT_VERSION,
   V18_MIGRATION_OUTPUT_VERSION,
   V19_MIGRATION_OUTPUT_VERSION,
+  V20_MIGRATION_OUTPUT_VERSION,
   migrateOneAppVersion,
   migrateUseNeedleToEnableNeedle,
   removeSplitShellConfigKeys
@@ -47,6 +48,9 @@ export class ConfigurationUpgradeService {
   // Upgrades target MIGRATION_OUTPUT_VERSION.
   private readonly legacyFileVersion = 9;
   private readonly legacyConfigVersion = 10;
+  // Holds each slot as it was at app-config v19, before the first step that converts stored numbers
+  // to SI: a Skip older than v20 reads those numbers in display units, so a downgrade restores from here.
+  private readonly v19BackupFileVersion = 19.99;
 
   // Static mapping of old widget.type to new selector values
   private static readonly widgetTypeToSelectorMap: Record<string, string> = {
@@ -339,6 +343,41 @@ export class ConfigurationUpgradeService {
         this.upgrading.set(false);
       }
 
+    } else if (version === 19) {
+      // Remote (Signal K) configs. v19 slots live in the same active file version as v11..v18.
+      try {
+        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
+        let activeHeldBack = false;
+
+        for (const item of configsList) {
+          try {
+            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
+            if (config?.app?.configVersion !== 19) continue;
+            if (!await this.backUpV19Once(item, config)) {
+              activeHeldBack ||= item.scope === 'user' && item.name === this._storage.sharedConfigName;
+              continue;
+            }
+            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V20_MIGRATION_OUTPUT_VERSION}.`);
+            const migratedConfig = migrateOneAppVersion(config, 19, this.sink);
+            if (!migratedConfig) continue;
+
+            await this._storage.setConfig(item.scope, item.name, migratedConfig);
+          } catch (error) {
+            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
+          }
+        }
+        if (activeHeldBack) {
+          // The active slot is still at v19, so a reload would run this upgrade again at once.
+          this.upgrading.set(false);
+          return;
+        }
+        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
+        setTimeout(() => this._settings.reloadApp(), 1500);
+      } catch (error) {
+        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
+        this.upgrading.set(false);
+      }
+
     } else {
       // LocalStorage upgrade path for config version 10
       const localStorageConfig: v10IConfig = {
@@ -366,6 +405,33 @@ export class ConfigurationUpgradeService {
       setLocalStorageItem(LOCAL_CONFIG_KEYS.themeConfig, JSON.stringify(transformedTheme));
       setTimeout(() => this._settings.reloadApp(), 1500);
       this.upgrading.set(false);
+    }
+  }
+
+  /**
+   * Saves a slot's v19 config to the backup file version unless a backup is already there, so a
+   * rerun of the upgrade cannot overwrite the original with converted numbers. Returns whether the
+   * slot may be upgraded: false when the backup location could not be read or written, in which
+   * case the slot stays at v19 and the upgrade retries on the next boot.
+   */
+  private async backUpV19Once(item: Config, config: IConfig): Promise<boolean> {
+    try {
+      const existing = await this._storage.getConfig(item.scope, item.name, this.v19BackupFileVersion);
+      // A slot never written can also come back as an appless 200, which means "none" as a 404 does.
+      if (existing?.app) return true;
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 404) {
+        this.pushError(`[Upgrade] Cannot read the backup of ${item.scope}/${item.name}; leaving it at version 19. Details: ${(error as Error).message}`);
+        return false;
+      }
+    }
+    try {
+      this.pushMsg(`[Upgrade] Saving configuration backup to file ${item.scope}/${item.name}...`);
+      await this._storage.setConfig(item.scope, item.name, cloneDeep(config), this.v19BackupFileVersion);
+      return true;
+    } catch (error) {
+      this.pushError(`[Upgrade] Cannot save the backup of ${item.scope}/${item.name}; leaving it at version 19. Details: ${(error as Error).message}`);
+      return false;
     }
   }
 

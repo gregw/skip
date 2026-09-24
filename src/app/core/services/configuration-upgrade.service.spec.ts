@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigurationUpgradeService } from './configuration-upgrade.service';
 import { StorageService } from './storage.service';
 import { SettingsService } from './settings.service';
@@ -9,6 +9,7 @@ describe('ConfigurationUpgradeService', () => {
 
     const mockStorage = {
         initConfig: null,
+        sharedConfigName: 'default',
         listConfigs: vi.fn().mockResolvedValue([]),
         getConfig: vi.fn().mockResolvedValue(null),
         setConfig: vi.fn().mockResolvedValue(undefined),
@@ -874,6 +875,123 @@ describe('ConfigurationUpgradeService', () => {
         mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 17 }, theme: { themeName: '' }, dashboards: [] });
         await service.runUpgrade(18);
         expect(mockStorage.setConfig).not.toHaveBeenCalled();
+    });
+
+    describe('v19 upgrade (first SI step)', () => {
+        const BACKUP = 19.99;
+        const v19Slot = () => ({
+            app: { configVersion: 19 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', configuration: [
+                { input: { widgetProperties: { type: 'widget-wind-steer', config: { laylineEnable: true, laylineAngle: 40 } } } }
+            ] }]
+        });
+        // The slot at the active file version, and the backup location answering as given.
+        const serve = (backup: () => Promise<unknown>) => {
+            mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+            mockStorage.getConfig.mockImplementation((_scope: string, _name: string, version?: number) =>
+                version === BACKUP ? backup() : Promise.resolve(v19Slot()));
+        };
+        const notFound = () => Promise.reject(Object.assign(new Error('Not Found'), { status: 404 }));
+
+        afterEach(() => mockStorage.getConfig.mockReset().mockResolvedValue(null));
+
+        it('saves the v19 config to the backup file, then writes the slot converted and stamped v20', async () => {
+            serve(notFound);
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(2);
+            expect(mockStorage.setConfig.mock.calls[0]).toEqual(['user', 'default', v19Slot(), BACKUP]);
+            const written = mockStorage.setConfig.mock.calls[1][2];
+            expect(mockStorage.setConfig.mock.calls[1]).toHaveLength(3);
+            expect(written.app.configVersion).toBe(20);
+            expect(written.dashboards[0].configuration[0].input.widgetProperties.config)
+                .toEqual({ closeHauledLineEnable: true, closeHauledLineAngle: 40 * Math.PI / 180, siVersion: 20 });
+        });
+
+        it('keeps an existing backup: a rerun never overwrites it', async () => {
+            serve(() => Promise.resolve({ app: { configVersion: 19 }, theme: { themeName: '' }, dashboards: [] }));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+            expect(mockStorage.setConfig.mock.calls[0][3]).toBeUndefined();
+            expect(mockStorage.setConfig.mock.calls[0][2].app.configVersion).toBe(20);
+        });
+
+        it('treats an appless backup body as no backup', async () => {
+            serve(() => Promise.resolve({}));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig.mock.calls[0][3]).toBe(BACKUP);
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(2);
+        });
+
+        it('leaves a slot at v19 when the backup location cannot be read', async () => {
+            serve(() => Promise.reject(Object.assign(new Error('Server Error'), { status: 500 })));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).not.toHaveBeenCalled();
+            expect(service.error()).toContain('leaving it at version 19');
+        });
+
+        it('does not reload when the active slot is held back, so the upgrade cannot loop', async () => {
+            vi.useFakeTimers();
+            try {
+                serve(() => Promise.reject(Object.assign(new Error('Server Error'), { status: 500 })));
+
+                await service.runUpgrade(19);
+                vi.advanceTimersByTime(1500);
+
+                expect(mockAppSettings.reloadApp).not.toHaveBeenCalled();
+                expect(service.upgrading()).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('still reloads when only another slot is held back', async () => {
+            vi.useFakeTimers();
+            try {
+                mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }, { scope: 'user', name: 'night' }]);
+                mockStorage.getConfig.mockImplementation((_scope: string, name: string, version?: number) => {
+                    if (version !== BACKUP) return Promise.resolve(v19Slot());
+                    return name === 'night'
+                        ? Promise.reject(Object.assign(new Error('Server Error'), { status: 500 }))
+                        : notFound();
+                });
+
+                await service.runUpgrade(19);
+                vi.advanceTimersByTime(1500);
+
+                expect(mockStorage.setConfig.mock.calls.map(call => [call[1], call[3]])).toEqual([['default', BACKUP], ['default', undefined]]);
+                expect(mockAppSettings.reloadApp).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('leaves a slot at v19 when the backup cannot be saved', async () => {
+            serve(notFound);
+            mockStorage.setConfig.mockRejectedValueOnce(new Error('write failed'));
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+            expect(service.error()).toContain('leaving it at version 19');
+        });
+
+        it('skips a slot that is not at version 19, without backing it up', async () => {
+            mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+            mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 18 }, theme: { themeName: '' }, dashboards: [] });
+
+            await service.runUpgrade(19);
+
+            expect(mockStorage.setConfig).not.toHaveBeenCalled();
+        });
     });
 
     it('startFresh retires BOTH global and user legacy configs via an awaited write before resetting', async () => {

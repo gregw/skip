@@ -95,6 +95,11 @@ export interface WidgetSchemaEntry extends WidgetCatalogEntry {
   defaultConfig: Record<string, unknown>;
   /** Data slots for `paths-record` widgets; empty for every other binding kind. */
   pathSlots: PathSlot[];
+  /**
+   * The unit each listed option of `defaultConfig` is stored in, keyed by option name, from the
+   * widget's static OPTION_UNITS. Absent when the widget declares none.
+   */
+  optionUnits?: Record<string, string>;
 }
 
 /** A named widget colour token (Skip's `configurableThemeColors`). */

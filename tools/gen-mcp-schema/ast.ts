@@ -284,6 +284,19 @@ export function findStaticPropertyInitializer(
   className: string,
   propName: string,
 ): ts.Expression {
+  const initializer = findOptionalStaticPropertyInitializer(sourceFile, className, propName);
+  if (!initializer) {
+    throw new Error(`Could not find static "${propName}" on class "${className}" in ${sourceFile.fileName}`);
+  }
+  return initializer;
+}
+
+/** As {@link findStaticPropertyInitializer}, but undefined when the class declares no such static. */
+export function findOptionalStaticPropertyInitializer(
+  sourceFile: ts.SourceFile,
+  className: string,
+  propName: string,
+): ts.Expression | undefined {
   let initializer: ts.Expression | undefined;
 
   const visit = (node: ts.Node): void => {
@@ -306,8 +319,5 @@ export function findStaticPropertyInitializer(
   };
 
   visit(sourceFile);
-  if (!initializer) {
-    throw new Error(`Could not find static "${propName}" on class "${className}" in ${sourceFile.fileName}`);
-  }
   return initializer;
 }

@@ -10,6 +10,13 @@ export const POLAR_OVERLAY_PEAK_RADIUS = 300;
 /** The dial radius, in viewBox units, and so the outer limit of the overlay. */
 export const POLAR_OVERLAY_DIAL_RADIUS = 350;
 
+/** An angle given in rad, in degrees; undefined stays undefined. */
+function toDegrees(rad: number): number;
+function toDegrees(rad: number | undefined): number | undefined;
+function toDegrees(rad: number | undefined): number | undefined {
+  return rad == null ? undefined : rad * 180 / Math.PI;
+}
+
 const angle = ([a, b], [c, d], [e, f]) => (Math.atan2(f - d, e - c) - Math.atan2(b - d, a - c) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
 
 interface ISVGRotationObject {
@@ -33,6 +40,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly cogIndicator = viewChild.required<ElementRef<SVGGElement>>('cogIndicator');
   protected readonly polarOverlay = viewChild.required<ElementRef<SVGGElement>>('polarOverlay');
 
+  // Angles are in rad, speeds are in their presentation unit.
   protected readonly compassHeading = input.required<number>();
   protected readonly compassModeEnabled = input.required<boolean>();
   protected readonly updateInterval = input<number | undefined>(undefined);
@@ -49,7 +57,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly awsEnabled = input.required<boolean>();
   protected readonly appWindSpeed = input.required<number>();
   protected readonly appWindSpeedUnit = input.required<string>();
-  protected readonly laylineAngle = input<number | undefined>(undefined);
+  protected readonly closeHauledLineAngle = input<number | undefined>(undefined);
   protected readonly closeHauledLineEnabled = input.required<boolean>();
   protected readonly sailSetupEnabled = input.required<boolean>();
   protected readonly windSectorEnabled = input.required<boolean>();
@@ -63,7 +71,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly trueWindMinHistoric = input<number | undefined>(undefined);
   protected readonly trueWindMidHistoric = input<number | undefined>(undefined);
   protected readonly trueWindMaxHistoric = input<number | undefined>(undefined);
-  // Rudder-angle bar: signed degrees, +ve = starboard (right). null hides the bar.
+  // Rudder-angle bar: signed rad, +ve = starboard (right). null hides the bar.
   protected readonly rudderAngle = input<number | null>(null);
   protected readonly rudderEnabled = input<boolean>(false);
   // Per-path data freshness: false once a path has had no valid sample within the TTL, so the
@@ -83,6 +91,20 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly polarCurveRotation = input<number>(0);
   protected readonly vmcCurve = input<OverlayPoint[] | null>(null);
   protected readonly overlayDotRadius = input<number | null>(null);
+
+  // Angle inputs arrive in rad; the rotation attributes and dial geometry below work in degrees.
+  private readonly compassHeadingDeg = computed(() => toDegrees(this.compassHeading()));
+  private readonly courseOverGroundDeg = computed(() => toDegrees(this.courseOverGroundAngle()));
+  private readonly trueWindAngleDeg = computed(() => toDegrees(this.trueWindAngle()));
+  private readonly appWindAngleDeg = computed(() => toDegrees(this.appWindAngle()));
+  private readonly closeHauledLineAngleDeg = computed(() => toDegrees(this.closeHauledLineAngle()));
+  private readonly driftSetDeg = computed(() => toDegrees(this.driftSet()));
+  private readonly waypointAngleDeg = computed(() => toDegrees(this.waypointAngle()));
+  private readonly trueWindMinHistoricDeg = computed(() => toDegrees(this.trueWindMinHistoric()));
+  private readonly trueWindMidHistoricDeg = computed(() => toDegrees(this.trueWindMidHistoric()));
+  private readonly trueWindMaxHistoricDeg = computed(() => toDegrees(this.trueWindMaxHistoric()));
+  private readonly rudderAngleDeg = computed(() => { const a = this.rudderAngle(); return a == null ? null : toDegrees(a); });
+  private readonly polarCurveRotationDeg = computed(() => toDegrees(this.polarCurveRotation()));
 
   protected compass: ISVGRotationObject = { oldValue: 0, newValue: 0 };
   protected twa: ISVGRotationObject = { oldValue: 0, newValue: 0 };
@@ -118,11 +140,11 @@ export class SvgWindsteerComponent implements OnDestroy {
     return this.polarOverlayMode() !== 'hidden' && r != null && Number.isFinite(r) ? this.CENTER - r : null;
   });
 
-  //laylines - Close-Hauled lines
-  private portLaylinePrev = 0;
-  private stbdLaylinePrev = 0;
-  private portLaylineAnimId: number | null = null;
-  private stbdLaylineAnimId: number | null = null;
+  // Close-hauled lines
+  private portCloseHauledLinePrev = 0;
+  private stbdCloseHauledLinePrev = 0;
+  private portCloseHauledLineAnimId: number | null = null;
+  private stbdCloseHauledLineAnimId: number | null = null;
   protected closeHauledLinePortPath = signal<string>("M 500,500 500,500");
   protected closeHauledLineStbdPath = signal<string>("M 500,500 500,500");
   //WindSectors
@@ -153,7 +175,7 @@ export class SvgWindsteerComponent implements OnDestroy {
 
   private rudderDashOffset(starboard: boolean): number {
     if (!this.rudderEnabled()) return 100;
-    const angle = this.rudderAngle();
+    const angle = this.rudderAngleDeg();
     if (angle == null || !Number.isFinite(angle)) return 100;
     const magnitude = starboard ? Math.max(angle, 0) : Math.max(-angle, 0);
     const fraction = Math.min(magnitude, this.RUDDER_MAX_DEG) / this.RUDDER_MAX_DEG;
@@ -169,7 +191,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   constructor() {
     effect(() => {
       const modeEnabled = this.compassModeEnabled();
-      const rawHeading = this.compassHeading();
+      const rawHeading = this.compassHeadingDeg();
       const heading = Number.isFinite(rawHeading) ? Math.round(rawHeading as number) : null;
       if (heading == null) return;
 
@@ -191,7 +213,7 @@ export class SvgWindsteerComponent implements OnDestroy {
           } else {
             animateRotation(this.rotatingDial().nativeElement, -this.compass.oldValue, -this.compass.newValue, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
           }
-          // Heading affects dial-local geometry for laylines and sectors; refresh without animation
+          // Heading affects dial-local geometry for close-hauled lines and sectors; refresh without animation
           this.updateCloseHauledLines(false);
           this.updateWindSectors(false);
         }
@@ -199,7 +221,7 @@ export class SvgWindsteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const raw = this.courseOverGroundAngle();
+      const raw = this.courseOverGroundDeg();
       const cogAngle = Number.isFinite(raw as number) ? Math.round(raw as number) : null;
       const modeEnabled = this.compassModeEnabled();
       if (cogAngle == null) return;
@@ -227,7 +249,7 @@ export class SvgWindsteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const wptAngle = this.waypointAngle();
+      const wptAngle = this.waypointAngleDeg();
 
       untracked(() => {
         if (wptAngle == null || !Number.isFinite(wptAngle)) {
@@ -253,7 +275,7 @@ export class SvgWindsteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const raw = this.appWindAngle();
+      const raw = this.appWindAngleDeg();
       const appWindAngle = Number.isFinite(raw as number) ? Math.round(raw as number) : null;
       if (appWindAngle == null) return;
 
@@ -278,7 +300,7 @@ export class SvgWindsteerComponent implements OnDestroy {
     });
 
     effect(() => {
-      const raw = this.trueWindAngle();
+      const raw = this.trueWindAngleDeg();
       const trueWindAngle = Number.isFinite(raw as number) ? Math.round(raw as number) : null;
       const modeEnabled = this.compassModeEnabled();
       if (trueWindAngle == null) return;
@@ -303,23 +325,23 @@ export class SvgWindsteerComponent implements OnDestroy {
             animateRotation(this.twaIndicator().nativeElement, this.twa.oldValue, this.twa.newValue, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
           }
         }
-        // Laylines are centered on the true wind; recompute whenever TWA changes
+        // Close-hauled lines are centered on the true wind; recompute whenever TWA changes
         this.updateCloseHauledLines(!isFirstTwa);
       });
     });
 
-    // Recompute laylines when laylineAngle changes
+    // Recompute the close-hauled lines when their angle changes
     effect(() => {
       // read to establish dependency
-      void this.laylineAngle();
+      void this.closeHauledLineAngleDeg();
       if (!this.closeHauledLineEnabled()) return;
       untracked(() => this.updateCloseHauledLines());
     });
 
     // The set arrow sits outside the rotating dial, so it takes the heading itself to stay heading-up.
     effect(() => {
-      const rawSet = this.driftSet();
-      const rawHeading = this.compassHeading();
+      const rawSet = this.driftSetDeg();
+      const rawHeading = this.compassHeadingDeg();
       if (!Number.isFinite(rawSet as number) || !Number.isFinite(rawHeading)) return;
       const relativeSet = this.addHeading(Math.round(rawSet as number), -Math.round(rawHeading));
 
@@ -345,7 +367,7 @@ export class SvgWindsteerComponent implements OnDestroy {
 
     // The polar curve turns with the water TWA, eased like the true-wind pointer so the two move together.
     effect(() => {
-      const raw = this.polarCurveRotation();
+      const raw = this.polarCurveRotationDeg();
       if (!Number.isFinite(raw)) return;
       const rotation = this.addHeading(Math.round(raw), 0);
 
@@ -364,14 +386,14 @@ export class SvgWindsteerComponent implements OnDestroy {
       });
     });
 
-    // Ensure wind sectors update on min/mid/max or layline changes, and clear when disabled
+    // Ensure wind sectors update on min/mid/max or close-hauled angle changes, and clear when disabled
     effect(() => {
       const enabled = this.windSectorEnabled();
       // establish dependencies without unused vars warnings
-      void this.trueWindMinHistoric();
-      void this.trueWindMidHistoric();
-      void this.trueWindMaxHistoric();
-      void this.laylineAngle();
+      void this.trueWindMinHistoricDeg();
+      void this.trueWindMidHistoricDeg();
+      void this.trueWindMaxHistoricDeg();
+      void this.closeHauledLineAngleDeg();
 
       untracked(() => {
         if (!enabled) {
@@ -399,34 +421,34 @@ export class SvgWindsteerComponent implements OnDestroy {
   private updateCloseHauledLines(animate = true): void {
     if (!this.closeHauledLineEnabled()) return;
 
-    // Close-hauled lines straddle the true wind: boat-relative TWA ± laylineAngle.
+    // Close-hauled lines straddle the true wind: boat-relative TWA ± the close-hauled angle.
     const base = Number(this.twa.newValue) || 0;
-    const lay = Number(this.laylineAngle()) || 0;
+    const lay = Number(this.closeHauledLineAngleDeg()) || 0;
 
-    const portLaylineRotate = this.toDialLocal(this.addHeading(base, lay * -1));
-    this.animateLayline(this.portLaylinePrev, portLaylineRotate, true, animate);
-    this.portLaylinePrev = portLaylineRotate;
+    const portRotate = this.toDialLocal(this.addHeading(base, lay * -1));
+    this.animateCloseHauledLine(this.portCloseHauledLinePrev, portRotate, true, animate);
+    this.portCloseHauledLinePrev = portRotate;
 
-    const stbdLaylineRotate = this.toDialLocal(this.addHeading(base, lay));
-    this.animateLayline(this.stbdLaylinePrev, stbdLaylineRotate, false, animate);
-    this.stbdLaylinePrev = stbdLaylineRotate;
+    const stbdRotate = this.toDialLocal(this.addHeading(base, lay));
+    this.animateCloseHauledLine(this.stbdCloseHauledLinePrev, stbdRotate, false, animate);
+    this.stbdCloseHauledLinePrev = stbdRotate;
   }
 
-  private animateLayline(from: number, to: number, isPort: boolean, withAnim = true) {
-    // Cancel any previous animation for this layline
-    if (isPort && this.portLaylineAnimId) cancelAnimationFrame(this.portLaylineAnimId);
-    if (!isPort && this.stbdLaylineAnimId) cancelAnimationFrame(this.stbdLaylineAnimId);
+  private animateCloseHauledLine(from: number, to: number, isPort: boolean, withAnim = true) {
+    // Cancel any previous animation for this line
+    if (isPort && this.portCloseHauledLineAnimId) cancelAnimationFrame(this.portCloseHauledLineAnimId);
+    if (!isPort && this.stbdCloseHauledLineAnimId) cancelAnimationFrame(this.stbdCloseHauledLineAnimId);
 
     // Gate tiny animations
     if (this.angleDelta(from, to) < this.EPS_ANGLE) {
-      this.drawLayline(to, isPort);
-      if (isPort) this.portLaylineAnimId = null; else this.stbdLaylineAnimId = null;
+      this.drawCloseHauledLine(to, isPort);
+      if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null;
       return;
     }
 
   if (!withAnim) {
-      this.drawLayline(to, isPort);
-      if (isPort) this.portLaylineAnimId = null; else this.stbdLaylineAnimId = null;
+      this.drawCloseHauledLine(to, isPort);
+      if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null;
       return;
     }
 
@@ -434,11 +456,11 @@ export class SvgWindsteerComponent implements OnDestroy {
       from,
       to,
       this.animationDuration(),
-      angle => this.drawLayline(angle, isPort),
-      () => { if (isPort) this.portLaylineAnimId = null; else this.stbdLaylineAnimId = null; },
+      angle => this.drawCloseHauledLine(angle, isPort),
+      () => { if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null; },
       this.ngZone
     );
-    if (isPort) this.portLaylineAnimId = id; else this.stbdLaylineAnimId = id;
+    if (isPort) this.portCloseHauledLineAnimId = id; else this.stbdCloseHauledLineAnimId = id;
   }
 
   /** Project a dial angle (degrees, 0 = up) onto the dial circle. Unrounded; callers round if needed. */
@@ -458,7 +480,7 @@ export class SvgWindsteerComponent implements OnDestroy {
     return `M ${coords.join(' L ')}${closed ? ' Z' : ''}`;
   }
 
-  private drawLayline(angleDeg: number, isPort: boolean) {
+  private drawCloseHauledLine(angleDeg: number, isPort: boolean) {
     const [px, py] = this.dialPoint(angleDeg);
     const x = Math.floor(px);
     const y = Math.floor(py);
@@ -472,9 +494,9 @@ export class SvgWindsteerComponent implements OnDestroy {
   private windSectorsInitialized = false;
 
   private updateWindSectors(animate = true) {
-    const min = this.trueWindMinHistoric();
-    const mid = this.trueWindMidHistoric();
-    const max = this.trueWindMaxHistoric();
+    const min = this.trueWindMinHistoricDeg();
+    const mid = this.trueWindMidHistoricDeg();
+    const max = this.trueWindMaxHistoricDeg();
     if (
       !this.windSectorEnabled() ||
       min == null ||
@@ -575,11 +597,11 @@ export class SvgWindsteerComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    // Cancel layline animations
-    if (this.portLaylineAnimId) cancelAnimationFrame(this.portLaylineAnimId);
-    if (this.stbdLaylineAnimId) cancelAnimationFrame(this.stbdLaylineAnimId);
-    this.portLaylineAnimId = null;
-    this.stbdLaylineAnimId = null;
+    // Cancel close-hauled line animations
+    if (this.portCloseHauledLineAnimId) cancelAnimationFrame(this.portCloseHauledLineAnimId);
+    if (this.stbdCloseHauledLineAnimId) cancelAnimationFrame(this.stbdCloseHauledLineAnimId);
+    this.portCloseHauledLineAnimId = null;
+    this.stbdCloseHauledLineAnimId = null;
 
     // Cancel wind sector animations
     if (this.portSectorAnimId) cancelAnimationFrame(this.portSectorAnimId);
@@ -612,12 +634,12 @@ export class SvgWindsteerComponent implements OnDestroy {
   }
 
   private computeSectorPath(state: { min: number, mid: number, max: number }, isPort: boolean): string {
-    const lay = Number(this.laylineAngle()) || 0;
+    const lay = Number(this.closeHauledLineAngleDeg()) || 0;
     const offset = lay * (isPort ? -1 : 1);
     // Sector min/mid/max are the true wind DIRECTION (absolute compass). Convert to boat-relative
     // using the actual boat heading -- not compass.newValue, which the dial forces to 0 in simple
     // mode -- then place in the dial's local frame via toDialLocal.
-    const heading = Number(this.compassHeading()) || 0;
+    const heading = Number(this.compassHeadingDeg()) || 0;
     const minAngle = this.toDialLocal(this.addHeading(this.addHeading(state.min, -heading), offset));
     const midAngle = this.toDialLocal(this.addHeading(this.addHeading(state.mid, -heading), offset));
     const maxAngle = this.toDialLocal(this.addHeading(this.addHeading(state.max, -heading), offset));
