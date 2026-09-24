@@ -52,6 +52,17 @@ const THEME_NAMES: readonly string[] = ['', 'light-theme', 'night-theme'];
 const SCHEMA_VERSION = 1;
 
 /**
+ * Skip converts a widget config without the SI marker as if it held the units used before the
+ * options moved to SI, so a config written in the published units must carry the marker.
+ */
+const OPTION_UNITS_RULE =
+  "A widget's optionUnits maps an option, named by its dotted path inside the widget config, to the unit it is " +
+  'stored in; for an array option the unit applies to each element. A widget config that holds any of these ' +
+  "options must also carry siVersion set to the widget's defaultConfig.siVersion. Skip reads a widget config " +
+  'without siVersion as holding the older, pre-SI units and converts it, so SI values written without the marker ' +
+  'are converted a second time.';
+
+/**
  * Extracts Skip's widget catalog (`_widgetDefinition`) from widget.service.ts.
  *
  * Only the active (non-commented-out) widget definitions are returned, sorted by
@@ -300,6 +311,7 @@ export function buildSchema(opts: GenerateOptions): SkipDashboardSchema {
       skipVersion: readSkipVersion(opts.projectRoot),
       configFileVersion: versions.fileVersion,
       configVersion: versions.appVersion,
+      optionUnitsRule: OPTION_UNITS_RULE,
     },
     widgets: extractWidgetSchemas(opts),
     designSystem: extractDesignSystem(opts),

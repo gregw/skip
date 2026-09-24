@@ -21,3 +21,13 @@ export function toDegrees(rad: number | null | undefined): number | null | undef
 export function presentationValue(units: Pick<UnitsService, 'convertToUnit'>, measure: string, si: number): number {
   return measure && measure !== 'unitless' ? (units.convertToUnit(measure, si) ?? si) : si;
 }
+
+// Significant digits an SI-stored option is presented with: enough to drop the float noise of a
+// unit round trip (120 °C through K and back shows 120, not 119.99999999999997; 30° through rad
+// shows 30, not 29.999999999999996).
+const SI_OPTION_DISPLAY_DIGITS = 10;
+
+/** An SI-stored option converted to its presentation unit, as the user entered it. */
+export function presentedOption(converted: number): number {
+  return Number(converted.toPrecision(SI_OPTION_DISPLAY_DIGITS));
+}

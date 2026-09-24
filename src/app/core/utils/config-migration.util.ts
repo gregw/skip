@@ -4,7 +4,7 @@
  * and config panel migrate tile configs without the dashboard stack. ConfigurationUpgradeService
  * runs the same steps persistently over the stored slots.
  */
-import { cloneDeep } from 'lodash-es';
+import { cloneDeep, has, unset } from 'lodash-es';
 import type { IAppConfig, IConfig } from '../interfaces/app-settings.interfaces';
 import type { Dashboard } from '../services/dashboard.service';
 import { DEFAULT_WIDGET_UPDATE_INTERVAL_MS, IWidgetSvcConfig } from '../interfaces/widgets-interface';
@@ -29,6 +29,7 @@ export const V17_MIGRATION_OUTPUT_VERSION = 17;
 export const V18_MIGRATION_OUTPUT_VERSION = 18;
 export const V19_MIGRATION_OUTPUT_VERSION = 19;
 export const V20_MIGRATION_OUTPUT_VERSION = 20;
+export const V21_MIGRATION_OUTPUT_VERSION = 21;
 
 /**
  * The per-widget SI marker: the version of the last SI step whose shape a widget config is in.
@@ -47,9 +48,15 @@ interface SiStep {
   types: ReadonlySet<string>;
   /** Converts an unmarked widget config in place. */
   convert(config: WidgetConfigRecord): void;
-  /** Pre-SI keys an older build can merge back into a marked config; deleted without being read. */
+  /**
+   * Pre-SI keys an older build can merge back into a marked config; deleted without being read.
+   * Each is a property path from the widget config root, dotted for a nested option.
+   */
   staleKeys: readonly string[];
 }
+
+const isRecord = (value: unknown): value is WidgetConfigRecord =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // Frozen for this step: a released step's factors never change, so what it writes cannot drift
 // with the renderer's conversion table.
@@ -74,7 +81,51 @@ const V20_WINDSTEER_SI_STEP: SiStep = {
   }
 };
 
-const SI_STEPS: readonly SiStep[] = [V20_WINDSTEER_SI_STEP];
+// Frozen for the v21 steps, whatever later steps or the renderer's table use.
+const V21_RAD_PER_DEG = 0.017453292519943295;
+const V21_METRES_PER_NM = 1852;
+const V21_SECONDS_PER_MINUTE = 60;
+
+/** v21: Sea Horizon's heel caution and alarm angles are stored in rad instead of degrees. */
+const V21_SEA_HORIZON_SI_STEP: SiStep = {
+  version: V21_MIGRATION_OUTPUT_VERSION,
+  types: new Set(['widget-sea-horizon']),
+  staleKeys: [],
+  convert(config) {
+    const gauge = config['gauge'];
+    if (!isRecord(gauge)) return;
+    for (const key of ['heelCautionAngle', 'heelAlarmAngle']) {
+      const angle = gauge[key];
+      if (typeof angle === 'number' && Number.isFinite(angle)) {
+        gauge[key] = angle * V21_RAD_PER_DEG;
+      }
+    }
+  }
+};
+
+/**
+ * v21: the AIS radar's range rings are stored in metres instead of nautical miles, and its COG
+ * vector time in seconds instead of minutes, which renames `cogVectorsMinutes` to `cogVectorsSeconds`.
+ */
+const V21_AIS_RADAR_SI_STEP: SiStep = {
+  version: V21_MIGRATION_OUTPUT_VERSION,
+  types: new Set(['widget-ais-radar']),
+  staleKeys: ['ais.cogVectorsMinutes'],
+  convert(config) {
+    const ais = config['ais'];
+    if (!isRecord(ais)) return;
+    const rings = ais['rangeRings'];
+    if (Array.isArray(rings)) {
+      ais['rangeRings'] = rings.map(nm => (typeof nm === 'number' && Number.isFinite(nm) ? nm * V21_METRES_PER_NM : nm));
+    }
+    const minutes = ais['cogVectorsMinutes'];
+    if (typeof minutes === 'number' && Number.isFinite(minutes)) {
+      ais['cogVectorsSeconds'] = minutes * V21_SECONDS_PER_MINUTE;
+    }
+  }
+};
+
+const SI_STEPS: readonly SiStep[] = [V20_WINDSTEER_SI_STEP, V21_SEA_HORIZON_SI_STEP, V21_AIS_RADAR_SI_STEP];
 
 /**
  * v17 -> v18 target shape for the wind-family widgets' swept paths, keyed by runtime widget `type`
@@ -242,8 +293,8 @@ export function applySiSteps(config: IConfig, sink: MigrationMessageSink, upToVe
           converted++;
         }
         for (const key of step.staleKeys) {
-          if (key in cfg) {
-            delete cfg[key];
+          if (has(cfg, key)) {
+            unset(cfg, key);
             cleaned++;
           }
         }
@@ -293,6 +344,7 @@ export function migrateOneAppVersion(config: IConfig, fromVersion: number, sink:
     case 17: return upgradeConfigV17toV18(config, sink);
     case 18: return upgradeConfigV18toV19(config, sink);
     case 19: return upgradeConfigV19toV20(config, sink);
+    case 20: return upgradeConfigV20toV21(config, sink);
     default: return null;
   }
 }
@@ -791,6 +843,28 @@ function upgradeConfigV19toV20(config: IConfig, sink: MigrationMessageSink): ICo
     return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
   } catch (error) {
     sink.error(`[Upgrade Service] Error upgrading v19->v20: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * v20 -> v21: the SI steps for Sea Horizon's heel angles and the AIS radar's range rings and COG
+ * vector time (see V21_SEA_HORIZON_SI_STEP and V21_AIS_RADAR_SI_STEP).
+ */
+function upgradeConfigV20toV21(config: IConfig, sink: MigrationMessageSink): IConfig | null {
+  try {
+    const appConfig = config.app;
+    if (!appConfig || appConfig.configVersion !== 20) {
+      sink.error(`[Upgrade Service] Config version ${appConfig?.configVersion} is not an upgradable v20 config. Skipping...`);
+      return null;
+    }
+
+    applySiSteps(config, sink, V21_MIGRATION_OUTPUT_VERSION);
+
+    appConfig.configVersion = V21_MIGRATION_OUTPUT_VERSION;
+    return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
+  } catch (error) {
+    sink.error(`[Upgrade Service] Error upgrading v20->v21: ${(error as Error).message}`);
     return null;
   }
 }

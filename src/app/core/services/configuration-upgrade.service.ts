@@ -7,18 +7,11 @@ import { v10IConfig, v10IThemeConfig } from '../interfaces/v10-config-interface'
 import { NgGridStackWidget } from 'gridstack/dist/angular';
 import { Dashboard } from './dashboard.service';
 import { LOCAL_CONFIG_KEYS } from '../constants/config-storage.const';
-import { REMOTE_CONFIG_FILE_VERSION } from '../constants/config-versions.const';
+import { LATEST_APP_CONFIG_VERSION, REMOTE_CONFIG_FILE_VERSION } from '../constants/config-versions.const';
 import { removeLocalStorageItem, setLocalStorageItem } from '../utils/local-storage.util';
 import {
   MIGRATION_OUTPUT_VERSION,
   MigrationMessageSink,
-  V13_MIGRATION_OUTPUT_VERSION,
-  V14_MIGRATION_OUTPUT_VERSION,
-  V15_MIGRATION_OUTPUT_VERSION,
-  V16_MIGRATION_OUTPUT_VERSION,
-  V17_MIGRATION_OUTPUT_VERSION,
-  V18_MIGRATION_OUTPUT_VERSION,
-  V19_MIGRATION_OUTPUT_VERSION,
   V20_MIGRATION_OUTPUT_VERSION,
   migrateOneAppVersion,
   migrateUseNeedleToEnableNeedle,
@@ -175,174 +168,6 @@ export class ConfigurationUpgradeService {
         this.upgrading.set(false);
       }
 
-    } else if (version === 12) {
-      // Remote (Signal K) configs. v12 slots live in the same active file version as v11.
-      try {
-        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
-
-        for (const item of configsList) {
-          try {
-            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
-            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V13_MIGRATION_OUTPUT_VERSION}.`);
-            const migratedConfig = migrateOneAppVersion(config, 12, this.sink);
-            if (!migratedConfig) continue; // skip if not a v12 slot
-
-            await this._storage.setConfig(item.scope, item.name, migratedConfig);
-          } catch (error) {
-            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
-          }
-        }
-        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
-        setTimeout(() => this._settings.reloadApp(), 1500);
-      } catch (error) {
-        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
-        this.upgrading.set(false);
-      }
-
-    } else if (version === 13) {
-      // Remote (Signal K) configs. v13 slots live in the same active file version as v11/v12.
-      try {
-        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
-
-        for (const item of configsList) {
-          try {
-            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
-            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V14_MIGRATION_OUTPUT_VERSION}.`);
-            const migratedConfig = migrateOneAppVersion(config, 13, this.sink);
-            if (!migratedConfig) continue; // skip if not a v13 slot
-
-            await this._storage.setConfig(item.scope, item.name, migratedConfig);
-          } catch (error) {
-            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
-          }
-        }
-        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
-        setTimeout(() => this._settings.reloadApp(), 1500);
-      } catch (error) {
-        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
-        this.upgrading.set(false);
-      }
-
-    } else if (version === 14) {
-      // Remote (Signal K) configs. v14 slots live in the same active file version as v11/v12/v13.
-      try {
-        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
-
-        for (const item of configsList) {
-          try {
-            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
-            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V15_MIGRATION_OUTPUT_VERSION}.`);
-            const migratedConfig = migrateOneAppVersion(config, 14, this.sink);
-            if (!migratedConfig) continue; // skip if not a v14 slot
-
-            await this._storage.setConfig(item.scope, item.name, migratedConfig);
-          } catch (error) {
-            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
-          }
-        }
-        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
-        setTimeout(() => this._settings.reloadApp(), 1500);
-      } catch (error) {
-        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
-        this.upgrading.set(false);
-      }
-
-    } else if (version === 15) {
-      // Remote (Signal K) configs. v15 slots live in the same active file version as v11..v14.
-      try {
-        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
-
-        for (const item of configsList) {
-          try {
-            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
-            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V16_MIGRATION_OUTPUT_VERSION}.`);
-            const migratedConfig = migrateOneAppVersion(config, 15, this.sink);
-            if (!migratedConfig) continue; // skip if not a v15 slot
-
-            await this._storage.setConfig(item.scope, item.name, migratedConfig);
-          } catch (error) {
-            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
-          }
-        }
-        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
-        setTimeout(() => this._settings.reloadApp(), 1500);
-      } catch (error) {
-        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
-        this.upgrading.set(false);
-      }
-
-    } else if (version === 16) {
-      // Remote (Signal K) configs. v16 slots live in the same active file version as v11..v15.
-      try {
-        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
-
-        for (const item of configsList) {
-          try {
-            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
-            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V17_MIGRATION_OUTPUT_VERSION}.`);
-            const migratedConfig = migrateOneAppVersion(config, 16, this.sink);
-            if (!migratedConfig) continue; // skip if not a v16 slot
-
-            await this._storage.setConfig(item.scope, item.name, migratedConfig);
-          } catch (error) {
-            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
-          }
-        }
-        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
-        setTimeout(() => this._settings.reloadApp(), 1500);
-      } catch (error) {
-        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
-        this.upgrading.set(false);
-      }
-
-    } else if (version === 17) {
-      // Remote (Signal K) configs. v17 slots live in the same active file version as v11..v16.
-      try {
-        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
-
-        for (const item of configsList) {
-          try {
-            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
-            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V18_MIGRATION_OUTPUT_VERSION}.`);
-            const migratedConfig = migrateOneAppVersion(config, 17, this.sink);
-            if (!migratedConfig) continue; // skip if not a v17 slot
-
-            await this._storage.setConfig(item.scope, item.name, migratedConfig);
-          } catch (error) {
-            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
-          }
-        }
-        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
-        setTimeout(() => this._settings.reloadApp(), 1500);
-      } catch (error) {
-        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
-        this.upgrading.set(false);
-      }
-
-    } else if (version === 18) {
-      // Remote (Signal K) configs. v18 slots live in the same active file version as v11..v17.
-      try {
-        const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
-
-        for (const item of configsList) {
-          try {
-            const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
-            this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${V19_MIGRATION_OUTPUT_VERSION}.`);
-            const migratedConfig = migrateOneAppVersion(config, 18, this.sink);
-            if (!migratedConfig) continue; // skip if not a v18 slot
-
-            await this._storage.setConfig(item.scope, item.name, migratedConfig);
-          } catch (error) {
-            this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
-          }
-        }
-        this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
-        setTimeout(() => this._settings.reloadApp(), 1500);
-      } catch (error) {
-        this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
-        this.upgrading.set(false);
-      }
-
     } else if (version === 19) {
       // Remote (Signal K) configs. v19 slots live in the same active file version as v11..v18.
       try {
@@ -378,6 +203,9 @@ export class ConfigurationUpgradeService {
         this.upgrading.set(false);
       }
 
+    } else if (version >= 12 && version < LATEST_APP_CONFIG_VERSION) {
+      await this.upgradeRemoteSlots(version);
+
     } else {
       // LocalStorage upgrade path for config version 10
       const localStorageConfig: v10IConfig = {
@@ -404,6 +232,36 @@ export class ConfigurationUpgradeService {
       setLocalStorageItem(LOCAL_CONFIG_KEYS.dashboardsConfig, JSON.stringify(dashboards));
       setLocalStorageItem(LOCAL_CONFIG_KEYS.themeConfig, JSON.stringify(transformedTheme));
       setTimeout(() => this._settings.reloadApp(), 1500);
+      this.upgrading.set(false);
+    }
+  }
+
+  /**
+   * One chained step, from `version` to the next, over every slot at `version` in the active file
+   * version, then a reload. A slot at another version is left for the upgrade that matches it. A
+   * failed slot listing clears the overlay without reloading, so the upgrade retries on the next boot.
+   */
+  private async upgradeRemoteSlots(version: number): Promise<void> {
+    try {
+      const configsList: Config[] = await this._storage.listConfigs(REMOTE_CONFIG_FILE_VERSION);
+
+      for (const item of configsList) {
+        try {
+          const config = await this._storage.getConfig(item.scope, item.name, REMOTE_CONFIG_FILE_VERSION);
+          if (config?.app?.configVersion !== version) continue;
+          this.pushMsg(`[Upgrade] ${item.scope}/${item.name} -> v${version + 1}.`);
+          const migratedConfig = migrateOneAppVersion(config, version, this.sink);
+          if (!migratedConfig) continue;
+
+          await this._storage.setConfig(item.scope, item.name, migratedConfig);
+        } catch (error) {
+          this.pushError(`[Upgrade] Error upgrading ${item.scope}/${item.name}: ${(error as Error).message}`);
+        }
+      }
+      this.pushMsg(`[Upgrade] Reloading app to finalize upgrade...`);
+      setTimeout(() => this._settings.reloadApp(), 1500);
+    } catch (error) {
+      this.pushError('Error fetching configuration data. Aborting upgrade. Details: ' + (error as Error).message);
       this.upgrading.set(false);
     }
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import { WidgetAisRadarComponent } from './widget-ais-radar.component';
+import { select } from 'd3-selection';
 
 /**
  * Regression tests for the course-up click mapping (#115, upstream Kip #1101).
@@ -121,11 +122,11 @@ const makeRenderHarness = (viewMode: RadarViewMode, ownShip: OwnShipState): Rend
     cfg: {
       color: 'grey',
       ais: {
-        rangeRings: [3, 6, 12, 24, 48],
+        rangeRings: [5556, 11112, 22224, 44448, 88896],
         rangeIndex: '0',
         showSelf: true,
         showCogVectors: true,
-        cogVectorsMinutes: 10,
+        cogVectorsSeconds: 600,
         showLostTargets: true,
         showUnconfirmedTargets: true
       }
@@ -245,5 +246,121 @@ describe('render() own-ship refresh on settled frames (#124)', () => {
     expect(harness.buildTargets).not.toHaveBeenCalled();
     expect(harness.renderTargets).not.toHaveBeenCalled();
     expect(harness.scheduleRender).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the radar draws for a stored config: the range rings and their labels, and how long the
+ * own-ship and target COG vectors reach. render() runs for real on a hand-built context whose
+ * rings, own-ship and vector layers are d3 selections over a jsdom SVG, so the assertions read the
+ * drawn elements. Expected values follow from the geometry: a 400x400 radar has radius 200, and a
+ * vector covers speed x duration at that scale.
+ */
+describe('render() rings, labels and COG vectors for a stored config', () => {
+  const RADIUS = 200;
+  const METRES_PER_NM = 1852;
+
+  /** The radar's stored options, from ranges in nautical miles and a COG vector time in minutes. */
+  const storedRadarOptions = (rangeRingsNm: number[] | undefined, cogMinutes: number): Record<string, unknown> => ({
+    ...(rangeRingsNm ? { rangeRings: rangeRingsNm.map(nm => nm * METRES_PER_NM) } : {}),
+    cogVectorsSeconds: cogMinutes * 60
+  });
+
+  const layer = (svg: SVGSVGElement) =>
+    select(svg.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g')) as SVGGElement);
+
+  const draw = (options: Record<string, unknown>, rangeIndex: number, targets: unknown[] = []) => {
+    const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const ctx = Object.create(WidgetAisRadarComponent.prototype) as Record<string, unknown>;
+    Object.assign(ctx, {
+      renderState: {
+        size: { width: 400, height: 400 },
+        cfg: { color: 'grey', ais: { rangeIndex: String(rangeIndex), showSelf: true, showCogVectors: true, ...options } },
+        theme: {},
+        targets: [],
+        ownShip: { position, courseOverGroundTrue: 90, headingTrue: 90, speedOverGround: 5 }
+      },
+      svg: select(svgEl),
+      root: layer(svgEl),
+      rotationGroup: layer(svgEl),
+      ringsLayer: layer(svgEl),
+      ownShipLayer: layer(svgEl),
+      vectorsLayer: layer(svgEl),
+      viewRotationSmoothed: null,
+      lastRotationAt: null,
+      lastViewRotation: 0,
+      hasRenderedOnce: false,
+      lastRenderSignature: null,
+      ringCache: null,
+      ownShipIconHref: null,
+      effectiveRangeIndex: () => rangeIndex,
+      localViewMode: () => 'north-up',
+      selectedId: () => null,
+      filterState: () => ({
+        anchoredMoored: false, noCollisionRisk: false, allAton: false, allButSar: false, allVessels: false,
+        vesselTypes: new Set<string>()
+      }),
+      // Courses below are authored in degrees; identity conversion keeps them.
+      units: { convertToUnit: (_unit: string, value: number) => value },
+      buildTargets: () => targets,
+      renderTargets: vi.fn(),
+      renderSelected: vi.fn(),
+      raiseOwnshipAndVector: vi.fn(),
+      scheduleRender: vi.fn()
+    });
+    renderFn.call(ctx);
+    return svgEl;
+  };
+
+  const ringRadii = (svg: SVGSVGElement) => [...svg.querySelectorAll('circle.ring')].map(c => Number(c.getAttribute('r')));
+  const ringLabels = (svg: SVGSVGElement) => [...svg.querySelectorAll('text.ring-label')].map(t => t.textContent);
+  const lineEnd = (svg: SVGSVGElement, selector: string) => {
+    const line = svg.querySelector(selector);
+    return { x: Number(line?.getAttribute('x2')), y: Number(line?.getAttribute('y2')) };
+  };
+
+  it('draws the 12 nm range as rings every 4 nm, labelled in nm', () => {
+    const svg = draw(storedRadarOptions([1, 3, 6, 12, 24, 48], 10), 3);
+    expect(ringLabels(svg)).toEqual(['4', '4', '8', '8', '12', '12', '16', '16']);
+    const radii = ringRadii(svg);
+    [4, 8, 12, 16].forEach((nm, i) => expect(radii[i]).toBeCloseTo((nm / 12) * RADIUS, 9));
+  });
+
+  it('draws the 1 nm range as rings every quarter mile', () => {
+    const svg = draw(storedRadarOptions([1, 3, 6, 12, 24, 48], 10), 0);
+    expect([...new Set(ringLabels(svg))]).toEqual(['0.25', '0.5', '0.75', '1', '1.25', '1.5']);
+    expect(ringRadii(svg)[3]).toBeCloseTo(RADIUS, 9);
+  });
+
+  it('labels the rings of a range that is not a whole number of miles to three significant digits', () => {
+    const svg = draw(storedRadarOptions([5000 / METRES_PER_NM], 10), 0);
+    expect([...new Set(ringLabels(svg))]).toEqual(['0.675', '1.35', '2.02', '2.7', '3.37', '4.05']);
+  });
+
+  it('falls back to its own ranges when the config has none', () => {
+    // The fallback list starts at 3 nm, so index 1 is 6 nm.
+    const svg = draw(storedRadarOptions(undefined, 10), 1);
+    expect([...new Set(ringLabels(svg))]).toEqual(['2', '4', '6', '8']);
+    expect(ringRadii(svg)[2]).toBeCloseTo(RADIUS, 9);
+  });
+
+  it('projects the own-ship COG vector over the configured time', () => {
+    // 5 m/s due east for 10 minutes, on the 3 nm range.
+    const svg = draw(storedRadarOptions([1, 3, 6, 12, 24, 48], 10), 1);
+    const end = lineEnd(svg, 'line.ownship-vector');
+    expect(end.x).toBeCloseTo(((5 * 600) / METRES_PER_NM / 3) * RADIUS, 9);
+    expect(end.y).toBeCloseTo(0, 9);
+  });
+
+  it('projects a target COG vector over the configured time', () => {
+    // 4 m/s due north for 20 minutes, from a target 50 px east of own ship, on the 6 nm range.
+    const target = {
+      id: 't1', x: 50, y: 0, sog: 4, cog: 0, className: 'target',
+      raw: { type: 'vessel', navState: 'motoring', ais: { status: 'confirmed' } }
+    };
+    const svg = draw(storedRadarOptions([1, 3, 6, 12, 24, 48], 20), 2, [target]);
+    const end = lineEnd(svg, 'line.motion-vector');
+    expect(end.x).toBeCloseTo(50, 9);
+    expect(end.y).toBeCloseTo(-((4 * 1200) / METRES_PER_NM / 6) * RADIUS, 9);
   });
 });

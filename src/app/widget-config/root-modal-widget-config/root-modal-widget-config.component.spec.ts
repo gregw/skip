@@ -15,6 +15,7 @@ import { WidgetSteelCompassComponent } from '../../widgets/widget-gauge-steel-co
 import { WidgetSeaHorizonComponent } from '../../widgets/widget-sea-horizon/widget-sea-horizon.component';
 import { WidgetWindComponent } from '../../widgets/widget-windsteer/widget-windsteer.component';
 import { WidgetRacesteerComponent } from '../../widgets/widget-racesteer/widget-racesteer.component';
+import { WidgetAisRadarComponent } from '../../widgets/widget-ais-radar/widget-ais-radar.component';
 import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
 import { DataService, IPathUpdate } from '../../core/services/data.service';
 import { signal } from '@angular/core';
@@ -265,8 +266,10 @@ describe('ModalWidgetComponent steel compass gauge controls', () => {
 // Renders the dialog for real and drives both fields across each other so a dropped binding or a
 // dropped validator directive fails here instead of letting a crossed pair reach the widget.
 describe('ModalWidgetComponent sea horizon gauge controls', () => {
-  const unitsServiceStub: Pick<UnitsService, 'getConversionsForPath'> = {
+  // The heel angles are stored in rad and shown in degrees.
+  const unitsServiceStub: Pick<UnitsService, 'getConversionsForPath' | 'convertToUnit'> = {
     getConversionsForPath: (): IConversionPathList => ({ base: 'unitless', conversions: [] }),
+    convertToUnit: (unit: string, value: number) => unit === 'deg' ? value * 180 / Math.PI : value,
   };
   const appServiceStub: Pick<AppService, 'configurableThemeColors'> = { configurableThemeColors: [] };
 
@@ -599,6 +602,46 @@ describe('ModalWidgetComponent options stored in SI', () => {
     expect(fixture.componentInstance.formMaster.get('closeHauledLineAngle')?.value).toBe(40.10704566);
     fixture.componentInstance.submitConfig();
     expect(saved().closeHauledLineAngle).toBe(stored);
+  });
+
+  const seaHorizon = (heelCautionAngle: number, heelAlarmAngle: number): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetSeaHorizonComponent.DEFAULT_CONFIG);
+    config.gauge = { ...config.gauge!, heelCautionAngle, heelAlarmAngle };
+    return { ...config, widgetName: 'Sea Horizon' } as IWidgetSvcConfig;
+  };
+
+  it('shows the heel angles stored in rad in degrees, and stores an edit in rad', () => {
+    const caution = 20 * Math.PI / 180;
+    const fixture = open(seaHorizon(caution, 30 * Math.PI / 180));
+    const gauge = fixture.componentInstance.formMaster.get('gauge') as UntypedFormGroup;
+    expect(gauge.get('heelCautionAngle')?.value).toBe(20);
+    expect(gauge.get('heelAlarmAngle')?.value).toBe(30);
+
+    gauge.get('heelAlarmAngle')?.setValue(35);
+    fixture.componentInstance.submitConfig();
+    expect(saved().gauge?.heelAlarmAngle).toBeCloseTo(35 * Math.PI / 180, 12);
+    // The caution angle was not edited, so it keeps its stored value exactly.
+    expect(saved().gauge?.heelCautionAngle).toBe(caution);
+  });
+
+  it('shows the AIS COG vector time stored in seconds in minutes, and stores an edit in seconds', () => {
+    const config = { ...structuredClone(WidgetAisRadarComponent.DEFAULT_CONFIG), widgetName: 'AIS Radar' } as IWidgetSvcConfig;
+    config.ais = { ...config.ais!, cogVectorsSeconds: 600 };
+    const fixture = open(config);
+    const ais = fixture.componentInstance.formMaster.get('ais') as UntypedFormGroup;
+    expect(ais.get('cogVectorsSeconds')?.value).toBe(10);
+    const input = fixture.nativeElement.querySelector('input[name="cogVectorsSeconds"]') as HTMLInputElement;
+    expect(Number(input.value)).toBe(10);
+
+    fixture.componentInstance.submitConfig();
+    expect(saved().ais?.cogVectorsSeconds).toBe(600);
+    // The range rings have no field; the dialog passes them through as stored.
+    expect(saved().ais?.rangeRings).toEqual([1852, 5556, 11112, 22224, 44448, 88896]);
+
+    ais.get('cogVectorsSeconds')?.setValue(15);
+    fixture.componentInstance.submitConfig();
+    const edited = (TestBed.inject(MatDialogRef).close as ReturnType<typeof vi.fn>).mock.calls[1][0] as IWidgetSvcConfig;
+    expect(edited.ais?.cogVectorsSeconds).toBeCloseTo(900, 9);
   });
 
   it('shows no close-hauled section for a widget without the option', () => {

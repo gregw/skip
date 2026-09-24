@@ -33,6 +33,7 @@ import { ActivePolarService } from '../../core/services/active-polar.service';
 import { DataService } from '../../core/services/data.service';
 import { POLAR_OVERLAY_PATH_KEYS } from '../../core/utils/polar-overlay.util';
 import { UnitsService } from '../../core/services/units.service';
+import { presentedOption } from '../../core/utils/si-presentation.util';
 
 /** An option stored in SI and shown in the form in a presentation unit. */
 interface SiOption {
@@ -47,10 +48,6 @@ interface SiField extends SiOption {
   si: number;
   shown: number;
 }
-
-// Significant digits of a displayed SI option, enough to drop float noise from the conversion
-// (120 °C through K and back shows 120, not 119.99999999999997).
-const SI_OPTION_DISPLAY_DIGITS = 10;
 
 /** Typed reactive-form control map for an array-mode {@link IWidgetPath}: one control per field. */
 type IWidgetPathControls = {
@@ -74,7 +71,10 @@ export class RootModalWidgetConfigComponent implements OnInit {
   private static readonly KEY_CONVERT_UNIT_TO = 'convertUnitTo';
   /** Options stored in SI; the form shows and accepts them in the listed unit. */
   private static readonly SI_OPTIONS: readonly SiOption[] = [
-    { path: ['closeHauledLineAngle'], unit: 'deg' }
+    { path: ['closeHauledLineAngle'], unit: 'deg' },
+    { path: ['gauge', 'heelCautionAngle'], unit: 'deg' },
+    { path: ['gauge', 'heelAlarmAngle'], unit: 'deg' },
+    { path: ['ais', 'cogVectorsSeconds'], unit: 'Minutes' }
   ];
   private dialogRef = inject<MatDialogRef<RootModalWidgetConfigComponent>>(MatDialogRef);
   private fb = inject(UntypedFormBuilder);
@@ -503,7 +503,7 @@ export class RootModalWidgetConfigComponent implements OnInit {
       if (typeof si !== 'number' || !Number.isFinite(si)) continue;
       const converted = this.units.convertToUnit(option.unit, si);
       if (converted == null || !Number.isFinite(converted)) continue;
-      const shown = Number(converted.toPrecision(SI_OPTION_DISPLAY_DIGITS));
+      const shown = presentedOption(converted);
       set(formConfig, option.path, shown);
       this.siFields.push({ ...option, si, shown });
     }
