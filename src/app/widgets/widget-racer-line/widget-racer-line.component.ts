@@ -73,7 +73,10 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
         isPathConfigurable: false,
         convertUnitTo: 'm',
         showPathSkUnitsFilter: true,
-        pathSkUnitsFilter: 'm'
+        pathSkUnitsFilter: 'm',
+        // Published continuously while the plugin is computing it, so it takes the
+        // stale-data TTL: a frozen number here reads as a live one.
+        enableTimeout: true
       },
       lineLengthPath: {
         description: 'Length of the start line',
@@ -135,7 +138,10 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
         convertUnitTo: 's',
         showConvertUnitTo: false,
         showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 's'
+        pathSkUnitsFilter: 's',
+        // Published continuously while the plugin is computing it, so it takes the
+        // stale-data TTL: a frozen number here reads as a live one.
+        enableTimeout: true
       },
       ttbPath: {
         description: 'Time to delay before sailing to the start line in seconds',
@@ -147,7 +153,10 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
         convertUnitTo: 's',
         showConvertUnitTo: false,
         showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 's'
+        pathSkUnitsFilter: 's',
+        // Published continuously while the plugin is computing it, so it takes the
+        // stale-data TTL: a frozen number here reads as a live one.
+        enableTimeout: true
       },
     }
   };

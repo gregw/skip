@@ -105,14 +105,13 @@
   stroke-linecap: round;
 }
 
-// The start zone boundary: the line's extensions and the 45 degree wedges. Kept well
-// back so the start line itself stays the dominant object.
 .wind-arrow {
   fill: var(--racer-color);
-  // Half as transparent as it was: 0.7 transparent becomes 0.35.
   fill-opacity: 0.65;
 }
 
+// The start zone boundary: the line's extensions and the 45 degree wedges. Kept well
+// back so the start line itself stays the dominant object.
 .zone-guide {
   stroke: var(--racer-dim);
   stroke-width: 1.2;
@@ -120,7 +119,7 @@
   stroke-dasharray: 4 5;
 }
 
-// The approach legs, drawn the way a drawing dimensions a distance - a thin rule with a
+// The distance vectors, drawn the way a drawing dimensions a distance - a thin rule with a
 // tick at each end and its value set into a break in it - so they read as a measurement
 // rather than as a course to steer.
 .dimension {

@@ -1841,6 +1841,7 @@
           "dtsPath": {
             "convertUnitTo": "m",
             "description": "Distance to Start Line",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.distanceStartline",
             "pathRequired": false,
@@ -1898,6 +1899,7 @@
           "ttbPath": {
             "convertUnitTo": "s",
             "description": "Time to delay before sailing to the start line in seconds",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToBurn",
             "pathRequired": false,
@@ -1910,6 +1912,7 @@
           "ttlPath": {
             "convertUnitTo": "s",
             "description": "Time to sail to the start line in seconds",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToLine",
             "pathRequired": false,
@@ -2206,6 +2209,7 @@
           "ttbPath": {
             "convertUnitTo": "s",
             "description": "Time to delay before sailing to the start line in seconds",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToBurn",
             "pathRequired": false,
@@ -2218,6 +2222,7 @@
           "ttlPath": {
             "convertUnitTo": "s",
             "description": "Time to sail to the start line in seconds",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToLine",
             "pathRequired": false,
@@ -2230,6 +2235,7 @@
           "ttsPath": {
             "convertUnitTo": "s",
             "description": "Time to the start in seconds",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToStart",
             "pathRequired": false,
@@ -2313,7 +2319,7 @@
       },
       "defaultHeight": 5,
       "defaultWidth": 5,
-      "description": "A full-frame view of the start line: the line drawn \"line up\" with the pin to port and the committee boat to starboard, your boat against it at true scale, the start zone it sits in, and the approach the time to line is computed over. An Edit button turns the two ends into targets that set them from the current vessel position, and switches between named lines. Requires signalk-racer 1.2.0 or later.",
+      "description": "A full-frame view of the start line: the line drawn \"line up\" with the pin to port and the committee boat to starboard, your boat against it at true scale, the start zone it sits in, and the approach the time to line is computed over. A ⋮ mode button selects the control mode: watching the line, setting its ends - the two ends become targets that set them from the current vessel position - and switching between named lines, adjusting those ends, and adjusting the best VMGs. Requires signalk-racer 1.2.0 or later.",
       "icon": "racerlineWidget",
       "minHeight": 4,
       "minWidth": 4,
@@ -2626,6 +2632,7 @@
           "dtsPath": {
             "convertUnitTo": "m",
             "description": "Distance to Start Line path, used to determine OCS",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.distanceStartline",
             "pathRequired": false,
@@ -2647,6 +2654,7 @@
           "ttsPath": {
             "convertUnitTo": "s",
             "description": "Time to the Start in seconds",
+            "enableTimeout": true,
             "isPathConfigurable": false,
             "path": "self.navigation.racing.timeToStart",
             "pathRequired": false,

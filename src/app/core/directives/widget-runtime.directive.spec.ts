@@ -97,4 +97,26 @@ describe('WidgetRuntimeDirective config merge', () => {
     );
     expect(merged?.paths?.['p'].showConvertUnitTo).toBe(false);
   });
+
+  /**
+   * And with the policy, the unit it decides: a path the widget does not expose the unit
+   * for is converted with its own fixed unit, so the stored one is as stale a snapshot as
+   * the path — restoring the policy alone would leave the widget converting to a unit it
+   * no longer declares.
+   */
+  it('takes a structural fixed path’s unit back from the defaults too', () => {
+    const merged = build(
+      { paths: { p: { description: 'P', path: 'self.len', source: 'default', pathType: 'number', isPathConfigurable: false, convertUnitTo: 'm', showConvertUnitTo: false } } },
+      { paths: { p: { description: 'P', path: 'self.len', source: 'default', pathType: 'number', isPathConfigurable: false, convertUnitTo: 'nm', showConvertUnitTo: false } } }
+    );
+    expect(merged?.paths?.['p'].convertUnitTo).toBe('m');
+  });
+
+  it('keeps the saved unit where the widget exposes it for editing', () => {
+    const merged = build(
+      { paths: { p: { description: 'P', path: 'self.len', source: 'default', pathType: 'number', isPathConfigurable: false, convertUnitTo: 'm', showConvertUnitTo: true } } },
+      { paths: { p: { description: 'P', path: 'self.len', source: 'default', pathType: 'number', isPathConfigurable: false, convertUnitTo: 'feet', showConvertUnitTo: true } } }
+    );
+    expect(merged?.paths?.['p'].convertUnitTo).toBe('feet');
+  });
 });

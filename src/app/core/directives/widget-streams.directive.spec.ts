@@ -85,6 +85,8 @@ function makeCfg(opts: {
     suppressBootstrapNull?: boolean;
     displayName?: string;
     enableTimeout?: boolean;
+    /** The path's own TTL opt-in/opt-out, which overrides the widget-level flag. */
+    pathEnableTimeout?: boolean;
     dataTimeout?: number;
 } = {}): IWidgetSvcConfig {
     const key = opts.key ?? 'p';
@@ -101,6 +103,7 @@ function makeCfg(opts: {
             pathSkUnitsFilter: null,
             convertUnitTo: (opts.convertUnitTo ?? undefined) as unknown as string,
             showConvertUnitTo: opts.showConvertUnitTo,
+            enableTimeout: opts.pathEnableTimeout,
             supportsPut: false
         }
     };
@@ -483,6 +486,40 @@ describe('WidgetStreamsDirective', () => {
         expect(dataSvc.timeoutCalls.length).toBe(1);
         // The window is the fixed constant, not the stored (0.02 s) dataTimeout.
         expect(dataSvc.timeoutCalls[0]).toEqual({ path: 'env.to', source: 'default', pathType: 'string', dataTimeoutMs: 5000 });
+    });
+
+    /**
+     * The widget-level flag is not offered in the options dialog, so a widget that does
+     * not declare one has none — and a live reading that stops arriving would sit frozen
+     * on screen looking current. The path says so itself instead.
+     */
+    it('times out a path that asks for it, on a widget with no timeout of its own', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'log');
+        const cfg = makeCfg({
+            path: 'env.live', source: null, pathType: 'string', updateInterval: 100,
+            displayName: 'Test', enableTimeout: false, pathEnableTimeout: true
+        });
+        directive.setStreamsConfig(cfg);
+        directive.observe('p', () => { /* value not under test */ });
+
+        await vi.advanceTimersByTimeAsync(5100);
+        expect(dataSvc.timeoutCalls.length).toBe(1);
+        expect(dataSvc.timeoutCalls[0].path).toBe('env.live');
+    });
+
+    it('still lets a path opt out of a widget that does have one', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'log');
+        const cfg = makeCfg({
+            path: 'env.state', source: null, pathType: 'string', updateInterval: 100,
+            displayName: 'Test', enableTimeout: true, pathEnableTimeout: false
+        });
+        directive.setStreamsConfig(cfg);
+        directive.observe('p', () => { /* value not under test */ });
+
+        await vi.advanceTimersByTimeAsync(5100);
+        expect(dataSvc.timeoutCalls.length).toBe(0);
     });
 
     it('forwards a configured non-default source into timeoutPathObservable', async () => {

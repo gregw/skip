@@ -177,11 +177,18 @@ export class WidgetStreamsDirective implements OnDestroy {
     }
     const base$ = this.streams!.get(pathName)!;
 
-    // A path may opt out of the widget's stale-data TTL. The TTL assumes a path is fed
-    // continuously and nulls it when it goes quiet, which is right for a sensor reading and
-    // wrong for state: a start line is published when it changes and then not again, so the
-    // TTL erases a perfectly good line five seconds after it arrives.
-    const enableTimeout = !!cfg.enableTimeout && pathCfg.enableTimeout !== false;
+    // A path may opt in or out of the stale-data TTL on its own, over whatever the widget
+    // says. The TTL assumes a path is fed continuously and nulls it when it goes quiet,
+    // which is right for a live reading and wrong for state: a start line is published when
+    // it changes and then not again, so the TTL erases a perfectly good line five seconds
+    // after it arrives.
+    //
+    // The per-path `true` is what a widget with no widget-level flag uses to keep its live
+    // readings honest - `enableTimeout` is not offered in the options dialog, so a widget
+    // that does not declare one has none, and a frozen reading would otherwise sit there
+    // looking live. Per-path `false` still wins over a widget-level `true`.
+    const enableTimeout = pathCfg.enableTimeout !== false
+      && (pathCfg.enableTimeout === true || !!cfg.enableTimeout);
     const dataTimeout = FIXED_DATA_TIMEOUT_MS;
     const retryDelay = 5000;
     const timeoutErrorMsg = `[Widget] ${cfg.displayName} - ${dataTimeout / 1000} second data update timeout reached for `;

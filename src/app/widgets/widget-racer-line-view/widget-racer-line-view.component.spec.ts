@@ -380,6 +380,32 @@ describe('WidgetRacerLineViewComponent', () => {
       expect(lineClasses()).not.toContain('ocs');
     });
 
+    /**
+     * The plugin only publishes startTime while a countdown is running, so it clears it
+     * at the gun — the moment the green is worth showing. A start that has been made is
+     * a stopped timer, so a stopped timer cannot be what takes the green away.
+     */
+    it('holds the green when the plugin clears the start time at the gun', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
+      behind();
+      feed({ ttsPath: 0 });
+      feed({ startTimePath: null, ttsPath: null });
+      expect(lineClasses()).toContain('started');
+      over();
+      expect(lineClasses()).toContain('started');
+      expect(lineClasses()).not.toContain('ocs');
+    });
+
+    it('lets go of it when the timer is armed for the next start', () => {
+      feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
+      behind();
+      feed({ ttsPath: 0 });
+      feed({ startTimePath: null, ttsPath: null });
+      expect(lineClasses()).toContain('started');
+      feed({ startTimePath: '2026-01-01T10:30:00Z' });
+      expect(lineClasses()).not.toContain('started');
+    });
+
     it('stays red rather than going green when the boat was over at the gun', () => {
       feed({ startTimePath: '2026-01-01T10:00:00Z', ttsPath: 5 });
       over();

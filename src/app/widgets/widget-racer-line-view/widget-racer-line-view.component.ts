@@ -27,11 +27,13 @@ import {
 /**
  * The start line, drawn at full frame.
  *
- * Watching the line is the default state: the drawing, and one Edit button in the lower
- * left. Edit switches to editing, where the two ends become touch targets that put an end
- * on the vessel's current position, a row of buttons picks the named line to work on, and
- * the same button reads Done to come back. Nothing else is offered here - the numbers, the
- * favoured end, and editing the best VMGs stay in the Racer - Start Line Setup widget.
+ * Watching the line is the default state: the drawing, and one mode button in the lower
+ * left, carrying the same vertical ellipsis the other racer widgets use to select the
+ * control mode. It steps through the screens and back round to watching: setting the ends,
+ * where the two ends become touch targets that put an end on the vessel's current position
+ * and a row of buttons picks the named line to work on, adjusting those ends, and adjusting
+ * the best VMGs. Nothing else is offered here - the numbers and the favoured end stay in
+ * the Racer - Start Line Setup widget.
  *
  * The drawing itself sits in the child directory rather than here, so it stays a
  * self-contained component: if a second widget ever needs it again it lifts back out
@@ -164,21 +166,31 @@ export class WidgetRacerLineViewComponent {
         path: 'self.navigation.racing.timeToLine',
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 's'
+        pathSkUnitsFilter: 's',
+        // Published continuously while the plugin is computing it, so it takes the
+        // stale-data TTL: a frozen number here reads as a live one.
+        enableTimeout: true
       },
       ttbPath: {
         description: 'Time to delay before sailing to the start line in seconds',
         path: 'self.navigation.racing.timeToBurn',
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 's'
+        pathSkUnitsFilter: 's',
+        // Published continuously while the plugin is computing it, so it takes the
+        // stale-data TTL: a frozen number here reads as a live one.
+        enableTimeout: true
       },
       ttsPath: {
         description: 'Time to the start in seconds',
         path: 'self.navigation.racing.timeToStart',
         source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false,
         convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false,
-        pathSkUnitsFilter: 's'
+        pathSkUnitsFilter: 's',
+        // Published continuously while the plugin is computing it, so it takes the
+        // stale-data TTL: a frozen number here reads as a live one, and the drawing
+        // relies on the countdown nulling after the gun.
+        enableTimeout: true
       },
       startTimePath: {
         // Cleared by the plugin whenever the timer is not counting down, so it
@@ -394,9 +406,18 @@ export class WidgetRacerLineViewComponent {
     this.signalk.putRequest('navigation.racing.setStartLine', { end, position: 'bow' }, this.id());
   }
 
+  /**
+   * Switch the plugin to a named line, and show it as the current one at once.
+   *
+   * The name is set locally as well as sent, because the plugin republishes the line it
+   * is working on only once it has changed it: waiting for that leaves the name still
+   * reading as a button offering the line just chosen, which reads as a press that did
+   * nothing. The stream's own value lands on top of this a moment later.
+   */
   protected selectLine(name: string): void {
     this.signalk.putRequest('navigation.racing.setStartLineName',
       { startLineName: name === 'Default' ? null : name }, this.id());
+    this.startLineName.set(name === 'Default' ? null : name);
     this.browsed.set(name);
   }
 

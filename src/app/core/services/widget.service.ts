@@ -612,7 +612,7 @@ export class WidgetService {
     },
     {
       name: 'Racer - Start Line Visualization',
-      description: 'A full-frame view of the start line: the line drawn "line up" with the pin to port and the committee boat to starboard, your boat against it at true scale, the start zone it sits in, and the approach the time to line is computed over. An Edit button turns the two ends into targets that set them from the current vessel position, and switches between named lines. Requires signalk-racer 1.2.0 or later.',
+      description: 'A full-frame view of the start line: the line drawn "line up" with the pin to port and the committee boat to starboard, your boat against it at true scale, the start zone it sits in, and the approach the time to line is computed over. A ⋮ mode button selects the control mode: watching the line, setting its ends - the two ends become targets that set them from the current vessel position - and switching between named lines, adjusting those ends, and adjusting the best VMGs. Requires signalk-racer 1.2.0 or later.',
       icon: 'racerlineWidget',
       minWidth: 4,
       minHeight: 4,

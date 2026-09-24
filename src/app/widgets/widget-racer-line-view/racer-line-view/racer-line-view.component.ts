@@ -153,7 +153,7 @@ interface ISceneButton {
   x: number; y: number; w: number; h: number;
   /** Corner radius, matching the 12px the other racer widgets' buttons use. */
   rx: number;
-  /** Path for a chevron or the three dots, drawn centred on the button. */
+  /** Path for a chevron or the vertical three dots, drawn centred on the button. */
   glyph: string | null;
   text: string | null;
   fontSize: number;
@@ -377,10 +377,17 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
    * Latched rather than computed, because by the time it is worth showing, the thing it
    * describes is over: the plugin stops publishing timeToStart at the gun, and the
    * widget's own timeout nulls it a few seconds later, so nothing in the live data still
-   * says a clean start was made. Cleared when the timer is reset - the plugin nulls
-   * startTime, which is what ends the state.
+   * says a clean start was made. It clears startTime at the gun as well - that path is
+   * only set while a countdown is running - so the timer no longer running is the normal
+   * state of a start that has just been made, and cannot be what ends this.
+   *
+   * What ends it is the next countdown: the timer armed again, or a time to start with
+   * time still to run. Both say a new start is ahead, which is the only thing that makes
+   * the last one stale.
    */
   private readonly startedClean = signal<boolean>(false);
+  /** Previous timerRunning, to catch the timer being armed again. See startedClean. */
+  private timerWasRunning = false;
 
   constructor() {
     // Keep the view frame up to date. Reading the geometry, width and mode here makes
@@ -394,15 +401,21 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     });
 
     // Watch the countdown through zero. Reading all three here makes this fire on every
-    // countdown tick and every reset.
+    // countdown tick, every arm and every reset.
     effect(() => {
       const running = this.timerRunning();
       const tts = this.timeToStart();
       const geo = this.geometry();
       untracked(() => {
-        // A reset ends the state, whatever it was.
-        if (!running) { this.startedClean.set(false); return; }
-        if (this.startedClean()) return;
+        const armed = running && !this.timerWasRunning;
+        this.timerWasRunning = running;
+        if (this.startedClean()) {
+          // Only the next countdown ends the state - see startedClean for why the timer
+          // stopping does not.
+          if (armed || (tts != null && tts > 0)) this.startedClean.set(false);
+          return;
+        }
+        if (!running) return;
         // The gun. The plugin publishes 0 once before it stops the countdown, so this is
         // seen exactly once per start.
         if (tts != null && tts <= 0) {
@@ -660,11 +673,14 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  /** The three dots of the mode button, centred on (0,0). */
+  /**
+   * The three dots of the mode button, centred on (0,0). Stacked vertically, matching the
+   * vertical ellipsis the other racer widgets' mode buttons carry.
+   */
   private ellipsisGlyph(size: number): string {
     const r = size * 0.07, gap = size * 0.22;
-    return [-gap, 0, gap].map(dx =>
-      `M${dx - r},0 a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0`).join(' ');
+    return [-gap, 0, gap].map(dy =>
+      `M${-r},${dy} a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0`).join(' ');
   }
 
   /**
@@ -789,15 +805,6 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     return Math.max(ctrl * 0.95, this.END_SIZE_MAX * 0.42 + ctrl * 0.5 + 3);
   }
 
-  /**
-   * The best VMGs, with a minus and a plus either side of each and a Reset in the middle.
-   *
-   * Laid out as a cross matching the drawing above it, so no label is needed to say which
-   * is which: across the line to the course side at the top, back across it at the bottom,
-   * and along it towards the port and starboard ends on the sides they are drawn on. The
-   * step is a tenth of a knot, the same as the plugin's own webapp, and goes to the plugin
-   * as metres per second whatever unit is on screen.
-   */
   /**
    * The best VMGs, arranged around a four-way arrow.
    *
@@ -1540,15 +1547,11 @@ export class RacerLineViewComponent implements AfterViewInit, OnDestroy {
     const v = heading != null ? screenVector(heading, geo.bearing) : { x: 0, y: -1 };
     const dx = v.x, dy = v.y, px = -dy, py = dx;
 
-    // The hull is drawn solid at the drawing's own scale and at nothing else, so what is
-    // on screen measures truly against the line: at a glance it says how many boat
-    // lengths off the boat is, and at the line it says whether the bow is across. That
-    // costs visibility when the fit has zoomed out to reach a distant boat - the vessel
-    // really is small against a line half a kilometre away - which is the honest reading.
+    // The hull is drawn solid at the drawing's own scale, but with a minimum size set by MIN_HULL_DISPLAY_UNITS
     const boatMetres = this.boatLength() ?? this.DEFAULT_BOAT_METRES;
-    const hullLength = (boatMetres * scale) < this.MIN_HULL_DISPLAY_UNITS ? this.MIN_HULL_DISPLAY_UNITS : boatMetres * scale; // TODO configure or constant?
-    // The fix is the bow, not the middle of the boat: that is where the GPS antenna is
-    // taken to be, it is what the plugin measures its distance to the line from, and it
+    const hullLength = (boatMetres * scale) < this.MIN_HULL_DISPLAY_UNITS ? this.MIN_HULL_DISPLAY_UNITS : boatMetres * scale;
+    // The fix is the bow, not the middle of the boat: that is where the Signalk reports the position
+    // to be, it is what the plugin measures its distance to the line from, and it
     // is the end that decides whether you are over. So the hull is hung aft of the fix
     // rather than centred on it, which also makes a change of heading swing the stern
     // around a bow that stays put - what the boat actually does, and what stops the bow

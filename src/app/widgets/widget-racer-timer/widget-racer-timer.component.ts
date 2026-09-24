@@ -62,14 +62,16 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
     nextDashboard: 0,
     playBeeps: true,
     filterSelfPaths: true,
+    // The countdown and the distance are published continuously while the plugin is
+    // running, so both take the stale-data TTL: a frozen number reads as a live one.
     paths: {
-      ttsPath: { description: 'Time to the Start in seconds', path: 'self.navigation.racing.timeToStart', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 's' },
+      ttsPath: { description: 'Time to the Start in seconds', path: 'self.navigation.racing.timeToStart', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 's', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 's', enableTimeout: true },
       // The start time is published once when the timer is set and not again, so the
       // stale-data TTL would null it five seconds later. The exemption has to be
       // unanimous: DataService's timeout cross-clears every registration on a silent
       // path, so one widget still counting down on this path blanks it for all of them.
       startTimePath: { description: 'Time of the start', path: 'self.navigation.racing.startTime', source: 'default', pathType: 'Date', pathRequired: false, isPathConfigurable: false, enableTimeout: false },
-      dtsPath: { description: 'Distance to Start Line path, used to determine OCS', path: 'self.navigation.racing.distanceStartline', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 'm', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 'm' }
+      dtsPath: { description: 'Distance to Start Line path, used to determine OCS', path: 'self.navigation.racing.distanceStartline', source: 'default', pathType: 'number', pathRequired: false, isPathConfigurable: false, convertUnitTo: 'm', showConvertUnitTo: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 'm', enableTimeout: true }
     },
     color: 'contrast',
     updateInterval: 500,
@@ -214,6 +216,9 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
 
   ngOnDestroy() {
     this.clearPendingStartTimeTimer();
+    // The idle revert draws, and a draw after the canvas is unregistered is a draw into
+    // a context the host has taken back.
+    this.clearModeTimer();
     try { if (this.canvasElement) this.canvas.unregisterCanvas(this.canvasElement); } catch { /* ignore */ }
   }
 
@@ -229,14 +234,16 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
    * The control modes are meant to be used and left, and a widget parked on one is a
    * widget not showing its countdown - easily done on a boat, where the last press
    * before a start is rarely followed by a deliberate press back.
+   *
+   * The start-time form is the exception: it holds a time being typed, and reverting out
+   * from under that throws the entry away mid-edit. It is left open until Set or Enter
+   * settles it, which is what puts the widget back on its countdown.
    */
   protected touchMode(): void {
-    if (this.modeTimer) {
-      clearTimeout(this.modeTimer);
-      this.modeTimer = null;
-    }
+    this.clearModeTimer();
     const seconds = this.modeTimeout();
-    if (this.mode() === 0 || !(seconds > 0)) return;
+    if (this.mode() === 0 || this.mode() === WidgetRacerTimerComponent.SET_START_TIME_MODE
+      || !(seconds > 0)) return;
     this.modeTimer = setTimeout(() => {
       this.modeTimer = null;
       this.mode.set(0);
@@ -305,6 +312,13 @@ export class WidgetRacerTimerComponent implements AfterViewInit, OnDestroy {
     }
     this.mode.set(0);
     this.draw();
+  }
+
+  private clearModeTimer(): void {
+    if (this.modeTimer) {
+      clearTimeout(this.modeTimer);
+      this.modeTimer = null;
+    }
   }
 
   private clearPendingStartTimeTimer(): void {

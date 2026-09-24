@@ -103,11 +103,19 @@ export class WidgetRuntimeDirective {
  * A path that offers `pathOptions` is excluded: those are not configurable free-form, but
  * the stored value is still a choice the user made from the list.
  *
- * Only the wiring is restored. `convertUnitTo` is left as stored because a fixed path can
- * still expose its unit for editing, and `source` because the data source stays editable on
- * a fixed path. `showConvertUnitTo` IS restored: it is not a user setting but the widget's
- * decision about whether the path follows the server's unit preference or keeps the
- * widget's own unit, and a widget that gets that wrong ships a value in the wrong scale.
+ * Only the wiring is restored. `source` is left as stored because the data source stays
+ * editable on a fixed path. `showConvertUnitTo` IS restored: it is not a user setting but
+ * the widget's decision about whether the path follows the server's unit preference or
+ * keeps the widget's own unit, and a widget that gets that wrong ships a value in the wrong
+ * scale.
+ *
+ * `convertUnitTo` follows that same decision. Where the widget exposes the unit
+ * (`showConvertUnitTo` not false) the stored one is the user's choice and stays. Where it
+ * does not, the path is structural - WidgetStreamsDirective reads exactly this flag to
+ * decide, and converts a structural path with the widget's own fixed unit rather than the
+ * server's preference - so the stored unit is not a choice either, just as stale a snapshot
+ * as the path itself, and restoring the flag without it would leave the widget converting
+ * to a unit it no longer declares.
  */
 function restoreFixedPaths(merged: IWidgetSvcConfig, base: IWidgetSvcConfig): void {
   if (!merged.paths || !base.paths) return;
@@ -119,6 +127,7 @@ function restoreFixedPaths(merged: IWidgetSvcConfig, base: IWidgetSvcConfig): vo
     mergedPath.pathType = basePath.pathType;
     mergedPath.enableTimeout = basePath.enableTimeout;
     mergedPath.showConvertUnitTo = basePath.showConvertUnitTo;
+    if (basePath.showConvertUnitTo === false) mergedPath.convertUnitTo = basePath.convertUnitTo;
   }
 }
 
