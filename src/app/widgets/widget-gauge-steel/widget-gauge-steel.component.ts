@@ -7,6 +7,7 @@ import { WidgetStreamsDirective } from '../../core/directives/widget-streams.dir
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
 import { ITheme } from '../../core/services/app-service';
+import { presentationValue } from '../../core/utils/si-presentation.util';
 
 @Component({
   selector: 'widget-gauge-steel',
@@ -68,11 +69,11 @@ export class WidgetSteelGaugeComponent {
   protected readonly zones = signal<ISkZone[]>([]);
   protected readonly displayName = computed(() => this.runtime.options()?.displayName || 'Gauge Label');
 
-  /** Measure the incoming value was converted to (server-resolved for this display path). '' = boot placeholder. */
+  /** Measure the value is presented in (server-resolved for this display path). '' = boot placeholder. */
   protected readonly effectiveUnit = signal<string>('');
 
   // displayScale bounds are stored in the user-picked convertUnitTo; re-express them in the effective
-  // (server-resolved) measure so the child gauge's scale lines up with the already-converted value.
+  // (server-resolved) measure so the child gauge's scale lines up with the presented value.
   protected readonly effectiveMinValue = computed<number>(() => {
     const cfg = this.runtime.options();
     const stored = cfg?.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
@@ -88,6 +89,8 @@ export class WidgetSteelGaugeComponent {
   });
 
   constructor() {
+    this.streams.useSiValues();
+
     // Data path effect
     effect(() => {
       const cfg = this.runtime.options();
@@ -98,19 +101,19 @@ export class WidgetSteelGaugeComponent {
         // Reset the tagged measure so a stale unit never paints the new subscription's value.
         this.effectiveUnit.set('');
         this.streams.observe('gaugePath', pkt => {
-          const raw = (pkt?.data?.value as number) ?? null;
+          const si = (pkt?.data?.value as number) ?? null;
           const measure = pkt?.data?.measure ?? '';
           this.effectiveUnit.set(measure);
-          // Clamp against the stored displayScale bounds re-expressed in the effective measure, so the
-          // already-converted value and the reinterpreted scale share one unit space.
+          // Clamp in the presentation measure, against the stored displayScale bounds re-expressed in
+          // it, so the value and the reinterpreted scale share one unit space.
           const stored = pathCfg.convertUnitTo ?? 'unitless';
           const lowerBound = cfg.displayScale?.lower ?? 0;
           const lower = this.unitsService.convertBetweenMeasures(stored, measure, lowerBound);
           const upper = this.unitsService.convertBetweenMeasures(stored, measure, cfg.displayScale?.upper ?? lowerBound + 100);
-          if (raw == null) {
+          if (si == null) {
             this.dataValue.set(lower);
           } else {
-            const clamped = Math.min(Math.max(raw, lower), upper);
+            const clamped = Math.min(Math.max(presentationValue(this.unitsService, measure, si), lower), upper);
             this.dataValue.set(clamped);
           }
         });

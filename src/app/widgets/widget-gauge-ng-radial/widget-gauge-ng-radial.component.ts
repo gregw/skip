@@ -19,6 +19,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective, widgetPathSignature, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
+import { presentationValue } from '../../core/utils/si-presentation.util';
 import { ITheme } from '../../core/services/app-service';
 
 @Component({
@@ -86,6 +87,7 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
   readonly gauge = viewChild('radialGauge', { read: ElementRef });
 
   // Reactive state
+  /** The reading in the presentation measure, clamped to the scale: what the needle points at. */
   protected value = signal<number | null | undefined>(undefined);
   /** True while a non-null datapoint is in hand; needle and progress bar are suppressed when false. */
   protected dataAvailable = signal(false);
@@ -156,6 +158,7 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
   }
 
   constructor() {
+    this.streams.useSiValues();
     // Data subscription effect
     effect(() => {
       const cfg = this.runtime.options();
@@ -180,13 +183,14 @@ export class WidgetGaugeNgRadialComponent implements AfterViewInit {
         const lower = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.lower ?? 0);
         const upper = this.unitsService.convertBetweenMeasures(fromUnit, toMeasure, cfg.displayScale?.upper ?? 100);
 
-        const raw = (path?.data?.value as number) ?? null;
-        this.dataAvailable.set(raw != null);
-        if (raw == null) {
+        const si = (path?.data?.value as number) ?? null;
+        this.dataAvailable.set(si != null);
+        if (si == null) {
           this.value.set(lower);
         } else {
-          // clamp
-          this.value.set(Math.min(Math.max(raw, lower), upper));
+          // The scale bounds are in the presentation measure, so the clamp is too.
+          const shown = presentationValue(this.unitsService, measure, si);
+          this.value.set(Math.min(Math.max(shown, lower), upper));
         }
         });
       });

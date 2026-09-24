@@ -10,6 +10,7 @@ import { getColors } from '../../core/utils/themeColors.utils';
 import { getHighlights } from '../../core/utils/zones-highlight.utils';
 import { UnitsService } from '../../core/services/units.service';
 import { States } from '../../core/interfaces/signalk-interfaces';
+import { presentationValue } from '../../core/utils/si-presentation.util';
 
 @Component({
   selector: 'widget-simple-linear',
@@ -57,7 +58,7 @@ export class WidgetSimpleLinearComponent {
 
   // Signals (presentation state)
   private readonly effectiveUnit = signal<string>('');
-  // Unit SYMBOL derives from the measure the streams directive applied to the value (server-resolved
+  // Unit SYMBOL derives from the measure the streams directive tags the value with (server-resolved
   // for this display path), never the stored convertUnitTo, so the label and value cannot drift. An
   // empty measure yields an empty symbol — the neutral boot placeholder until displayUnits resolves.
   protected readonly unitsLabel = computed<string>(() => {
@@ -74,9 +75,9 @@ export class WidgetSimpleLinearComponent {
   protected readonly barColorBackground = signal<string>('');
 
   // Reinterpret the stored displayScale bounds (entered in the widget's stored convertUnitTo) into the
-  // effective server-resolved measure, so the gauge scale, zone highlights and the converted value the
-  // streams directive delivers all share one unit. A no-op when the measure equals the stored unit or
-  // has not resolved yet (empty measure => bound returned unchanged).
+  // effective server-resolved measure, so the gauge scale, zone highlights and the presented value all
+  // share one unit. A no-op when the measure equals the stored unit or has not resolved yet (empty
+  // measure => bound returned unchanged).
   private reinterpretScaleBound(bound: number): number {
     const stored = this.runtime.options()?.paths?.['gaugePath']?.convertUnitTo ?? '';
     return this.unitsService.convertBetweenMeasures(stored, this.effectiveUnit(), bound);
@@ -104,6 +105,8 @@ export class WidgetSimpleLinearComponent {
   private lastState: States | null = null; // simple cache to avoid redundant color sets
 
   constructor() {
+    this.streams.useSiValues();
+
     // Data stream registration
     effect(() => {
       const cfg = this.runtime.options();
@@ -114,15 +117,15 @@ export class WidgetSimpleLinearComponent {
           const theme = this.theme();
           if (!cfg || !theme) return;
           this.effectiveUnit.set(pkt?.data?.measure ?? '');
-          const raw = pkt?.data?.value as number | null;
-            // Clamp & label formatting
-          if (raw == null) {
+          const si = pkt?.data?.value as number | null;
+          // Clamp and format in the presentation measure.
+          if (si == null) {
             this.dataValue.set(this.displayLower());
             this.dataLabelValue.set('--');
           } else {
             const lower = this.displayLower();
             const upper = this.displayUpper();
-            const clamped = Math.min(Math.max(raw, lower), upper);
+            const clamped = Math.min(Math.max(presentationValue(this.unitsService, this.effectiveUnit(), si), lower), upper);
             this.dataValue.set(clamped);
             this.dataLabelValue.set(clamped.toFixed(cfg.numDecimal));
           }

@@ -7,9 +7,9 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
-import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
-import { States } from '../../core/interfaces/signalk-interfaces';
-import { IPathUpdate } from '../../core/services/data.service';
+import { IWidgetSvcConfig, IPathArray, IDataHighlight } from '../../core/interfaces/widgets-interface';
+import { ISkZone, States } from '../../core/interfaces/signalk-interfaces';
+import { DataService, IPathUpdate } from '../../core/services/data.service';
 
 /**
  * The label and the unit are rendered by the component as one header row on the card, so the gauge
@@ -66,6 +66,8 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
 
   const unitsFake = {
     convertBetweenMeasures: (from: string, to: string, value: number): number => from === to ? value : value,
+    // Identity: these specs feed readings already expressed in the tagged measure.
+    convertToUnit: (_measure: string, value: number): number => value,
     getUnitDisplaySymbol: (measure: string | null | undefined): string => measure ?? '',
     getRenderableUnitSymbol: (measure: string | null | undefined): string =>
       (!measure || measure === 'unitless') ? '' : measure.trim(),
@@ -86,7 +88,7 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
       imports: [WidgetGaugeNgLinearComponent],
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
-        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, next: (u: IPathUpdate) => void) => {
+        { provide: WidgetStreamsDirective, useValue: { useSiValues: () => undefined, observe: (_p: string, next: (u: IPathUpdate) => void) => {
           capturedNext = next;
           observeCount++;
           // The real directive replays a BehaviorSubject, so a path holding a value delivers it
@@ -305,6 +307,184 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
       expect(internals.dataAvailable()).toBe(true);
       expect(internals.value()).toBe(6.5);
       expect(internals.effectiveUnit()).toBe('knots');
+    });
+  });
+});
+
+/**
+ * What the gauge draws for a set of SI inputs, through the real UnitsService: the value handed to
+ * the library after clamping, the scale bounds and major ticks, the header's unit and the zone
+ * highlights, with ticks on (nice tick range) and off (bounds as they are). The vertical and
+ * horizontal subtypes differ only in geometry. Pins the output so a change of the unit the widget
+ * computes in cannot move anything on screen. The stored scale is 0..100 °C; the server may
+ * present the path in another measure.
+ */
+describe('WidgetGaugeNgLinearComponent output from SI inputs', () => {
+  let fixture: ComponentFixture<WidgetGaugeNgLinearComponent>;
+  let next: ((u: IPathUpdate) => void) | undefined;
+  let siValues: boolean;
+  let siBeforeObserve: boolean | undefined;
+
+  interface LinearOutput {
+    value: () => number | null | undefined;
+    textValue: () => string;
+    gaugeOptions: LinearGaugeOptions;
+    highlights: () => IDataHighlight[];
+  }
+
+  const KELVIN = 273.15;
+  const theme = {
+    contrast: '#fff', contrastDim: '#ccc', contrastDimmer: '#999', cardColor: '#111', background: '#000',
+    zoneNominal: '#0f0', zoneAlert: '#00f', zoneWarn: '#ff0', zoneAlarm: '#f00', zoneEmergency: '#f0f'
+  };
+  // Zones are SI: warn 50..70 °C, alarm 70..100 °C.
+  const temperatureZones: ISkZone[] = [
+    { state: States.Warn, lower: KELVIN + 50, upper: KELVIN + 70 },
+    { state: States.Alarm, lower: KELVIN + 70, upper: KELVIN + 100 }
+  ];
+
+  /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
+  const feed = (si: number | null, measure: string): void => {
+    next?.({ data: { value: si, timestamp: null, measure }, state: States.Normal });
+    fixture.detectChanges();
+  };
+
+  const render = (enableTicks: boolean): void => {
+    const dflt = WidgetGaugeNgLinearComponent.DEFAULT_CONFIG;
+    const gaugePath = (dflt.paths as IPathArray)['gaugePath'];
+    const cfg: IWidgetSvcConfig = {
+      ...dflt,
+      ignoreZones: false,
+      displayScale: { lower: 0, upper: 100, type: 'linear' },
+      gauge: { ...dflt.gauge, type: 'ngLinear', subType: 'vertical', enableTicks },
+      paths: { gaugePath: { ...gaugePath, path: 'self.propulsion.main.temperature', convertUnitTo: 'celsius' } }
+    };
+    TestBed.configureTestingModule({
+      imports: [WidgetGaugeNgLinearComponent],
+      providers: [
+        UnitsService,
+        { provide: DataService, useValue: {} },
+        { provide: WidgetRuntimeDirective, useValue: { options: signal(cfg) } },
+        { provide: WidgetStreamsDirective, useValue: {
+          useSiValues: () => { siValues = true; },
+          observe: (_p: string, n: (u: IPathUpdate) => void) => { siBeforeObserve ??= siValues; next = n; }
+        } },
+        { provide: WidgetMetadataDirective, useValue: { zones: signal(temperatureZones), observe: () => undefined } }
+      ]
+    });
+    siValues = false;
+    siBeforeObserve = undefined;
+    fixture = TestBed.createComponent(WidgetGaugeNgLinearComponent);
+    fixture.componentRef.setInput('id', 'gauge-1');
+    fixture.componentRef.setInput('type', 'widget-gauge-ng-linear');
+    fixture.componentRef.setInput('theme', theme);
+    fixture.detectChanges();
+  };
+
+  const shown = () => {
+    const c = fixture.componentInstance as unknown as LinearOutput;
+    const o = c.gaugeOptions;
+    return {
+      value: c.value(),
+      text: c.textValue(),
+      min: o.minValue,
+      max: o.maxValue,
+      ticks: o.majorTicks,
+      unit: (fixture.nativeElement.querySelector('.gaugeUnit')?.textContent ?? '').trim(),
+      highlights: c.highlights()
+    };
+  };
+
+  describe('with ticks', () => {
+    beforeEach(() => render(true));
+
+    // Without the opt-in the directive hands over presentation values, and every pin below would
+    // read an already-converted number as SI.
+    it('opts in to SI values before observing its path', () => {
+      expect(siBeforeObserve).toBe(true);
+    });
+
+    it('shows a reading in the stored measure on the stored scale, with its zones', () => {
+      feed(KELVIN + 42.5, 'celsius');
+      const s = shown();
+      expect(s.value).toBeCloseTo(42.5);
+      expect(s.text).toBe('');
+      expect([s.min, s.max, s.unit]).toEqual([0, 100, '°C']);
+      expect(s.ticks).toEqual([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(50), to: expect.closeTo(70), color: '#ff0' },
+        { from: expect.closeTo(70), to: expect.closeTo(100), color: '#f00' }
+      ]);
+    });
+
+    it('re-expresses the stored scale and the zones in a server measure that differs', () => {
+      feed(KELVIN + 42.5, 'fahrenheit');
+      const s = shown();
+      expect(s.value).toBeCloseTo(108.5);
+      // 32..212 °F, widened to the nice tick range.
+      expect([s.min, s.max, s.unit]).toEqual([20, 220, '°F']);
+      expect(s.ticks).toEqual([20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220]);
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(122), to: expect.closeTo(158), color: '#ff0' },
+        { from: expect.closeTo(158), to: expect.closeTo(212), color: '#f00' }
+      ]);
+    });
+
+    it('clamps a reading above the scale to the re-expressed upper bound, not the tick range', () => {
+      feed(KELVIN + 150, 'fahrenheit');
+      expect(shown().value).toBeCloseTo(212);
+    });
+
+    it('clamps a reading below the scale to its lower bound', () => {
+      feed(KELVIN - 40, 'celsius');
+      expect(shown().value).toBeCloseTo(0);
+    });
+
+    it('rests the bar at the re-expressed lower bound with a placeholder on a null reading', () => {
+      feed(null, 'fahrenheit');
+      const s = shown();
+      expect(s.value).toBeCloseTo(32);
+      expect(s.text).toBe('--');
+    });
+
+    it('clamps the SI number against the stored scale while the measure is still empty', () => {
+      feed(KELVIN + 42.5, '');
+      const s = shown();
+      expect(s.value).toBe(100);
+      expect([s.min, s.max, s.unit]).toEqual([0, 100, '']);
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(50), to: expect.closeTo(70), color: '#ff0' },
+        { from: expect.closeTo(70), to: expect.closeTo(100), color: '#f00' }
+      ]);
+    });
+  });
+
+  describe('without ticks', () => {
+    beforeEach(() => render(false));
+
+    it('uses the bounds as they are, with no ticks but with its zones', () => {
+      feed(KELVIN + 42.5, 'celsius');
+      const s = shown();
+      expect(s.value).toBeCloseTo(42.5);
+      expect([s.min, s.max, s.unit]).toEqual([0, 100, '°C']);
+      expect(s.ticks).toEqual([]);
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(50), to: expect.closeTo(70), color: '#ff0' },
+        { from: expect.closeTo(70), to: expect.closeTo(100), color: '#f00' }
+      ]);
+    });
+
+    it('re-expresses the bounds in a server measure that differs and clamps against them', () => {
+      feed(KELVIN + 150, 'fahrenheit');
+      const s = shown();
+      expect(s.value).toBeCloseTo(212);
+      expect(s.min).toBeCloseTo(32);
+      expect(s.max).toBeCloseTo(212);
+      expect(s.unit).toBe('°F');
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(122), to: expect.closeTo(158), color: '#ff0' },
+        { from: expect.closeTo(158), to: expect.closeTo(212), color: '#f00' }
+      ]);
     });
   });
 });
