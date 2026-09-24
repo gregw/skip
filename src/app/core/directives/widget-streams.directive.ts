@@ -102,7 +102,8 @@ export class WidgetRepointTracker {
  *
  * Key Features:
  * - Fast first emission (take(1)) merged with sampled stream for immediate render
- * - Automatic unit conversion for numeric paths via UnitsService
+ * - Numeric paths in one of two per-widget modes: converted to the presentation measure via
+ *   UnitsService (legacy), or delivered in SI with that measure alongside ({@link useSiValues})
  * - Optional stale-data timeout (gated by the enableTimeout flag; fixed 5s TTL) + retry handling
  * - Path validation: null/undefined/empty paths trigger cleanup
  * - Signature tracking: per-path (path + pathType + convertUnitTo + source + bootstrap null policy); the widget-level update cadence lives in the root signature
@@ -131,6 +132,9 @@ export class WidgetStreamsDirective implements OnDestroy {
   // Root-level signature (timeout settings) to detect when all paths need pipeline rebuild
   private reset$ = new Subject<void>();
   private rootSignature: string | undefined;
+  private siValues = false;
+  // Set by the first observe(); the value mode is fixed from then on, even if every slot is later unobserved.
+  private observed = false;
 
   /** Build a simple Observer wrapper for a given path key. */
   private buildObserver(pathKey: string, next: ((value: IPathUpdate) => void)): Observer<IPathUpdate> {
@@ -236,8 +240,9 @@ export class WidgetStreamsDirective implements OnDestroy {
     // resolved measure (which can change when displayUnits meta arrives after first subscribe).
     const isStructural = pathCfg.showConvertUnitTo === false;
     const structuralMeasure = pathCfg.convertUnitTo;
+    const siValues = this.siValues;
     const convertWith = (measure: string | undefined, val: number): number | null =>
-      measure ? this.unitsService.convertToUnit(measure, val) : val;
+      measure && !siValues ? this.unitsService.convertToUnit(measure, val) : val;
 
     let data$: Observable<IPathUpdate> = base$;
     if (subField) {
@@ -334,6 +339,24 @@ export class WidgetStreamsDirective implements OnDestroy {
     const existing = this.subscriptions.get(pathName);
     if (existing) existing.sub.unsubscribe();
     this.subscriptions.set(pathName, { sub, signature });
+  }
+
+  /**
+   * Deliver every number slot of this widget in SI, with the measure it presents in on
+   * `data.measure`: the server-resolved measure for a display slot (the stored `convertUnitTo` until
+   * meta resolves), the fixed `convertUnitTo` for a structural slot. The widget converts only where
+   * it formats text, maps to a scale or sets an SVG attribute, with
+   * `UnitsService.convertToUnit(measure, value)`.
+   *
+   * The mode belongs to the widget, not to a slot, because a widget computes across its slots
+   * (racesteer subtracts target VMG from VMG). Call it before the first `observe()`, typically from
+   * the constructor; switching once a slot is subscribed would leave that slot in the other unit.
+   */
+  public useSiValues(): void {
+    if (this.observed) {
+      throw new Error('[WidgetStreamsDirective] useSiValues() must be called before any path is observed');
+    }
+    this.siValues = true;
   }
 
   /**
@@ -482,7 +505,7 @@ export class WidgetStreamsDirective implements OnDestroy {
    * ```ts
    * // Single path numeric widget
    * this.streams.observe('speed', update => {
-   *   this.speed.set(update.data.value as number); // Auto unit-converted
+   *   this.speed.set(update.data.value as number); // In update.data.measure, or SI after useSiValues()
    * });
    *
    * // Multiple paths - call observe() once per path
@@ -496,12 +519,13 @@ export class WidgetStreamsDirective implements OnDestroy {
    * ```
    *
    * @param pathName Logical path key from widget config (config.paths[pathName])
-   * @param next Callback for processed updates (unit conversion + sampling applied)
+   * @param next Callback for processed updates (sampling, and unit conversion unless in SI mode, applied)
    * @param subField Optional sub-field key to read out of a whole compound-object value (e.g.
    *   'latitude' when the path is the canonical compound leaf 'navigation.position'). The widget
    *   owns this — it is extracted before unit conversion; a scalar value passes through unchanged.
    */
   public observe(pathName: string, next: (value: IPathUpdate) => void, subField?: string): void {
+    this.observed = true;
     // Capture previous registration before replacing it (callback + sub-field)
     const prev = this.registrations.find(r => r.pathName === pathName);
     const prevReg = prev?.next;
