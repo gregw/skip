@@ -11,6 +11,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { ITheme } from '../../core/services/app-service';
 import { HistoryGraphStreamService, IHistoryGraphStreamParams, isHistoryUnavailable } from '../../core/services/history-graph-stream.service';
 import { resolveWindowMs, deriveDataSourceInfo, IGraphDataSourceInfo } from '../../core/utils/graph-window.util';
+import { presentedBound } from '../../core/utils/si-presentation.util';
 
 import { Chart, ChartConfiguration, ChartData, ChartType, TimeUnit } from 'chart.js';
 import 'chartjs-adapter-date-fns';
@@ -104,11 +105,20 @@ export class WidgetDataGraphComponent implements OnDestroy {
     startScaleAtZero: false,
     verticalChart: false,
     showYScale: false,
-    yScaleSuggestedMin: undefined,
-    yScaleSuggestedMax: undefined,
+    yScaleSuggestedMin: null,
+    yScaleSuggestedMax: null,
     enableMinMaxScaleLimit: false,
-    yScaleMin: undefined,
-    yScaleMax: undefined,
+    yScaleMin: null,
+    yScaleMax: null,
+    siVersion: 22
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    yScaleSuggestedMin: 'SI unit of datachartPath',
+    yScaleSuggestedMax: 'SI unit of datachartPath',
+    yScaleMin: 'SI unit of datachartPath',
+    yScaleMax: 'SI unit of datachartPath'
   };
   public lineChartData: ChartData<'line', { x: number, y: number }[]> = { datasets: [] };
   public lineChartOptions: NonNullable<ChartConfiguration['options']> = {
@@ -264,6 +274,16 @@ export class WidgetDataGraphComponent implements OnDestroy {
     this.ngZone.runOutsideAngular(() => this.chart?.update());
   }
 
+  /** The value axis range: the SI y bounds in the path's measure; an unset bound leaves Chart.js to auto-scale. */
+  private valueAxisRange(cfg: IWidgetSvcConfig): { suggestedMin?: number; suggestedMax?: number; min?: number; max?: number } {
+    const measure = this.unitsService.resolvePathMeasure(cfg.datachartPath ?? '');
+    const present = (si: number | null | undefined): number | undefined =>
+      si == null ? undefined : presentedBound(this.unitsService, measure, si);
+    return cfg.enableMinMaxScaleLimit
+      ? { suggestedMin: undefined, suggestedMax: undefined, min: present(cfg.yScaleMin), max: present(cfg.yScaleMax) }
+      : { suggestedMin: present(cfg.yScaleSuggestedMin), suggestedMax: present(cfg.yScaleSuggestedMax), min: undefined, max: undefined };
+  }
+
   private setChartOptions(cfg: IWidgetSvcConfig): void {
     // Both fields are always populated by rebuildForSeries() before a graph exists, and
     // setChartOptions() is only ever called once a graph does; theme() can only be transiently
@@ -288,6 +308,7 @@ export class WidgetDataGraphComponent implements OnDestroy {
       textStrokeWidth: 3
     };
     const insideGrid = { display: true, drawTicks: false, color: theme.contrastDimmer };
+    const valueRange = this.valueAxisRange(cfg);
 
     if (cfg.verticalChart) {
       this.lineChartOptions.scales = {
@@ -324,10 +345,7 @@ export class WidgetDataGraphComponent implements OnDestroy {
           type: "linear",
           display: cfg.showYScale,
           position: "top",
-          suggestedMin: cfg.enableMinMaxScaleLimit ? undefined : cfg.yScaleSuggestedMin,
-          suggestedMax: cfg.enableMinMaxScaleLimit ? undefined : cfg.yScaleSuggestedMax,
-          min: cfg.enableMinMaxScaleLimit ? cfg.yScaleMin : undefined,
-          max: cfg.enableMinMaxScaleLimit ? cfg.yScaleMax : undefined,
+          ...valueRange,
           beginAtZero: cfg.startScaleAtZero,
           reverse: cfg.inverseYAxis,
           ticks: {
@@ -373,10 +391,7 @@ export class WidgetDataGraphComponent implements OnDestroy {
         y: {
           display: cfg.showYScale,
           position: "right",
-          suggestedMin: cfg.enableMinMaxScaleLimit ? undefined : cfg.yScaleSuggestedMin,
-          suggestedMax: cfg.enableMinMaxScaleLimit ? undefined : cfg.yScaleSuggestedMax,
-          min: cfg.enableMinMaxScaleLimit ? cfg.yScaleMin : undefined,
-          max: cfg.enableMinMaxScaleLimit ? cfg.yScaleMax : undefined,
+          ...valueRange,
           beginAtZero: cfg.startScaleAtZero,
           reverse: cfg.inverseYAxis,
           ticks: {
