@@ -43,7 +43,6 @@ describe('WidgetNumericComponent output from SI inputs', () => {
   let internals: NumericInternals;
   let options: WritableSignal<IWidgetSvcConfig | undefined>;
   let next: ((u: IPathUpdate) => void) | undefined;
-  let streamCalls: string[];
   let metaScale: WritableSignal<ISkDisplayScale | undefined>;
   let metaObserved: string[];
 
@@ -82,15 +81,12 @@ describe('WidgetNumericComponent output from SI inputs', () => {
   beforeEach(() => {
     options = signal<IWidgetSvcConfig | undefined>(undefined);
     next = undefined;
-    streamCalls = [];
     metaScale = signal<ISkDisplayScale | undefined>(undefined);
     metaObserved = [];
     const streamsFake = {
       observe: (pathName: string, cb: (u: IPathUpdate) => void) => {
-        streamCalls.push(`observe:${pathName}`);
         next = cb;
-      },
-      useSiValues: () => { streamCalls.push('useSiValues'); }
+      }
     };
     TestBed.configureTestingModule({
       providers: [
@@ -102,11 +98,6 @@ describe('WidgetNumericComponent output from SI inputs', () => {
         UnitsService
       ]
     });
-  });
-
-  it('asks for SI values before it observes its path', () => {
-    render(makeConfig());
-    expect(streamCalls).toEqual(['useSiValues', 'observe:numericPath']);
   });
 
   it('presents the tracked extremes in the measure current when they are drawn', () => {
@@ -361,7 +352,7 @@ describe('WidgetNumericComponent label row layout', () => {
     TestBed.configureTestingModule({
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
-        { provide: WidgetStreamsDirective, useValue: { observe: () => undefined, useSiValues: () => undefined } },
+        { provide: WidgetStreamsDirective, useValue: { observe: () => undefined } },
         { provide: WidgetMetadataDirective, useValue: { displayScale: () => undefined, observe: () => undefined } },
         { provide: UnitsService, useValue: unitsServiceStub },
         { provide: CanvasService, useValue: canvasFake }

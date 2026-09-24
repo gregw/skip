@@ -77,7 +77,6 @@ describe('WidgetGaugeNgRadialComponent displayScale presentation', () => {
 
     replayOnObserve = undefined;
     const streamsFake = {
-      useSiValues: () => undefined,
       observe(pathName: string, next: (u: IPathUpdate) => void) {
         lastObservedPath = pathName;
         capturedNext = next;
@@ -297,8 +296,6 @@ describe('WidgetGaugeNgRadialComponent displayScale presentation', () => {
 describe('WidgetGaugeNgRadialComponent output from SI inputs', () => {
   let fixture: ComponentFixture<WidgetGaugeNgRadialComponent>;
   let next: ((u: IPathUpdate) => void) | undefined;
-  let siValues: boolean;
-  let siBeforeObserve: boolean | undefined;
   let zones: WritableSignal<ISkZone[]>;
   let metaObserved: string[];
 
@@ -353,8 +350,7 @@ describe('WidgetGaugeNgRadialComponent output from SI inputs', () => {
         { provide: DataService, useValue: {} },
         { provide: WidgetRuntimeDirective, useValue: { options: signal(cfg) } },
         { provide: WidgetStreamsDirective, useValue: {
-          useSiValues: () => { siValues = true; },
-          observe: (_p: string, n: (u: IPathUpdate) => void) => { siBeforeObserve ??= siValues; next = n; }
+          observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }
         } },
         { provide: WidgetMetadataDirective, useValue: {
           zones,
@@ -363,8 +359,6 @@ describe('WidgetGaugeNgRadialComponent output from SI inputs', () => {
         } }
       ]
     });
-    siValues = false;
-    siBeforeObserve = undefined;
     fixture = TestBed.createComponent(WidgetGaugeNgRadialComponent);
     fixture.componentRef.setInput('id', 'gauge-1');
     fixture.componentRef.setInput('type', 'widget-gauge-ng-radial');
@@ -388,12 +382,6 @@ describe('WidgetGaugeNgRadialComponent output from SI inputs', () => {
 
   describe('measuring', () => {
     beforeEach(() => render('measuring'));
-
-    // Without the opt-in the directive hands over presentation values, and every pin below would
-    // read an already-converted number as SI.
-    it('opts in to SI values before observing its path', () => {
-      expect(siBeforeObserve).toBe(true);
-    });
 
     it('shows a reading in the stored measure on the stored scale, with its zones', () => {
       feed(KELVIN + 42.5, 'celsius');

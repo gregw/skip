@@ -48,8 +48,7 @@ describe('WidgetSteelCompassComponent', () => {
     const streamsFake = {
       observe(_pathName: string, next: (u: IPathUpdate) => void) {
         capturedNext = next;
-      },
-      useSiValues: () => undefined
+      }
     };
     await TestBed.configureTestingModule({
       imports: [WidgetSteelCompassComponent],
@@ -326,7 +325,7 @@ describe('WidgetSteelCompassComponent output from SI inputs', () => {
       imports: [WidgetSteelCompassComponent],
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options: signal<IWidgetSvcConfig | undefined>({ ...dflt, paths: { gaugePath: { ...gaugePath, path } } }) } },
-        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }, useSiValues: () => undefined } }
+        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; } } }
       ]
     });
     fixture = TestBed.createComponent(WidgetSteelCompassComponent);

@@ -423,7 +423,6 @@ export class WidgetWindComponent implements OnDestroy {
   }
 
   constructor() {
-    this.stream.useSiValues();
     // Stable stream callbacks registered via effect; directive handles diffing
     effect(() => {
       const cfg = this.runtime.options();

@@ -578,7 +578,6 @@ export class WidgetAutopilotComponent implements OnInit, OnDestroy {
   }, {equal: isEqual});
 
   constructor() {
-    this.streams?.useSiValues();
     effect(() => {
       const cfg = this.runtime?.options();
       if (!cfg) return;

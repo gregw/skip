@@ -61,8 +61,7 @@ describe('WidgetGaugeNgCompassComponent no-data state', () => {
         // The real directive replays a BehaviorSubject, so a path holding a value delivers it
         // synchronously inside the same effect run as the clear.
         if (replayOnObserve) next(replayOnObserve);
-      },
-      useSiValues: () => undefined
+      }
     };
     const unitsFake = {
       getUnitDisplaySymbol: (measure: string | null | undefined): string => measure ?? ''
@@ -222,7 +221,7 @@ describe('WidgetGaugeNgCompassComponent output from SI inputs', () => {
       imports: [WidgetGaugeNgCompassComponent],
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options: signal<IWidgetSvcConfig | undefined>({ ...dflt, paths: { gaugePath: { ...gaugePath, path } } }) } },
-        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; }, useSiValues: () => undefined } },
+        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; } } },
         { provide: UnitsService, useValue: { getUnitDisplaySymbol: (m: string | null | undefined) => m === 'deg' ? '°' : (m ?? '') } }
       ]
     });

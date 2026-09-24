@@ -30,8 +30,7 @@ describe('WidgetAutopilotComponent', () => {
   };
 
   const streamsMock = {
-    observe: vi.fn(),
-    useSiValues: () => undefined
+    observe: vi.fn()
   };
 
   const requestsMock = {

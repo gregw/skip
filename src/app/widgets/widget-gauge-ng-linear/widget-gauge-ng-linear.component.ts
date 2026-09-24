@@ -165,7 +165,6 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
   protected readonly unitSymbol = computed(() => this.unitsService.getRenderableUnitSymbol(this.effectiveUnit()));
 
   constructor() {
-    this.streams.useSiValues();
     // Observe data stream reactively
     effect(() => {
       const cfg = this.runtime.options();

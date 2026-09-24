@@ -129,7 +129,6 @@ export class WidgetHorizonComponent implements AfterViewInit, OnDestroy {
   private latestRoll = 0;
 
   constructor() {
-    this.streams.useSiValues();
     // Observe pitch path
     effect(() => {
       const cfg = this.runtime.options(); if (!cfg) return;

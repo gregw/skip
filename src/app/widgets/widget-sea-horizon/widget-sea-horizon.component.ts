@@ -991,7 +991,6 @@ export class WidgetSeaHorizonComponent {
   });
 
   constructor() {
-    this.streams.useSiValues();
     effect(() => {
       const cfg = this.runtime.options();
       if (!cfg) return;

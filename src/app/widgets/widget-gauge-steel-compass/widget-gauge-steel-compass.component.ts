@@ -377,7 +377,6 @@ export class WidgetSteelCompassComponent implements OnDestroy {
   }
 
   constructor() {
-    this.streams.useSiValues();
     // Repaint on a resize or a material change; both are rare, and the card above is untouched.
     effect(() => {
       const side = this.side();

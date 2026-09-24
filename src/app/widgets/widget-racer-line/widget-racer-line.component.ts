@@ -179,7 +179,6 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
   protected mode = signal<number>(0);
 
   constructor() {
-    this.streams.useSiValues();
     // Theme/palette effect
     effect(() => {
       const cfg = this.runtime.options();

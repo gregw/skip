@@ -113,8 +113,6 @@ export class WidgetSimpleLinearComponent {
   private lastState: States | null = null; // simple cache to avoid redundant color sets
 
   constructor() {
-    this.streams.useSiValues();
-
     // Data stream registration
     effect(() => {
       const cfg = this.runtime.options();

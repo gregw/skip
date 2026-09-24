@@ -26,7 +26,7 @@ function mount(noFrameVisible: boolean) {
     imports: [WidgetHorizonComponent],
     providers: [
       { provide: WidgetRuntimeDirective, useValue: { options } },
-      { provide: WidgetStreamsDirective, useValue: { observe: vi.fn(), useSiValues: vi.fn() } },
+      { provide: WidgetStreamsDirective, useValue: { observe: vi.fn() } },
     ],
   });
   const fixture = TestBed.createComponent(WidgetHorizonComponent);
@@ -75,7 +75,6 @@ describe('WidgetHorizonComponent sub-field extraction', () => {
           provide: WidgetStreamsDirective,
           useValue: {
             observe: (pathName: string, _next: unknown, subField?: string) => calls.push({ pathName, subField }),
-            useSiValues: () => undefined,
           },
         },
       ],
@@ -128,7 +127,7 @@ describe('WidgetHorizonComponent output from SI inputs', () => {
         { provide: WidgetRuntimeDirective, useValue: { options } },
         {
           provide: WidgetStreamsDirective,
-          useValue: { observe: (p: string, n: (u: IPathUpdate) => void) => { callbacks.set(p, n); }, useSiValues: () => undefined }
+          useValue: { observe: (p: string, n: (u: IPathUpdate) => void) => { callbacks.set(p, n); } }
         }
       ]
     });
