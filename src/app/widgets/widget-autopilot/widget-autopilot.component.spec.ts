@@ -9,6 +9,7 @@ import { SignalkRequestsService } from '../../core/services/signalk-requests.ser
 import { DashboardService } from '../../core/services/dashboard.service';
 import { UnitsService } from '../../core/services/units.service';
 import { DataService } from '../../core/services/data.service';
+import { WidgetService } from '../../core/services/widget.service';
 
 describe('WidgetAutopilotComponent', () => {
   let component: WidgetAutopilotComponent;
@@ -63,6 +64,9 @@ describe('WidgetAutopilotComponent', () => {
     TestBed.configureTestingModule({
       providers: [
         { provide: WidgetRuntimeDirective, useValue: runtimeMock },
+        // The embedded route readouts would lazy-load widget-numeric through the real WidgetService;
+        // on a slow runner that import lands after this file's environment is torn down.
+        { provide: WidgetService, useValue: { getComponentType: () => Promise.resolve(undefined) } },
         { provide: WidgetStreamsDirective, useValue: streamsMock },
         { provide: SignalkRequestsService, useValue: requestsMock },
         { provide: HttpClient, useValue: httpMock },
