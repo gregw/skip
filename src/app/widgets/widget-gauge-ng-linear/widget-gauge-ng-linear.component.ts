@@ -19,6 +19,7 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective, widgetPathSignature, WidgetRepointTracker } from '../../core/directives/widget-streams.directive';
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
+import { presentationValue } from '../../core/utils/si-presentation.util';
 import { ITheme } from '../../core/services/app-service';
 
 /** Cap on the gauge's short axis as a fraction of its long axis, so the bar never turns squat. */
@@ -85,6 +86,7 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
 
   // Reactive presentation
   protected textValue = signal('--');
+  /** The reading in the presentation measure, clamped to the scale: where the bar ends. */
   protected value = signal<number | null | undefined>(undefined);
   /** True while a non-null datapoint is in hand; needle and progress bar are suppressed when false. */
   protected dataAvailable = signal(false);
@@ -101,7 +103,7 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
   /** Enables smooth transitions only after the first static frame. */
   private animationEnabled = computed(() => this.gaugeBootstrapped());
   private currentState = signal<string>(States.Normal);
-  /** Measure the incoming value was converted to (server-resolved for this display path). '' = boot placeholder. */
+  /** Presentation measure of the incoming SI value (server-resolved for this display path). '' = boot placeholder. */
   private effectiveUnit = signal<string>('');
   /** Path identity behind the reading below; see {@link WidgetRepointTracker}. */
   private readonly repoint = new WidgetRepointTracker();
@@ -120,7 +122,7 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
     const cfg = this.runtime.options();
     if (!cfg) return { min: 0, max: 100, majorTicks: [] };
     // displayScale bounds are stored in the user-picked convertUnitTo; re-express them in the
-    // effective (server-resolved) measure so the scale lines up with the converted value.
+    // effective (server-resolved) measure so the scale lines up with the presented value.
     const stored = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
     const effective = this.effectiveUnit();
     const lower = this.unitsService.convertBetweenMeasures(stored, effective, cfg.displayScale?.lower ?? 0);
@@ -141,7 +143,7 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
 
     if (!cfg.paths?.['gaugePath']) return [];
     // Zones are in SI base; convert them to the effective measure so the bands align with the
-    // converted value and the reinterpreted scale. Fall back to the stored unit before first data.
+    // presented value and the reinterpreted scale. Fall back to the stored unit before first data.
     const effective = this.effectiveUnit() || (cfg.paths['gaugePath'].convertUnitTo ?? 'unitless');
     return getHighlights(zones, theme, effective, this.unitsService, this.adjustedScale().min, this.adjustedScale().max);
   });
@@ -150,6 +152,7 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
   protected readonly unitSymbol = computed(() => this.unitsService.getRenderableUnitSymbol(this.effectiveUnit()));
 
   constructor() {
+    this.streams.useSiValues();
     // Observe data stream reactively
     effect(() => {
       const cfg = this.runtime.options();
@@ -163,20 +166,21 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
         this.clearReadingOnRepoint(signature);
         if (!signature) return;
         this.streams.observe('gaugePath', path => {
-          const raw = (path?.data?.value as number) ?? null;
+          const si = (path?.data?.value as number) ?? null;
           const measure = path.data.measure ?? '';
           this.effectiveUnit.set(measure);
           // Clamp against the stored displayScale bounds re-expressed in the effective measure,
-          // so the (already-converted) value and the reinterpreted scale share one unit space.
+          // so the presented value and the reinterpreted scale share one unit space.
           const stored = cfg.paths?.['gaugePath']?.convertUnitTo ?? 'unitless';
           const lower = this.unitsService.convertBetweenMeasures(stored, measure, cfg.displayScale?.lower ?? 0);
           const upper = this.unitsService.convertBetweenMeasures(stored, measure, cfg.displayScale?.upper ?? 100);
-          this.dataAvailable.set(raw != null);
-          if (raw == null) {
+          this.dataAvailable.set(si != null);
+          if (si == null) {
             this.value.set(lower);
             this.textValue.set('--');
           } else {
-            const clamped = Math.min(Math.max(raw, lower), upper);
+            const shown = presentationValue(this.unitsService, measure, si);
+            const clamped = Math.min(Math.max(shown, lower), upper);
             this.value.set(clamped);
             if (this.textValue() === '--') this.textValue.set('');
           }
