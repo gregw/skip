@@ -15,6 +15,7 @@ import { DefaultConnectionConfig } from '../../../default-config/config.blank.co
 import { buildDefaultConfig } from '../../../default-config/config.default.factory';
 import { isValidConfigShape } from '../utils/config-shape.util';
 import { dashboardsRequireRemoteContexts } from '../utils/remote-context-demand.util';
+import { CONSOLE_MIGRATION_SINK, migrateConfig } from '../utils/config-migration.util';
 import { cloneDeep } from 'lodash-es';
 import { BehaviorSubject, Observable, Subscription } from 'rxjs';
 import { DataService } from './data.service';
@@ -376,18 +377,27 @@ export class AppNetworkInitService implements OnDestroy {
    * and boots an app that throws on the first toast or renders a blank page. An unusable body falls
    * back to the shipped dashboards instead.
    *
-   * A version older than this release is rendered as-is with a warning, not migrated: the migration
-   * belongs to the signed-in session that owns a slot, and a read-only visitor must not rewrite one.
+   * An older version is migrated in memory, like an imported profile, and never written back: the
+   * slot belongs to the operator, and a read-only visitor cannot rewrite it. A version newer than
+   * this release renders as-is, since no step can bring it down; one the chain cannot migrate falls
+   * back to the shipped dashboards, as an unusable body does.
    */
   private preparePublishedConfig(published: IConfig): IConfig {
     if (!isValidConfigShape(published)) {
       console.warn('[AppInit Network Service] The published shared configuration is not a usable Skip config; using the dashboards shipped with this version.');
       return buildDefaultConfig();
     }
-    if (published.app?.configVersion !== LATEST_APP_CONFIG_VERSION) {
-      console.warn(`[AppInit Network Service] The published shared configuration is version ${published.app?.configVersion}, not ${LATEST_APP_CONFIG_VERSION}. Rendering it unmigrated; republish it from a current Skip to keep it in step.`);
+    const version = published.app?.configVersion;
+    if (typeof version === 'number' && version > LATEST_APP_CONFIG_VERSION) {
+      console.warn(`[AppInit Network Service] The published shared configuration is version ${version}, newer than this release supports (${LATEST_APP_CONFIG_VERSION}). Rendering it unmigrated.`);
+      return published;
     }
-    return published;
+    try {
+      return migrateConfig(published, CONSOLE_MIGRATION_SINK).config;
+    } catch (error) {
+      console.warn(`[AppInit Network Service] The published shared configuration cannot be migrated (${(error as Error).message}); using the dashboards shipped with this version.`);
+      return buildDefaultConfig();
+    }
   }
 
   /**

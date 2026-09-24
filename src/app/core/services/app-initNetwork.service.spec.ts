@@ -15,7 +15,7 @@ import { InternetReachabilityService } from './internet-reachability.service';
 import { EmbedModeService } from './embed-mode.service';
 import { ensureLocalStorage } from '../../../test-helpers/local-storage.test-helper';
 import { DefaultConnectionConfig } from '../../../default-config/config.blank.const';
-import { REMOTE_CONFIG_FILE_VERSION } from '../constants/config-versions.const';
+import { LATEST_APP_CONFIG_VERSION, REMOTE_CONFIG_FILE_VERSION } from '../constants/config-versions.const';
 
 // jsdom has no FontFace; preloadFonts() constructs one during the end-to-end initNetworkServices runs.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,10 +59,35 @@ describe('AppNetworkInitService', () => {
 
     const validRemoteConfig = (): IConfig => ({ app: { configVersion: 11 }, theme: null, dashboards: [] } as unknown as IConfig);
 
+    // A v18 config holding one autopilot: the v18 -> v19 step fixes its heading picker and deletes
+    // its dead windAngleTrueWater slot, so the rendered config shows whether the chain ran.
+    const v18AutopilotConfig = (): IConfig => ({
+        app: { configVersion: 18 },
+        theme: { themeName: '' },
+        dashboards: [{ id: 'd1', configuration: [{ id: 'w1', selector: 'widget-host2', input: { widgetProperties: {
+            type: 'widget-autopilot', uuid: 'w1', config: { paths: {
+                headingTrue: { path: 'self.navigation.headingTrue', isPathConfigurable: true },
+                windAngleTrueWater: { path: 'self.environment.wind.angleTrueWater' }
+            } }
+        } } }] }]
+    } as unknown as IConfig);
+
+    function autopilotPaths(config: IConfig): Record<string, { isPathConfigurable?: boolean }> {
+        return (config.dashboards[0].configuration?.[0] as unknown as {
+            input: { widgetProperties: { config: { paths: Record<string, { isPathConfigurable?: boolean }> } } };
+        }).input.widgetProperties.config.paths;
+    }
+
+    function bootstrappedConfig(): IConfig {
+        return mockStorage.bootstrapRemoteContext.mock.calls[0][0].initConfig;
+    }
+
     const mockStorage = {
         waitUntilReady: vi.fn().mockResolvedValue(true),
         getConfig: vi.fn().mockResolvedValue(validRemoteConfig()),
         listConfigs: vi.fn().mockResolvedValue([]),
+        setConfig: vi.fn().mockResolvedValue(undefined),
+        canPersist: vi.fn().mockReturnValue(true),
         bootstrapRemoteContext: vi.fn()
     };
 
@@ -87,6 +112,8 @@ describe('AppNetworkInitService', () => {
         mockStorage.getConfig.mockReset().mockResolvedValue(validRemoteConfig());
         mockStorage.listConfigs.mockReset().mockResolvedValue([]);
         mockStorage.bootstrapRemoteContext.mockClear();
+        mockStorage.setConfig.mockClear();
+        mockStorage.canPersist.mockClear().mockReturnValue(true);
         mockConnection.setSubscribeAll.mockClear();
         mockEmbed.embed.mockClear().mockReturnValue(false);
         mockEmbed.profile.mockClear().mockReturnValue(null);
@@ -476,7 +503,7 @@ describe('AppNetworkInitService', () => {
         });
 
         it('reads the published dashboard from the global scope', async () => {
-            const published = { app: { configVersion: 11 }, theme: null, dashboards: [{ id: 'published' }] } as unknown as IConfig;
+            const published = { app: { configVersion: LATEST_APP_CONFIG_VERSION }, theme: null, dashboards: [{ id: 'published' }] } as unknown as IConfig;
             mockStorage.getConfig.mockResolvedValue(published);
 
             await service.initNetworkServices();
@@ -486,6 +513,61 @@ describe('AppNetworkInitService', () => {
                 expect.objectContaining({ initConfig: published, readOnly: true })
             );
             expect(latestStatus()).toBe('ready');
+        });
+
+        it('renders an older published config migrated in memory, writing nothing back', async () => {
+            mockStorage.getConfig.mockResolvedValue(v18AutopilotConfig());
+
+            await service.initNetworkServices();
+
+            const rendered = bootstrappedConfig();
+            expect(rendered.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
+            expect(autopilotPaths(rendered)['windAngleTrueWater']).toBeUndefined();
+            expect(autopilotPaths(rendered)['headingTrue'].isPathConfigurable).toBe(false);
+            expect(mockStorage.setConfig).not.toHaveBeenCalled();
+            expect(latestStatus()).toBe('ready');
+        });
+
+        it('renders a published config newer than this release unmigrated, with a warning', async () => {
+            const newer = { app: { configVersion: LATEST_APP_CONFIG_VERSION + 1 }, theme: null, dashboards: [{ id: 'newer' }] } as unknown as IConfig;
+            mockStorage.getConfig.mockResolvedValue(newer);
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+            await service.initNetworkServices();
+
+            expect(bootstrappedConfig()).toEqual(newer);
+            expect(warn).toHaveBeenCalledWith(expect.stringMatching(/newer/i));
+            warn.mockRestore();
+        });
+
+        it('falls back to the shipped dashboards when the published config cannot be migrated', async () => {
+            mockStorage.getConfig.mockResolvedValue({ app: {}, theme: null, dashboards: [{ id: 'unversioned' }] } as unknown as IConfig);
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+            await service.initNetworkServices();
+
+            const rendered = bootstrappedConfig();
+            expect(rendered.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
+            expect(rendered.dashboards.some(d => d.id === 'unversioned')).toBe(false);
+            expect(rendered.dashboards.length).toBeGreaterThan(0);
+            expect(warn).toHaveBeenCalledWith(expect.stringMatching(/recognizable version/i));
+            expect(latestStatus()).toBe('ready');
+            warn.mockRestore();
+        });
+
+        it('falls back to the shipped dashboards when the published config is below the migration floor', async () => {
+            mockStorage.getConfig.mockResolvedValue({ app: { configVersion: 10 }, theme: null, dashboards: [{ id: 'ancient' }] } as unknown as IConfig);
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+            await service.initNetworkServices();
+
+            const rendered = bootstrappedConfig();
+            expect(rendered.app?.configVersion).toBe(LATEST_APP_CONFIG_VERSION);
+            expect(rendered.dashboards.some(d => d.id === 'ancient')).toBe(false);
+            expect(rendered.dashboards.length).toBeGreaterThan(0);
+            expect(warn).toHaveBeenCalledWith(expect.stringMatching(/too old/i));
+            expect(latestStatus()).toBe('ready');
+            warn.mockRestore();
         });
 
         // The subscribe scope is picked pre-auth from the device's OWN profile demand, which describes
