@@ -73,16 +73,28 @@ function arcStart(r: number, deg: number): string {
 type GaugeOverrides = Partial<NonNullable<IWidgetSvcConfig['gauge']>>;
 
 /**
+ * The specs state attitude readings and heel angles in degrees, as the dial shows them. These two
+ * say how each reaches the widget: a reading as the streams directive delivers it, and a heel
+ * angle as the widget config stores it.
+ */
+const delivered = (deg: number | null): number | null => deg;
+const storedHeelAngle = (deg: number): number => deg;
+
+/**
  * A merged config as the runtime directive would hand it to the widget, with the gauge block
- * overridable per test. The specs provide it directly rather than leaning on DEFAULT_CONFIG, so a
- * test states the settings it depends on instead of inheriting them silently.
+ * overridable per test and its heel angles given in degrees. The specs provide it directly rather
+ * than leaning on DEFAULT_CONFIG, so a test states the settings it depends on instead of
+ * inheriting them silently.
  */
 function baseConfig(gauge: GaugeOverrides = {}): IWidgetSvcConfig {
+  const stored: GaugeOverrides = { ...gauge };
+  if (typeof stored.heelCautionAngle === 'number') stored.heelCautionAngle = storedHeelAngle(stored.heelCautionAngle);
+  if (typeof stored.heelAlarmAngle === 'number') stored.heelAlarmAngle = storedHeelAngle(stored.heelAlarmAngle);
   return {
     numDecimal: 1,
     updateInterval: 1000,
     paths: ATTITUDE_PATHS,
-    gauge: { type: 'seaHorizon', ...gauge }
+    gauge: { type: 'seaHorizon', ...stored }
   } as unknown as IWidgetSvcConfig;
 }
 
@@ -124,6 +136,7 @@ function mount(config: IWidgetSvcConfig): Harness {
           // Mirrors WidgetStreamsDirective.observe: an unchanged (signature, callback, sub-field)
           // triple is a no-op, anything else tears the pipeline down and rebuilds it. The real
           // widgetPathSignature is used so the fake cannot drift from the rule it models.
+          useSiValues: () => undefined,
           observe: (pathName: string, next: StreamCallback, subField?: string) => {
             callbacks.set(pathName, next);
             observed.push({ pathName, subField });
@@ -151,7 +164,7 @@ function mount(config: IWidgetSvcConfig): Harness {
     observed,
     subscriptions: () => subscriptions,
     rebuilds: () => rebuilds,
-    emit: (pathKey, value) => callbacks.get(pathKey)?.({ data: { value } } as unknown as IPathUpdate)
+    emit: (pathKey, value) => callbacks.get(pathKey)?.({ data: { value: delivered(value) } } as unknown as IPathUpdate)
   };
 }
 
@@ -528,6 +541,28 @@ describe('WidgetSeaHorizonComponent heel bands', () => {
     h.fixture.detectChanges();
     expect(svg.querySelectorAll('.bands path')[2].getAttribute('d')?.startsWith(arcStart(BAND_R_OUTER, 15))).toBe(true);
     expect(attr(svg.querySelectorAll('.limit-index line')[0], 'x1')).toBeCloseTo(polar(LIMIT_R_OUTER, 35)[0], 6);
+  });
+
+  // What a new Sea Horizon draws: the angles its DEFAULT_CONFIG stores, read as the widget reads them.
+  it('draws the default caution band from 20° and the alarm band from 30°', () => {
+    const h = mount({ ...baseConfig(), gauge: WidgetSeaHorizonComponent.DEFAULT_CONFIG.gauge } as IWidgetSvcConfig);
+    expect(h.component.cautionAngle()).toBe(20);
+    expect(h.component.alarmAngle()).toBe(30);
+    const bands = h.component.heelBands();
+    expect(bands[2].d.startsWith(arcStart(BAND_R_OUTER, 20))).toBe(true);
+    expect(bands[4].d.startsWith(arcStart(BAND_R_OUTER, 30))).toBe(true);
+  });
+
+  // A heel inside the caution band stays there, and one past the alarm angle stays past it.
+  it('puts a 25° heel in the caution band and a 31° heel past the alarm angle', () => {
+    const h = mount(baseConfig({ heelCautionAngle: 20, heelAlarmAngle: 30 }));
+    h.emit('gaugeRollPath', 25);
+    expect(h.component.heelText()).toBe('25.0° STBD');
+    expect(h.component.cautionAngle()).toBeLessThan(25);
+    expect(h.component.alarmAngle()).toBeGreaterThan(25);
+    h.emit('gaugeRollPath', -31);
+    expect(h.component.heelText()).toBe('31.0° PORT');
+    expect(h.component.alarmAngle()).toBeLessThan(31);
   });
 
   it('defaults to a cruising band when the angles are missing', () => {
