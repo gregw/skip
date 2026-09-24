@@ -1023,6 +1023,36 @@ describe('ConfigurationUpgradeService', () => {
         expect(mockStorage.setConfig).not.toHaveBeenCalled();
     });
 
+    it('clears the blocking overlay when the v20 slot listing fails, without reloading', async () => {
+        vi.useFakeTimers();
+        try {
+            mockStorage.listConfigs.mockRejectedValueOnce(new Error('offline'));
+
+            await service.runUpgrade(20);
+
+            expect(service.upgrading()).toBe(false);
+            expect(service.error()).toContain('offline');
+            vi.advanceTimersByTime(5000);
+            expect(mockAppSettings.reloadApp).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('v20 upgrade reports a slot that fails and still upgrades the others', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'broken' }, { scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockImplementation((_scope: string, name: string) => name === 'broken'
+            ? Promise.reject(new Error('read failed'))
+            : Promise.resolve({ app: { configVersion: 20 }, theme: { themeName: '' }, dashboards: [] }));
+
+        await service.runUpgrade(20);
+
+        expect(service.error()).toContain('user/broken');
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        expect(mockStorage.setConfig.mock.calls[0][1]).toBe('default');
+        mockStorage.getConfig.mockReset().mockResolvedValue(null);
+    });
+
     it('startFresh retires BOTH global and user legacy configs via an awaited write before resetting', async () => {
         mockStorage.initConfig = null; // remote (Signal K) path
         mockStorage.listConfigs.mockResolvedValueOnce([

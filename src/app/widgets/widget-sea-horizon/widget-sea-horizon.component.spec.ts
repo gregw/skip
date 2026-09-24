@@ -126,6 +126,9 @@ function mount(config: IWidgetSvcConfig): Harness {
   const observed: { pathName: string; subField?: string }[] = [];
   const subscriptions = new Map<string, FakeSubscription>();
   let rebuilds = 0;
+  // Like the real directive: SI values only when the widget asked before observing, else the
+  // slot's convertUnitTo (degrees) — so a widget that stopped asking would read degrees as rad.
+  let siValues = false;
 
   TestBed.configureTestingModule({
     imports: [WidgetSeaHorizonComponent],
@@ -137,7 +140,10 @@ function mount(config: IWidgetSvcConfig): Harness {
           // Mirrors WidgetStreamsDirective.observe: an unchanged (signature, callback, sub-field)
           // triple is a no-op, anything else tears the pipeline down and rebuilds it. The real
           // widgetPathSignature is used so the fake cannot drift from the rule it models.
-          useSiValues: () => undefined,
+          useSiValues: () => {
+            if (observed.length) throw new Error('useSiValues() after observe()');
+            siValues = true;
+          },
           observe: (pathName: string, next: StreamCallback, subField?: string) => {
             callbacks.set(pathName, next);
             observed.push({ pathName, subField });
@@ -165,7 +171,7 @@ function mount(config: IWidgetSvcConfig): Harness {
     observed,
     subscriptions: () => subscriptions,
     rebuilds: () => rebuilds,
-    emit: (pathKey, value) => callbacks.get(pathKey)?.({ data: { value: delivered(value) } } as unknown as IPathUpdate)
+    emit: (pathKey, value) => callbacks.get(pathKey)?.({ data: { value: siValues ? delivered(value) : value } } as unknown as IPathUpdate)
   };
 }
 
