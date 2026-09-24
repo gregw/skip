@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { presentationValue, presentedBound, presentedOption, presentedScaleBounds, toDegrees } from './si-presentation.util';
+import { pathOptionMeasure, presentationValue, presentedBound, presentedOption, presentedScaleBounds, toDegrees } from './si-presentation.util';
 
 describe('toDegrees', () => {
   it('converts rad to degrees and passes null and undefined through', () => {
@@ -79,5 +79,37 @@ describe('presentedScaleBounds', () => {
     expect(presentedScaleBounds(units, 'rpm', undefined, undefined, fallback)).toEqual(fallback);
     expect(presentedScaleBounds(units, 'rpm', { lower: null, upper: 1 }, { upper: 2 }, fallback))
       .toEqual({ lower: 0, upper: 60 });
+  });
+});
+
+describe('pathOptionMeasure', () => {
+  const conversions: Record<string, (v: number) => number | string> = {
+    unitless: v => v,
+    knots: v => v * 1.94384,
+    kph: v => v * 3.6,
+    celsius: v => v - 273.15,
+    latitudeMin: v => `${v}°`
+  };
+  const serverMeasures: Record<string, string> = { 'self.navigation.speedOverGround': 'kph' };
+  const units = {
+    resolvePathMeasure: (path: string) => serverMeasures[path] ?? 'unitless',
+    convertToUnit: (unit: string, value: number) => (conversions[unit]?.(value) ?? null) as number | null
+  };
+
+  it('takes the measure the server sets for the path', () => {
+    expect(pathOptionMeasure(units, 'self.navigation.speedOverGround', 'knots')).toBe('kph');
+  });
+
+  it('falls back to the unit stored with the slot', () => {
+    expect(pathOptionMeasure(units, 'self.propulsion.main.temperature', 'celsius')).toBe('celsius');
+    expect(pathOptionMeasure(units, null, 'knots')).toBe('knots');
+  });
+
+  it('is SI when neither gives a measure that converts numbers', () => {
+    expect(pathOptionMeasure(units, 'self.propulsion.main.temperature', 'unitless')).toBe('unitless');
+    expect(pathOptionMeasure(units, 'self.propulsion.main.temperature', '')).toBe('unitless');
+    expect(pathOptionMeasure(units, null, undefined)).toBe('unitless');
+    expect(pathOptionMeasure(units, 'self.navigation.position.latitude', 'latitudeMin')).toBe('unitless');
+    expect(pathOptionMeasure(units, 'self.propulsion.main.temperature', 'no-such-measure')).toBe('unitless');
   });
 });

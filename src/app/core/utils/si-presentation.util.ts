@@ -66,3 +66,25 @@ export function presentedScaleBounds(
   };
   return { lower: pick('lower'), upper: pick('upper') };
 }
+
+/**
+ * The measure an SI-stored option that follows a path is shown in, the one the widget presents the
+ * path in: the server's measure for the path, else the unit stored with the slot, else SI
+ * ('unitless'). A measure counts only when it converts numbers affinely, so a string format such as
+ * a position in degrees and minutes falls through.
+ */
+export function pathOptionMeasure(
+  units: Pick<UnitsService, 'resolvePathMeasure' | 'convertToUnit'>,
+  path: string | null | undefined,
+  storedUnit: string | null | undefined
+): string {
+  const converts = (measure: string | null | undefined): measure is string => {
+    if (!measure || measure === 'unitless') return false;
+    const f0: unknown = units.convertToUnit(measure, 0);
+    const f1: unknown = units.convertToUnit(measure, 1);
+    return typeof f0 === 'number' && typeof f1 === 'number' && Number.isFinite(f0) && Number.isFinite(f1) && f0 !== f1;
+  };
+  const server = path ? units.resolvePathMeasure(path) : null;
+  if (converts(server)) return server;
+  return converts(storedUnit) ? storedUnit : 'unitless';
+}
