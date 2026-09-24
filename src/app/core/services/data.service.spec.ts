@@ -3,10 +3,11 @@ import { HttpTestingController } from '@angular/common/http/testing';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IMeta, IPathValueData, IPathMetaData } from '../interfaces/app-interfaces';
-import { ISignalKDataValueUpdate, ISkMetadata, States } from '../interfaces/signalk-interfaces';
+import { ISignalKDataValueUpdate, ISkDisplayUnits, ISkMetadata, States } from '../interfaces/signalk-interfaces';
 import { DataService, IPathUpdate, IPathUpdateWithPath } from './data.service';
 import { SignalKDeltaService } from './signalk-delta.service';
 import { SignalKConnectionService } from './signalk-connection.service';
+import { UnitPreferencesService } from './unit-preferences.service';
 
 describe('DataService', () => {
   let service: DataService;
@@ -15,12 +16,14 @@ describe('DataService', () => {
   let metadataUpdates$: Subject<IMeta>;
   let notificationUpdates$: Subject<ISignalKDataValueUpdate>;
   let selfUpdates$: Subject<string>;
+  let displayUnits$: BehaviorSubject<ReadonlyMap<string, ISkDisplayUnits> | null>;
 
   beforeEach(() => {
     dataPathUpdates$ = new Subject<IPathValueData>();
     metadataUpdates$ = new Subject<IMeta>();
     notificationUpdates$ = new Subject<ISignalKDataValueUpdate>();
     selfUpdates$ = new Subject<string>();
+    displayUnits$ = new BehaviorSubject<ReadonlyMap<string, ISkDisplayUnits> | null>(null);
 
     TestBed.configureTestingModule({
       providers: [
@@ -34,6 +37,7 @@ describe('DataService', () => {
             subscribeSelfUpdates: () => selfUpdates$.asObservable(),
           },
         },
+        { provide: UnitPreferencesService, useValue: { displayUnits$ } },
       ],
     });
 
@@ -959,6 +963,8 @@ describe('DataService', () => {
       dataPathUpdates$.next({ context, path, source, timestamp: '2026-01-01T00:00:01.000Z', value });
     }
 
+    const DEGREES: ISkDisplayUnits = { category: 'angle', targetUnit: 'degree', symbol: '°' };
+
     const pointerPaths = (entries: IPathMetaData[]) => entries.map(entry => entry.path).filter(path => path.includes('#'));
 
     it('answers lookups for an unset slot path with nothing instead of throwing', () => {
@@ -1121,6 +1127,25 @@ describe('DataService', () => {
         expect(service.getPathMeta(`${POSITION}#/latitude`)?.displayUnits).toBeUndefined();
       });
 
+      it('gives a field the display units the server preferences give its SI unit', () => {
+        const ATTITUDE_META: ISkMetadata = {
+          description: 'Attitude',
+          properties: { roll: { type: 'number', units: 'rad', description: 'Roll' } },
+        };
+        pushMeta('navigation.attitude', ATTITUDE_META);
+        displayUnits$.next(new Map([['rad', DEGREES]]));
+
+        expect(service.getPathDisplayUnits('self.navigation.attitude#/roll')).toEqual(DEGREES);
+        expect(service.getPathMeta('self.navigation.attitude#/roll')?.displayUnits).toEqual(DEGREES);
+      });
+
+      it('gives no display units to a field whose SI unit the preferences leave out', () => {
+        pushMeta('navigation.position', POSITION_META);
+        displayUnits$.next(new Map([['rad', DEGREES]]));
+
+        expect(service.getPathDisplayUnits(`${POSITION}#/altitude`)).toBeUndefined();
+      });
+
       it('treats a malformed pointer path like an unknown path', () => {
         pushValue('navigation.position', { latitude: 60.1, longitude: 24.9 });
         pushMeta('navigation.position', POSITION_META);
@@ -1162,6 +1187,18 @@ describe('DataService', () => {
         pushMeta('navigation.position', POSITION_META);
 
         expect(metas).toEqual([null, null]);
+      });
+
+      it('re-emits the field meta with display units when the server preferences load', () => {
+        pushMeta('navigation.position', POSITION_META);
+        const metas: (ISkMetadata | null)[] = [];
+        service.getPathMetaObservable(`${POSITION}#/latitude`).subscribe(meta => metas.push(meta));
+
+        displayUnits$.next(new Map([['deg', { category: 'angleDegrees', targetUnit: 'deg' }]]));
+
+        expect(metas).toHaveLength(2);
+        expect(metas[0]?.displayUnits).toBeUndefined();
+        expect(metas[1]?.displayUnits).toEqual({ category: 'angleDegrees', targetUnit: 'deg' });
       });
 
       it('seeds from base meta that is already cached', () => {
@@ -1283,6 +1320,7 @@ describe('DataService REST meta backfill', () => {
           provide: SignalKConnectionService,
           useValue: { serverServiceEndpoint$: endpoint$, serverVersion$: new BehaviorSubject('2.27.0') },
         },
+        { provide: UnitPreferencesService, useValue: { displayUnits$: new BehaviorSubject(null) } },
       ],
     });
 
