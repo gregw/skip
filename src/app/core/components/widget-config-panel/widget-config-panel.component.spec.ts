@@ -14,6 +14,8 @@ import { IConversionPathList, UnitsService } from '../../services/units.service'
 import { AppService } from '../../services/app-service';
 import { WidgetWindComponent } from '../../../widgets/widget-windsteer/widget-windsteer.component';
 import { ensureTestIconsReady } from '../../../../test-helpers/icon-test-utils';
+import { readTileConfig } from '../single-widget-host/widget-host-bridge';
+import { LATEST_APP_CONFIG_VERSION } from '../../constants/config-versions.const';
 
 // Controllable bus connect: reject = "no host" (fast, no 10s handshake wait); resolve = a fake client.
 const h = vi.hoisted(() => ({ connectExtension: vi.fn() }));
@@ -58,11 +60,11 @@ describe('WidgetConfigPanelComponent', () => {
     });
   });
 
-  function setup(widgetService: Partial<WidgetService>) {
-    const openWidgetOptions = vi.fn(() => ({ afterClosed: () => of(undefined) }));
+  function setup(widgetService: Partial<WidgetService>, type = 'widget-wind-steer', result?: IWidgetSvcConfig) {
+    const openWidgetOptions = vi.fn(() => ({ afterClosed: () => of(result) }));
     TestBed.configureTestingModule({
       providers: [
-        { provide: ActivatedRoute, useValue: routeWith('widget-wind-steer') },
+        { provide: ActivatedRoute, useValue: routeWith(type) },
         { provide: WidgetService, useValue: widgetService },
         { provide: DialogService, useValue: { openWidgetOptions } }
       ]
@@ -107,6 +109,56 @@ describe('WidgetConfigPanelComponent', () => {
     const config = configPassedTo(openWidgetOptions);
     expect(config['laylineAngle']).toBe(30);   // saved overrides default
     expect(config['waypointEnable']).toBe(true); // new default field survives the merge (not saved-alone)
+  });
+
+  function hostWithState(values: Record<string, unknown>) {
+    const set = vi.fn().mockResolvedValue(undefined);
+    h.connectExtension.mockResolvedValue({
+      close: vi.fn(),
+      call: vi.fn().mockResolvedValue({}),
+      state: { get: async () => values, set }
+    });
+    return set;
+  }
+
+  // Loaded widget with a fixed default, so the seeded form is the saved config merged onto it.
+  const loadedWidget = (defaults: Record<string, unknown>) => ({
+    getWidgetName: () => 'Test Widget',
+    getComponentType: vi.fn(async () => ({})),
+    getDefaultConfig: vi.fn(() => structuredClone(defaults) as unknown as IWidgetSvcConfig)
+  } as unknown as Partial<WidgetService>);
+
+  it('seeds the form with the saved config migrated from its stamped version', async () => {
+    hostWithState({ config: { paths: { windAngleTrueWater: { path: 'self.environment.wind.angleTrueWater' } } }, configVersion: 18 });
+    const { openWidgetOptions, component } = setup(loadedWidget({ paths: {} }), 'widget-autopilot');
+
+    await component.ngOnInit();
+
+    const paths = configPassedTo(openWidgetOptions)['paths'] as Record<string, unknown>;
+    expect(paths['windAngleTrueWater']).toBeUndefined();
+  });
+
+  it('seeds the form with the defaults when the saved config cannot be migrated', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    hostWithState({ config: { updateInterval: 3000 }, configVersion: LATEST_APP_CONFIG_VERSION + 1 });
+    const { openWidgetOptions, component } = setup(loadedWidget({ updateInterval: 1000 }));
+
+    await component.ngOnInit();
+
+    expect(configPassedTo(openWidgetOptions)['updateInterval']).toBe(1000);
+    warn.mockRestore();
+  });
+
+  it('saves the edited config stamped with the current version, which the tile then applies as saved', async () => {
+    const saved = { updateInterval: 2500 } as IWidgetSvcConfig;
+    const set = hostWithState({ config: { updateInterval: 3000 } });
+    const { component } = setup(loadedWidget({ updateInterval: 1000 }), 'widget-wind-steer', saved);
+
+    await component.ngOnInit();
+
+    expect(set).toHaveBeenCalledExactlyOnceWith({ config: saved, configVersion: LATEST_APP_CONFIG_VERSION });
+    const written = set.mock.calls[0][0] as Record<string, unknown>;
+    expect(readTileConfig('widget-wind-steer', written)).toEqual(saved);
   });
 
   it('does not open the settings dialog for an unrecognized widget type', async () => {

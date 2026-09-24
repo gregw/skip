@@ -31,6 +31,7 @@ import { NotificationOverlayService } from './core/services/notification-overlay
 import { DialogService } from './core/services/dialog.service';
 import { resolveBrowserTabTitle } from './core/utils/browser-tab-title.util';
 import { HOTKEY_KEYS, isInteractiveKeyTarget, isBlockingOverlayOpen } from './core/utils/hotkey-target.util';
+import { skipsPersistentUpgrade } from './core/utils/config-migration.util';
 
 const MOUSE_PEEK_THROTTLE_MS = 250;
 
@@ -105,7 +106,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       // reloads the app), nor surface the manual upgrade-instructions dialog. Defer both to a
       // full-app session. Any session storage refuses writes from is in the same position — it
       // cannot rewrite the config, and the instructions ask for actions it cannot take.
-      if (this.embed() || !this._storage.canPersist()) {
+      if (skipsPersistentUpgrade(this._embedMode, this._storage)) {
         return;
       }
       if (this.settings.configUpgrade()) {
