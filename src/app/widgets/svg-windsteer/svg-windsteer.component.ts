@@ -1,7 +1,7 @@
 import { Component, ElementRef, input, viewChild, signal, computed, effect, untracked, ChangeDetectionStrategy, OnDestroy, NgZone, inject } from '@angular/core';
-import { animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
+import { animateProgress, animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
 import { DecimalPipe } from '@angular/common';
-import { OverlayPoint, vmcEdgeRuns } from '../../core/utils/polar-overlay.util';
+import { OverlayPoint, interpolateOverlay, vmcEdgeRuns } from '../../core/utils/polar-overlay.util';
 import { toDegrees } from '../../core/utils/si-presentation.util';
 
 /** Polar overlay state the parent resolves: hidden, the polar curve, or the VMC curve. */
@@ -12,6 +12,35 @@ export const POLAR_OVERLAY_PEAK_RADIUS = 300;
 export const POLAR_OVERLAY_DIAL_RADIUS = 350;
 
 const angle = ([a, b], [c, d], [e, f]) => (Math.atan2(f - d, e - c) - Math.atan2(b - d, a - c) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+
+/**
+ * An overlay element's drawn state. It eases from what is drawn to each new target over one update
+ * interval, and jumps when it appears or when the overlay mode, and so its meaning, changes.
+ */
+class OverlayTween<T> {
+  readonly shown = signal<T | null>(null);
+  private mode: PolarOverlayMode | null = null;
+  private cancel: (() => void) | null = null;
+
+  constructor(private readonly lerp: (from: T, to: T, t: number) => T) {}
+
+  to(target: T | null, mode: PolarOverlayMode, duration: number, ngZone: NgZone): void {
+    this.stop();
+    const from = this.shown();
+    const jump = from === null || target === null || mode !== this.mode;
+    this.mode = mode;
+    if (jump) {
+      this.shown.set(target);
+      return;
+    }
+    this.cancel = animateProgress(duration, t => this.shown.set(this.lerp(from, target, t)), ngZone);
+  }
+
+  stop(): void {
+    this.cancel?.();
+    this.cancel = null;
+  }
+}
 
 interface ISVGRotationObject {
   oldValue: number,
@@ -124,17 +153,18 @@ export class SvgWindsteerComponent implements OnDestroy {
     return this.waypointEnabled() && a != null && Number.isFinite(a);
   });
 
-  protected readonly polarCurvePath = computed(() =>
-    this.polarOverlayMode() === 'polar' ? this.overlayPath(this.polarCurve(), false) : '');
-  protected readonly vmcFillPath = computed(() =>
-    this.polarOverlayMode() === 'vmc' ? this.overlayPath(this.vmcCurve(), true) : '');
-  protected readonly vmcEdgePath = computed(() => this.polarOverlayMode() === 'vmc'
-    ? vmcEdgeRuns(this.vmcCurve() ?? []).map(run => this.overlayPath(run, false)).join(' ')
-    : '');
+  private readonly polarCurveTween = new OverlayTween<OverlayPoint[]>(interpolateOverlay);
+  private readonly vmcCurveTween = new OverlayTween<OverlayPoint[]>(interpolateOverlay);
+  private readonly overlayDotTween = new OverlayTween<number>((from, to, t) => t >= 1 ? to : from + (to - from) * t);
+
+  protected readonly polarCurvePath = computed(() => this.overlayPath(this.polarCurveTween.shown(), false));
+  protected readonly vmcFillPath = computed(() => this.overlayPath(this.vmcCurveTween.shown(), true));
+  protected readonly vmcEdgePath = computed(() =>
+    vmcEdgeRuns(this.vmcCurveTween.shown() ?? []).map(run => this.overlayPath(run, false)).join(' '));
   /** Y of the dot's center on the bow axis, or null when it is hidden. */
   protected readonly overlayDotY = computed(() => {
-    const r = this.overlayDotRadius();
-    return this.polarOverlayMode() !== 'hidden' && r != null && Number.isFinite(r) ? this.CENTER - r : null;
+    const r = this.overlayDotTween.shown();
+    return r === null ? null : this.CENTER - r;
   });
 
   // Close-hauled lines
@@ -360,6 +390,24 @@ export class SvgWindsteerComponent implements OnDestroy {
           }
         }
       });
+    });
+
+    // The overlay curves and the dot ease between updates like the pointers around them.
+    effect(() => {
+      const mode = this.polarOverlayMode();
+      const curve = this.polarCurve();
+      untracked(() => this.polarCurveTween.to(mode === 'polar' && curve?.length ? curve : null, mode, this.animationDuration(), this.ngZone));
+    });
+    effect(() => {
+      const mode = this.polarOverlayMode();
+      const curve = this.vmcCurve();
+      untracked(() => this.vmcCurveTween.to(mode === 'vmc' && curve?.length ? curve : null, mode, this.animationDuration(), this.ngZone));
+    });
+    effect(() => {
+      const mode = this.polarOverlayMode();
+      const r = this.overlayDotRadius();
+      const shown = mode !== 'hidden' && r != null && Number.isFinite(r) ? r : null;
+      untracked(() => this.overlayDotTween.to(shown, mode, this.animationDuration(), this.ngZone));
     });
 
     // The polar curve turns with the water TWA, eased like the true-wind pointer so the two move together.
@@ -594,6 +642,10 @@ export class SvgWindsteerComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.polarCurveTween.stop();
+    this.vmcCurveTween.stop();
+    this.overlayDotTween.stop();
+
     // Cancel close-hauled line animations
     if (this.portCloseHauledLineAnimId) cancelAnimationFrame(this.portCloseHauledLineAnimId);
     if (this.stbdCloseHauledLineAnimId) cancelAnimationFrame(this.stbdCloseHauledLineAnimId);
