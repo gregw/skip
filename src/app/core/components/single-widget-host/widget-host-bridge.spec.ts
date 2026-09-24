@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WidgetHostBridge, installLongPress, parseStoredConfig } from './widget-host-bridge';
+import { WidgetHostBridge, installLongPress, parseStoredConfig, readTileConfig, tileConfigState } from './widget-host-bridge';
+import type { IWidgetSvcConfig } from '../../interfaces/widgets-interface';
+import { LATEST_APP_CONFIG_VERSION } from '../../constants/config-versions.const';
 
 // Fake plotter-extension client so the bus loop can be exercised without a real host.
 const bus = vi.hoisted(() => {
-  let stored: unknown;
+  let stored: Record<string, unknown> = {};
   let onStateChanged: (() => void) | null = null;
   const client = {
     call: () => Promise.resolve({}),
     close: () => undefined,
     state: {
-      get: () => Promise.resolve({ config: stored }),
+      get: () => Promise.resolve(stored),
       set: () => Promise.resolve()
     },
     subscribe: (_patterns: string[], cb: () => void) => {
@@ -19,7 +21,7 @@ const bus = vi.hoisted(() => {
   };
   return {
     client,
-    setStored: (v: unknown) => { stored = v; },
+    setState: (values: Record<string, unknown>) => { stored = values; },
     fireStateChanged: () => onStateChanged?.()
   };
 });
@@ -90,17 +92,89 @@ describe('parseStoredConfig', () => {
   });
 });
 
+// An autopilot tile config the v18 -> v19 step changes: its dead windAngleTrueWater slot is deleted.
+const v18AutopilotTile = (): IWidgetSvcConfig => ({
+  paths: { windAngleTrueWater: { path: 'self.environment.wind.angleTrueWater' } }
+} as unknown as IWidgetSvcConfig);
+
+describe('readTileConfig', () => {
+  it('reads an unstamped tile config as the version before the stamp existed', () => {
+    // No step starts at that version yet, so the config comes back as saved.
+    expect(readTileConfig('widget-wind-steer', { config: { updateInterval: 1000 } })).toEqual({ updateInterval: 1000 });
+  });
+
+  it('migrates a tile config from its stamped version', () => {
+    const migrated = readTileConfig('widget-autopilot', { config: v18AutopilotTile(), configVersion: 18 });
+
+    expect((migrated?.paths as unknown as Record<string, unknown>)['windAngleTrueWater']).toBeUndefined();
+  });
+
+  it('applies a config stamped with the current version as saved', () => {
+    const cfg = { updateInterval: 2000 } as IWidgetSvcConfig;
+
+    expect(readTileConfig('widget-wind-steer', tileConfigState(cfg))).toEqual(cfg);
+  });
+
+  it('ignores a tile config that cannot be migrated, with a warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(readTileConfig('widget-wind-steer', { config: { updateInterval: 1000 }, configVersion: LATEST_APP_CONFIG_VERSION + 1 })).toBeNull();
+    expect(readTileConfig('widget-wind-steer', { config: { updateInterval: 1000 }, configVersion: 'v19' })).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('reads no config when none is saved', () => {
+    expect(readTileConfig('widget-wind-steer', {})).toBeNull();
+    expect(readTileConfig('widget-wind-steer', { configVersion: LATEST_APP_CONFIG_VERSION })).toBeNull();
+  });
+});
+
+describe('tileConfigState', () => {
+  it('stamps the saved config with the current version beside it, not inside it', () => {
+    const cfg = { updateInterval: 2000 } as IWidgetSvcConfig;
+
+    expect(tileConfigState(cfg)).toEqual({ config: cfg, configVersion: LATEST_APP_CONFIG_VERSION });
+    expect(cfg).toEqual({ updateInterval: 2000 });
+  });
+});
+
 describe('WidgetHostBridge', () => {
   it('loads the saved per-instance config on connect and follows later state.changed events', async () => {
-    bus.setStored({ updateInterval: 3000 });
+    bus.setState({ config: { updateInterval: 3000 } });
     const bridge = new WidgetHostBridge();
-    bridge.enable();
+    bridge.enable('widget-wind-steer');
     await vi.waitFor(() => expect(bridge.config()).toEqual({ updateInterval: 3000 }));
 
-    bus.setStored({ updateInterval: 5000 });
+    bus.setState({ config: { updateInterval: 5000 } });
     bus.fireStateChanged();
     await vi.waitFor(() => expect(bridge.config()).toEqual({ updateInterval: 5000 }));
 
     bridge.disable();
+  });
+
+  it('migrates the saved config for the hosted widget type before exposing it', async () => {
+    bus.setState({ config: v18AutopilotTile(), configVersion: 18 });
+    const bridge = new WidgetHostBridge();
+    bridge.enable('widget-autopilot');
+
+    await vi.waitFor(() => expect(bridge.config()).not.toBeNull());
+    expect((bridge.config()?.paths as unknown as Record<string, unknown>)['windAngleTrueWater']).toBeUndefined();
+
+    bridge.disable();
+  });
+
+  it('exposes no config when the saved one cannot be migrated, so the widget keeps its defaults', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    bus.setState({ config: { updateInterval: 3000 }, configVersion: LATEST_APP_CONFIG_VERSION + 1 });
+    const bridge = new WidgetHostBridge();
+    bridge.enable('widget-wind-steer');
+
+    // The warning is raised after the saved config was read, so the bridge has settled by then.
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(bridge.config()).toBeNull();
+
+    bridge.disable();
+    warn.mockRestore();
   });
 });

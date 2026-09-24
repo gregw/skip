@@ -6,7 +6,7 @@ import type { ExtensionClient } from 'signalk-plotterext-bus/extension';
 import { DialogService } from '../../services/dialog.service';
 import { WidgetService } from '../../services/widget.service';
 import { IWidgetSvcConfig } from '../../interfaces/widgets-interface';
-import { WIDGET_CONFIG_STATE_KEY, parseStoredConfig } from '../single-widget-host/widget-host-bridge';
+import { TILE_CONFIG_STATE_KEYS, readTileConfig, tileConfigState } from '../single-widget-host/widget-host-bridge';
 
 /**
  * Build the widget-options dialog's close handler: Save (a result config) persists it to host state;
@@ -29,8 +29,8 @@ export function makeConfigResultHandler(
  *
  * It reuses Skip's real widget-settings dialog (`DialogService.openWidgetOptions` →
  * `RootModalWidgetConfigComponent`) rather than a bespoke form: seeded with the widget's current
- * config from host `state`, and on Save it writes the edited config back to `state` (which the widget
- * iframe follows via `state.changed`). Because it drives the actual options dialog with the passed
+ * config from host `state`, migrated to the current version, and on Save it writes the edited config
+ * back to `state` stamped with that version (the widget iframe follows it via `state.changed`). Because it drives the actual options dialog with the passed
  * config, this panel is generic across any widget exposed as a plotter-extension widget.
  */
 @Component({
@@ -55,7 +55,7 @@ export class WidgetConfigPanelComponent implements OnInit, OnDestroy {
     // Load the widget component so its static DEFAULT_CONFIG is cached: this iframe never renders the
     // widget, so getDefaultConfig would otherwise be empty and the options form would have no fields.
     // Runs alongside the host connect.
-    const [saved] = await Promise.all([this.connectAndLoad(), this.widgetService.getComponentType(type)]);
+    const [saved] = await Promise.all([this.connectAndLoad(type), this.widgetService.getComponentType(type)]);
     if (this.disposed) return;
 
     // Seed the form with the saved config merged onto the CURRENT default (like the tile applies it),
@@ -69,7 +69,7 @@ export class WidgetConfigPanelComponent implements OnInit, OnDestroy {
       cancelBtnText: 'Cancel'
     });
     const onClosed = makeConfigResultHandler(
-      (cfg) => { void this.client?.state.set({ [WIDGET_CONFIG_STATE_KEY]: cfg }).catch(() => { /* host lacks state / write failed: config not persisted */ }); },
+      (cfg) => { void this.client?.state.set(tileConfigState(cfg)).catch(() => { /* host lacks state / write failed: config not persisted */ }); },
       () => { void this.client?.call('ui.closePanel').catch(() => { /* no host */ }); }
     );
     ref.afterClosed()
@@ -83,15 +83,18 @@ export class WidgetConfigPanelComponent implements OnInit, OnDestroy {
     this.client = null;
   }
 
-  /** Connect to the host and read the widget's saved config, or null when none / no host. */
-  private async connectAndLoad(): Promise<IWidgetSvcConfig | null> {
+  /**
+   * Connect to the host and read the widget's saved config, migrated as the tile migrates it, or
+   * null when none is saved, it cannot be migrated, or there is no host.
+   */
+  private async connectAndLoad(type: string): Promise<IWidgetSvcConfig | null> {
     try {
       const { connectExtension } = await import('signalk-plotterext-bus/extension');
       const client = await connectExtension({ onError: () => { /* transport noise */ } });
       if (this.disposed) { client.close(); return null; }
       this.client = client;
-      const values = await client.state.get([WIDGET_CONFIG_STATE_KEY]);
-      return parseStoredConfig(values[WIDGET_CONFIG_STATE_KEY]);
+      const values = await client.state.get([...TILE_CONFIG_STATE_KEYS]);
+      return readTileConfig(type, values);
     } catch {
       // No host (direct-URL open) or handshake timeout: fall back to defaults; Save is inert.
       return null;

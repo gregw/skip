@@ -26,7 +26,8 @@ export function applySavedConfig(cfg: IWidgetSvcConfig | null, host: Pick<Widget
  *
  * Removal + settings: `WidgetHostBridge` relays a long-press to the host (opening the host dialog's
  * Remove button and settings panel — the host offers no other path for a placed widget), and exposes
- * the user's saved per-instance config, which is applied to the live tile via Host2's `reconfigure`.
+ * the user's saved per-instance config, migrated for this widget type, which is applied to the live
+ * tile via Host2's `reconfigure`.
  */
 @Component({
   selector: 'app-single-widget-host',
@@ -68,7 +69,7 @@ export class SingleWidgetHostComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     // Only a really-hosted widget needs the host bridge; the unknown-type fallback does not.
-    if (this.widget()) this.bridge.enable();
+    if (this.widget()) this.bridge.enable(this.type());
   }
 
   ngOnDestroy(): void {
