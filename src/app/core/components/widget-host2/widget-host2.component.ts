@@ -308,7 +308,7 @@ export class WidgetHost2Component extends BaseWidget implements OnInit, OnDestro
         const widgetName = this.widgetService.getWidgetName(this.widgetProperties.type);
         this.dialog.openWidgetOptions({
           title: 'Widget Settings',
-          config: { ...this.widgetProperties.config, widgetName },
+          config: { ...this.widgetProperties.config, widgetName, widgetType: this.widgetProperties.type },
           confirmBtnText: 'Save',
           cancelBtnText: 'Cancel'
         }).afterClosed().subscribe(result => {

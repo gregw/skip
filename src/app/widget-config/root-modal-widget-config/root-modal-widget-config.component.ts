@@ -80,7 +80,7 @@ export class RootModalWidgetConfigComponent implements OnInit {
   private fb = inject(UntypedFormBuilder);
   private app = inject(AppService);
   private readonly destroyRef = inject(DestroyRef);
-  protected widgetConfig = inject<IWidgetSvcConfig & { widgetName?: string }>(MAT_DIALOG_DATA);
+  protected widgetConfig = inject<IWidgetSvcConfig & { widgetName?: string; widgetType?: string }>(MAT_DIALOG_DATA);
 
   public titleDialog = this.widgetConfig?.widgetName
     ? `${this.widgetConfig.widgetName} — Widget Settings`
@@ -122,9 +122,10 @@ export class RootModalWidgetConfigComponent implements OnInit {
       this.dialogRef.close();
       return;
     }
-    // widgetName is a dialog-title hint carried on the data payload, not a persisted config field.
+    // widgetName and widgetType are dialog hints carried on the data payload, not persisted config fields.
     const formConfig = cloneDeep(this.widgetConfig);
     delete formConfig.widgetName;
+    delete formConfig.widgetType;
     this.showSiOptionsInPresentationUnits(formConfig);
     this.formMaster = this.generateFormGroups(formConfig);
     this.setupWindsteerControlState();

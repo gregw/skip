@@ -64,7 +64,7 @@ export class WidgetConfigPanelComponent implements OnInit, OnDestroy {
     const current = saved ? merge(cloneDeep(defaults), saved) : defaults;
     const ref = this.dialog.openWidgetOptions({
       title: 'Widget Settings',
-      config: { ...current, widgetName },
+      config: { ...current, widgetName, widgetType: type },
       confirmBtnText: 'Save',
       cancelBtnText: 'Cancel'
     });
