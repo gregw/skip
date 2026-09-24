@@ -481,6 +481,7 @@ export function applySiSteps(config: IConfig, sink: MigrationMessageSink, upToVe
           const reset = step.convert(cfg);
           if (reset?.length) {
             const entry: ISiScaleReset = {
+              dashboardId: String(dash.id),
               dashboard: nonEmptyString(dash.name) ?? String(index + 1),
               widget: nonEmptyString(cfg['displayName']) ?? wp.type,
               type: wp.type,

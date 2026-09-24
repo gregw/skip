@@ -478,11 +478,11 @@ describe('v21 -> v22: scale bounds in SI', () => {
     }
     expect(configs[4]).toMatchObject({ yScaleMin: null, yScaleMax: null, [SI_VERSION_KEY]: 22 });
     expect(resets(migrated)).toEqual([
-      { dashboard: '1', widget: 'RPM', type: 'widget-gauge-steel', options: ['displayScale.lower', 'displayScale.upper'] },
-      { dashboard: '1', widget: 'RPM', type: 'widget-simple-linear', options: ['displayScale.lower', 'displayScale.upper'] },
-      { dashboard: '1', widget: 'RPM', type: 'widget-gauge-ng-radial', options: ['displayScale.lower', 'displayScale.upper'] },
-      { dashboard: '1', widget: 'RPM', type: 'widget-gauge-ng-linear', options: ['displayScale.lower', 'displayScale.upper'] },
-      { dashboard: '1', widget: 'SOG', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] }
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-gauge-steel', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-simple-linear', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-gauge-ng-radial', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'RPM', type: 'widget-gauge-ng-linear', options: ['displayScale.lower', 'displayScale.upper'] },
+      { dashboardId: 'd1', dashboard: '1', widget: 'SOG', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] }
     ]);
     expect(sink.infos.filter(m => /scale range/i.test(m))).toHaveLength(5);
   });
@@ -504,7 +504,7 @@ describe('v21 -> v22: scale bounds in SI', () => {
       displayName: 'Pressure', convertUnitTo: 'mbar', yScaleMin: null, yScaleMax: null, yScaleSuggestedMin: null,
       enableMinMaxScaleLimit: true, [SI_VERSION_KEY]: 22
     });
-    expect(resets(migrated)).toEqual([{ dashboard: '1', widget: 'Pressure', type: 'widget-data-chart', options: ['yScaleMin', 'yScaleMax'] }]);
+    expect(resets(migrated)).toEqual([{ dashboardId: 'd1', dashboard: '1', widget: 'Pressure', type: 'widget-data-chart', options: ['yScaleMin', 'yScaleMax'] }]);
   });
 
   it('only marks widgets without numeric bounds, adding no reset list', () => {
@@ -520,7 +520,7 @@ describe('v21 -> v22: scale bounds in SI', () => {
 
   it('names the dashboard by its name, else its position, and the widget by its displayName, else its type', () => {
     const config = {
-      app: { configVersion: 21, siScaleResets: [{ dashboard: 'Old', widget: 'Old', type: 'widget-numeric', options: ['yScaleMin'] }] },
+      app: { configVersion: 21, siScaleResets: [{ dashboardId: 'old', dashboard: 'Old', widget: 'Old', type: 'widget-numeric', options: ['yScaleMin'] }] },
       theme: { themeName: '' },
       dashboards: [
         { id: 'd1', name: 'Engine', configuration: [
@@ -535,9 +535,9 @@ describe('v21 -> v22: scale bounds in SI', () => {
     const migrated = migrateOneAppVersion(config, 21, recordingSink()) as IConfig;
 
     expect(resets(migrated)).toEqual([
-      { dashboard: 'Old', widget: 'Old', type: 'widget-numeric', options: ['yScaleMin'] },
-      { dashboard: 'Engine', widget: 'Oil', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] },
-      { dashboard: '2', widget: 'widget-data-chart', type: 'widget-data-chart', options: ['yScaleMax'] }
+      { dashboardId: 'old', dashboard: 'Old', widget: 'Old', type: 'widget-numeric', options: ['yScaleMin'] },
+      { dashboardId: 'd1', dashboard: 'Engine', widget: 'Oil', type: 'widget-numeric', options: ['yScaleMin', 'yScaleMax'] },
+      { dashboardId: 'd2', dashboard: '2', widget: 'widget-data-chart', type: 'widget-data-chart', options: ['yScaleMax'] }
     ]);
   });
 

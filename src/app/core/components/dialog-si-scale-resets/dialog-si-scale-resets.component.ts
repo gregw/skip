@@ -23,11 +23,11 @@ export class DialogSiScaleResetsComponent {
 }
 
 function groupByDashboard(resets: ISiScaleReset[]): IResetDashboard[] {
-  const groups = new Map<string, string[]>();
+  const groups = new Map<string, IResetDashboard>();
   for (const reset of resets) {
-    const widgets = groups.get(reset.dashboard) ?? [];
-    widgets.push(reset.widget);
-    groups.set(reset.dashboard, widgets);
+    const group = groups.get(reset.dashboardId) ?? { dashboard: reset.dashboard, widgets: [] };
+    group.widgets.push(reset.widget);
+    groups.set(reset.dashboardId, group);
   }
-  return Array.from(groups, ([dashboard, widgets]) => ({ dashboard, widgets }));
+  return Array.from(groups.values());
 }

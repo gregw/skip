@@ -5,9 +5,11 @@ import { DialogSiScaleResetsComponent } from './dialog-si-scale-resets.component
 import type { ISiScaleReset } from '../../interfaces/app-settings.interfaces';
 
 const RESETS: ISiScaleReset[] = [
-  { dashboard: 'Helm', widget: 'Engine RPM', type: 'widget-gauge-ng-radial', options: ['displayScale.lower', 'displayScale.upper'] },
-  { dashboard: 'Nav', widget: 'widget-data-graph', type: 'widget-data-graph', options: ['yScaleMin'] },
-  { dashboard: 'Helm', widget: 'Coolant', type: 'widget-numeric', options: ['yScaleMax'] }
+  { dashboardId: 'd1', dashboard: 'Helm', widget: 'Engine RPM', type: 'widget-gauge-ng-radial', options: ['displayScale.lower', 'displayScale.upper'] },
+  { dashboardId: 'd2', dashboard: 'Nav', widget: 'widget-data-chart', type: 'widget-data-chart', options: ['yScaleMin'] },
+  { dashboardId: 'd1', dashboard: 'Helm', widget: 'Coolant', type: 'widget-numeric', options: ['yScaleMax'] },
+  // Another dashboard with the same name: it gets its own heading.
+  { dashboardId: 'd3', dashboard: 'Helm', widget: 'Depth', type: 'widget-numeric', options: ['yScaleMax'] }
 ];
 
 function render() {
@@ -31,7 +33,7 @@ function button(el: HTMLElement, label: string): HTMLButtonElement {
 }
 
 describe('DialogSiScaleResetsComponent', () => {
-  it('lists the reset widgets under their dashboards, each dashboard once', () => {
+  it('lists the reset widgets under their dashboards, each dashboard once even when two share a name', () => {
     const { el } = render();
     const groups = Array.from(el.querySelectorAll('.reset-dashboard')).map(g => ({
       dashboard: g.querySelector('.reset-dashboard-name')?.textContent?.trim(),
@@ -39,7 +41,8 @@ describe('DialogSiScaleResetsComponent', () => {
     }));
     expect(groups).toEqual([
       { dashboard: 'Helm', widgets: ['Engine RPM', 'Coolant'] },
-      { dashboard: 'Nav', widgets: ['widget-data-graph'] }
+      { dashboard: 'Nav', widgets: ['widget-data-chart'] },
+      { dashboard: 'Helm', widgets: ['Depth'] }
     ]);
   });
 
