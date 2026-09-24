@@ -1,4 +1,5 @@
 import { DataService } from './data.service';
+import { splitPointerPath } from '../utils/pointer-path.util';
 import { Injectable, inject } from '@angular/core';
 import Qty from 'js-quantities';
 
@@ -224,6 +225,18 @@ const DURATION_FORMATTERS = {
 export type TDurationFormat = keyof typeof DURATION_FORMATTERS;
 
 const isDurationFormat = (target: string): target is TDurationFormat => Object.hasOwn(DURATION_FORMATTERS, target);
+
+/**
+ * Whether a path addresses the latitude or longitude of a position as `….position#/latitude`. Its
+ * unit is `deg`, but it takes only the Position group: the Angle group's conversions assume a value
+ * in radians.
+ */
+function isPositionCoordinate(path: string): boolean {
+  const split = splitPointerPath(path);
+  if (!split.valid || split.pointer?.length !== 1) return false;
+  const field = String(split.pointer[0]);
+  return (field === 'latitude' || field === 'longitude') && split.basePath.split('.').at(-1) === 'position';
+}
 
 @Injectable()
 
@@ -837,18 +850,10 @@ export class UnitsService {
     if (pathUnitType === null || pathUnitType === 'RFC 3339 (UTC)') {
       return { base: UNITLESS, conversions: this._conversionList };
     } else {
-      const groupList = this._conversionList.filter(unitGroup => {
-        if (unitGroup.group == 'Position' && (path.includes('position.latitude') || path.includes('position.longitude'))) {
-          return true;
-        }
-
-        const unitExists = unitGroup.units.find(unit => unit.measure == pathUnitType);
-        if (unitExists) {
-          return true;
-        }
-
-        return false;
-      });
+      const coordinate = isPositionCoordinate(path);
+      const groupList = this._conversionList.filter(unitGroup => coordinate
+        ? unitGroup.group === 'Position'
+        : unitGroup.units.some(unit => unit.measure == pathUnitType));
 
       if (groupList.length > 0) {
         const serverDefault = this.resolveServerDefaultMeasure(path, groupList);

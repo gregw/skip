@@ -1,10 +1,13 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EMPTY, Subject } from 'rxjs';
 import { FormControl, UntypedFormControl } from '@angular/forms';
 import { GraphDataOptionsComponent } from './graph-data-options.component';
 import { DataService } from '../../core/services/data.service';
 import { UnitsService } from '../../core/services/units.service';
-import { ISkPathData } from '../../core/interfaces/app-interfaces';
+import { IMeta, IPathValueData, ISkPathData } from '../../core/interfaces/app-interfaces';
+import { SignalKDeltaService } from '../../core/services/signalk-delta.service';
+import { SignalKConnectionService } from '../../core/services/signalk-connection.service';
 
 const src = (...keys: string[]): ISkPathData['sources'] =>
   Object.fromEntries(keys.map(k => [k, { sourceTimestamp: '', sourceValue: 0 }]));
@@ -24,8 +27,9 @@ describe('GraphDataOptionsComponent', () => {
         {
           provide: DataService,
           useValue: {
-            getPathsAndMetaByType: () => [],
+            getPathsAndFieldsByType: () => [],
             getPathObject: () => pathObject,
+            getPathMeta: () => null,
             getPathUnitType: (path: string) => pathUnits[path] ?? null,
           },
         },
@@ -230,3 +234,111 @@ describe('GraphDataOptionsComponent', () => {
     }
   });
 });
+
+// Against the real DataService, fed Signal K deltas, so pointer paths go through the app's lookups.
+describe('GraphDataOptionsComponent with pointer paths', () => {
+  let values$: Subject<IPathValueData>;
+  let metas$: Subject<IMeta>;
+
+  const pushValue = (path: string, value: unknown, source: string) =>
+    values$.next({ context: 'self', path, source, timestamp: '2026-09-24T10:00:00.000Z', value });
+
+  beforeEach(async () => {
+    values$ = new Subject<IPathValueData>();
+    metas$ = new Subject<IMeta>();
+    await TestBed.configureTestingModule({
+      imports: [GraphDataOptionsComponent],
+      providers: [
+        { provide: SignalKConnectionService, useValue: { serverServiceEndpoint$: EMPTY, serverVersion$: EMPTY } },
+        {
+          provide: SignalKDeltaService,
+          useValue: {
+            subscribeDataPathsUpdates: () => values$.asObservable(),
+            subscribeMetadataUpdates: () => metas$.asObservable(),
+            subscribeNotificationsUpdates: () => EMPTY,
+            subscribeSelfUpdates: () => EMPTY
+          }
+        }
+      ]
+    }).compileComponents();
+    TestBed.inject(DataService);
+
+    pushValue('navigation.attitude', { roll: -0.0384, pitch: 0.0091, yaw: null }, 'imu.0');
+    pushValue('navigation.attitude', { roll: -0.0380, pitch: 0.0090, yaw: null }, 'imu.1');
+    metas$.next({
+      context: 'self',
+      path: 'navigation.attitude',
+      meta: {
+        description: 'Vessel attitude',
+        properties: {
+          roll: { type: 'number', units: 'rad', description: 'Roll' },
+          pitch: { type: 'number', units: 'rad', description: 'Pitch' },
+          yaw: { type: 'number', units: 'rad', description: 'Yaw' }
+        }
+      }
+    });
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const mount = (path: string) => {
+    const fx = TestBed.createComponent(GraphDataOptionsComponent);
+    const set = fx.componentRef.setInput.bind(fx.componentRef) as (k: string, v: unknown) => void;
+    const pathControl = new UntypedFormControl(path);
+    const sourceControl = new UntypedFormControl({ value: '', disabled: true });
+    set('filterSelfPaths', new UntypedFormControl(true));
+    set('datachartPath', pathControl);
+    set('datachartSource', sourceControl);
+    set('timeScale', new UntypedFormControl(''));
+    set('period', new UntypedFormControl(''));
+    fx.detectChanges();
+    return { fx, pathControl, sourceControl };
+  };
+
+  const offered = (fx: ComponentFixture<GraphDataOptionsComponent>) =>
+    (fx.componentInstance as unknown as { filteredNumericPaths: () => { path: string }[] }).filteredNumericPaths()
+      .map(entry => entry.path);
+
+  it('offers the roll field of the attitude for its number slot', async () => {
+    const { fx, pathControl } = mount('');
+    expect(offered(fx)).toContain('self.navigation.attitude#/roll');
+
+    pathControl.setValue('roll');
+    await vi.advanceTimersByTimeAsync(400);
+    expect(offered(fx)).toEqual(['self.navigation.attitude#/roll']);
+  });
+
+  it('fills Source with the base path\'s sources for a picked field', () => {
+    const { fx, sourceControl } = mount('self.navigation.attitude#/roll');
+    expect((fx.componentInstance as unknown as { pathSources: () => string[] }).pathSources())
+      .toEqual(['default', 'imu.0', 'imu.1']);
+    expect(sourceControl.enabled).toBe(true);
+    expect((fx.componentInstance as unknown as { pathWarning: () => string | null }).pathWarning()).toBeNull();
+  });
+
+  it('blocks Save on a malformed pointer or one with no path before "#"', () => {
+    expect(mount('self.navigation.attitude#roll').pathControl.errors).toEqual({ pointer: true });
+    expect(mount('#/a').pathControl.errors).toEqual({ pointer: true });
+  });
+
+  it('shows the pointer error under the path field', async () => {
+    const { fx, pathControl } = mount('self.navigation.attitude#roll');
+    // The autocomplete trigger writes the control's value into the input a microtask later.
+    await vi.advanceTimersByTimeAsync(0);
+    pathControl.markAsTouched();
+    fx.detectChanges();
+    expect((fx.nativeElement as HTMLElement).querySelector('mat-error')?.textContent?.trim())
+      .toBe('After "#", write the field name starting with "/", for example "#/latitude".');
+  });
+
+  it('warns that the latest value lacks a declared field', () => {
+    const { fx, pathControl } = mount('self.navigation.attitude#/yaw');
+    expect((fx.componentInstance as unknown as { pathWarning: () => string | null }).pathWarning())
+      .toContain('its latest value has no "yaw"');
+    expect(pathControl.valid).toBe(true);
+  });
+});
+

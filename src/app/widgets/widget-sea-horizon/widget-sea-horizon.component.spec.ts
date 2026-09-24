@@ -105,7 +105,7 @@ interface Harness {
   options: WritableSignal<IWidgetSvcConfig | undefined>;
   /** Latest callback registered for a path key, so a test can push a reading through it. */
   emit: (pathKey: string, value: number | null) => void;
-  observed: { pathName: string; subField?: string }[];
+  observed: { pathName: string; pointer?: string }[];
   /** The fake's live subscriptions, keyed by path. A new object means the pipeline was rebuilt. */
   subscriptions: () => Map<string, FakeSubscription>;
   /** How many times the fake has built a pipeline. Unchanged across a call it treats as a no-op. */
@@ -113,7 +113,7 @@ interface Harness {
 }
 
 /** One live subscription in the fake, mirroring what the real directive keys a rebuild on. */
-interface FakeSubscription { next: StreamCallback; subField?: string; signature: string; }
+interface FakeSubscription { next: StreamCallback; pointer?: string; signature: string; }
 
 /**
  * Mount the widget against local fakes for the two host directives, and capture the stream
@@ -123,7 +123,7 @@ interface FakeSubscription { next: StreamCallback; subField?: string; signature:
 function mount(config: IWidgetSvcConfig): Harness {
   const options = signal<IWidgetSvcConfig | undefined>(config);
   const callbacks = new Map<string, StreamCallback>();
-  const observed: { pathName: string; subField?: string }[] = [];
+  const observed: { pathName: string; pointer?: string }[] = [];
   const subscriptions = new Map<string, FakeSubscription>();
   let rebuilds = 0;
 
@@ -134,16 +134,16 @@ function mount(config: IWidgetSvcConfig): Harness {
       {
         provide: WidgetStreamsDirective,
         useValue: {
-          // Mirrors WidgetStreamsDirective.observe: an unchanged (signature, callback, sub-field)
+          // Mirrors WidgetStreamsDirective.observe: an unchanged (signature, callback, pointer)
           // triple is a no-op, anything else tears the pipeline down and rebuilds it. The real
           // widgetPathSignature is used so the fake cannot drift from the rule it models.
-          observe: (pathName: string, next: StreamCallback, subField?: string) => {
+          observe: (pathName: string, next: StreamCallback, pointer?: string) => {
             callbacks.set(pathName, next);
-            observed.push({ pathName, subField });
+            observed.push({ pathName, pointer });
             const signature = widgetPathSignature(options()?.paths?.[pathName]) ?? '';
             const live = subscriptions.get(pathName);
-            if (live && live.signature === signature && live.next === next && live.subField === subField) return;
-            subscriptions.set(pathName, { next, subField, signature });
+            if (live && live.signature === signature && live.next === next && live.pointer === pointer) return;
+            subscriptions.set(pathName, { next, pointer, signature });
             rebuilds++;
           }
         }
@@ -171,10 +171,10 @@ function mount(config: IWidgetSvcConfig): Harness {
 describe('WidgetSeaHorizonComponent stream wiring', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
-  it('observes the whole navigation.attitude leaf and extracts pitch and roll', () => {
+  it('observes the whole navigation.attitude leaf and reads its /pitch and /roll fields', () => {
     const h = mount(baseConfig());
-    expect(h.observed).toContainEqual({ pathName: 'gaugePitchPath', subField: 'pitch' });
-    expect(h.observed).toContainEqual({ pathName: 'gaugeRollPath', subField: 'roll' });
+    expect(h.observed).toContainEqual({ pathName: 'gaugePitchPath', pointer: '/pitch' });
+    expect(h.observed).toContainEqual({ pathName: 'gaugeRollPath', pointer: '/roll' });
   });
 
   it('renders heel and trim from the live readings', () => {
@@ -253,7 +253,7 @@ describe('WidgetSeaHorizonComponent stream wiring', () => {
   });
 
   // WidgetStreamsDirective rebuilds a pipeline unless it is handed the same signature, callback and
-  // sub-field, so a fresh closure per effect run would tear down and re-subscribe both paths on
+  // pointer, so a fresh closure per effect run would tear down and re-subscribe both paths on
   // every unrelated edit — replaying the last value through the damper and restarting the stale
   // window. The fake models that rule, so this asserts the pipelines survive rather than merely
   // that the callback reference happens to match.

@@ -2,6 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { TDurationFormat, UnitsService } from './units.service';
 import { DataService } from './data.service';
+import { CONSOLE_MIGRATION_SINK, migrateWidgetConfig } from '../utils/config-migration.util';
+import { IWidgetPath, IWidgetSvcConfig } from '../interfaces/widgets-interface';
 
 describe('UnitsService', () => {
   function setup(): UnitsService {
@@ -426,6 +428,64 @@ describe('UnitsService', () => {
 
     it.each(CASES)('formats %s %d s as %s', (format, seconds, expected) => {
       expect(setup().formatDuration(format, seconds)).toBe(expected);
+    });
+  });
+
+  describe('getConversionsForPath for position coordinates and pointer paths', () => {
+    // SI units as DataService reports them: a pointer path answers with its field's units.
+    const UNITS: Record<string, string> = {
+      'self.navigation.position#/latitude': 'deg',
+      'self.navigation.position#/longitude': 'deg',
+      'self.navigation.position#/altitude': 'm',
+      'self.navigation.courseGreatCircle.nextPoint.position#/latitude': 'deg',
+      'self.navigation.attitude#/roll': 'rad',
+      'self.navigation.headingTrue': 'rad',
+      'self.environment.sunlight.position#/elevation': 'deg',
+    };
+
+    function setupWithUnits(): UnitsService {
+      TestBed.resetTestingModule();
+      const dataStub: Partial<DataService> = {
+        getPathUnitType: path => UNITS[path] ?? null,
+        getPathDisplayUnits: () => undefined,
+      };
+      TestBed.configureTestingModule({
+        providers: [UnitsService, { provide: DataService, useValue: dataStub }],
+      });
+      return TestBed.inject(UnitsService);
+    }
+
+    const groups = (service: UnitsService, path: string) => service.getConversionsForPath(path).conversions.map(g => g.group);
+
+    it.each([
+      'self.navigation.position#/latitude',
+      'self.navigation.position#/longitude',
+      'self.navigation.courseGreatCircle.nextPoint.position#/latitude',
+    ])('offers only the Position group for %s', path => {
+      expect(groups(setupWithUnits(), path)).toEqual(['Position']);
+    });
+
+    it('offers the Length group for #/altitude, from the field\'s own unit', () => {
+      expect(groups(setupWithUnits(), 'self.navigation.position#/altitude')).toEqual(['Length']);
+    });
+
+    it('offers the Angle group for a degree field that is not a coordinate', () => {
+      expect(groups(setupWithUnits(), 'self.environment.sunlight.position#/elevation')).toEqual(['Angle']);
+      expect(groups(setupWithUnits(), 'self.navigation.attitude#/roll')).toEqual(['Angle']);
+    });
+
+    it('still offers the Position-group unit a migrated v20 latitude slot stores', () => {
+      const v20 = { paths: { numericPath: { path: 'self.navigation.position.latitude', convertUnitTo: 'latitudeMin' } } } as unknown as IWidgetSvcConfig;
+      const slot = (migrateWidgetConfig('widget-numeric', v20, 20, CONSOLE_MIGRATION_SINK).paths as Record<string, IWidgetPath>)['numericPath'];
+
+      expect(slot.path).toBe('self.navigation.position#/latitude');
+      expect(slot.convertUnitTo).toBe('latitudeMin');
+      const offered = setupWithUnits().getConversionsForPath(slot.path as string).conversions.flatMap(g => g.units.map(u => u.measure));
+      expect(offered).toContain('latitudeMin');
+    });
+
+    it('resolves a field without a server preference to unitless, so the slot\'s stored unit applies', () => {
+      expect(setupWithUnits().resolvePathMeasure('self.navigation.attitude#/roll')).toBe('unitless');
     });
   });
 });

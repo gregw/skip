@@ -2,11 +2,12 @@ import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BehaviorSubject, Subject, firstValueFrom } from 'rxjs';
 import { HistoryGraphStreamService, IHistoryGraphStreamParams, isHistoryUnavailable } from './history-graph-stream.service';
-import { HistoryApiClientService, HistoryRequestError } from './history-api-client.service';
+import { HistoryApiClientService, HistoryRequestError, IHistoryValuesResponse } from './history-api-client.service';
 import { HistoryToGraphMapperService } from './history-to-graph-mapper.service';
 import { DataService, IPathUpdate } from './data.service';
 import { ConnectionState, ConnectionStateMachine } from './connection-state-machine.service';
 import { IGraphDatapoint } from '../interfaces/graph-data.interfaces';
+import { GraphStatsDomain } from '../utils/graph-stats.util';
 
 const PARAMS: IHistoryGraphStreamParams = {
   path: 'navigation.speedOverGround',
@@ -1177,6 +1178,82 @@ describe('HistoryGraphStreamService', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('pointer paths', () => {
+    const ROLL_PARAMS: IHistoryGraphStreamParams = { ...PARAMS, path: 'self.navigation.attitude#/roll' };
+    const realMapper = new HistoryToGraphMapperService();
+    const rowsResponse = (data: IHistoryValuesResponse['data']): IHistoryValuesResponse => ({
+      context: 'vessels.self',
+      range: { from: new Date(Date.now() - 60_000).toISOString(), to: new Date().toISOString() },
+      values: [{ path: 'navigation.position', method: 'last' }],
+      data
+    });
+
+    beforeEach(() => {
+      mapper.mapValuesToChartDatapoints.mockImplementation(
+        (response: IHistoryValuesResponse, options: { domain: GraphStatsDomain }) => realMapper.mapValuesToChartDatapoints(response, options)
+      );
+    });
+
+    it('backfills from the base path, not a dotted child path', async () => {
+      history.getValues.mockResolvedValue(rowsResponse([]));
+      await firstValueFrom(make().getBackfillThenLive(ROLL_PARAMS));
+      expect(history.getValues.mock.calls[0][0].paths).toBe('navigation.attitude:last');
+    });
+
+    it('neither queries history nor acquires a path for a malformed pointer', async () => {
+      const emissions: unknown[] = [];
+      let completed = false;
+      make().getBackfillThenLive({ ...PARAMS, path: 'self.navigation.position#latitude' })
+        .subscribe({ next: e => emissions.push(e), complete: () => { completed = true; } });
+      await Promise.resolve();
+
+      expect(completed).toBe(true);
+      expect(emissions).toEqual([]);
+      expect(history.getValues).not.toHaveBeenCalled();
+      expect(data.acquirePath).not.toHaveBeenCalled();
+    });
+
+    it('extracts the field from each backfilled object row', async () => {
+      const ts = new Date(Date.now() - 1_000).toISOString();
+      history.getValues.mockResolvedValue(rowsResponse([[ts, { latitude: 60.08, longitude: 21.97 }]]));
+      const params = { ...PARAMS, path: 'self.navigation.position#/latitude' };
+      const first = await firstValueFrom(make().getBackfillThenLive(params));
+      expect((first as IGraphDatapoint[]).map(p => p.data.value)).toEqual([60.08]);
+    });
+
+    it('gives no datapoints, and no error, for rows that are not objects (influxdb2 [lon, lat])', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const ts = new Date(Date.now() - 1_000).toISOString();
+        history.getValues.mockResolvedValue(rowsResponse([[ts, [21.97, 60.08]]]));
+        const params = { ...PARAMS, path: 'self.navigation.position#/latitude' };
+        const first = await firstValueFrom(make().getBackfillThenLive(params));
+        expect(first).toEqual([]);
+        expect(errors).not.toHaveBeenCalled();
+      } finally {
+        errors.mockRestore();
+      }
+    });
+
+    it('streams the resolved field from the base path after an empty backfill', async () => {
+      history.getValues.mockResolvedValue(rowsResponse([]));
+      data.getPathUnitType.mockReturnValue('rad');
+      const emissions: (IGraphDatapoint | IGraphDatapoint[] | { unavailable: true })[] = [];
+      make().getBackfillThenLive(ROLL_PARAMS).subscribe(e => emissions.push(e));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(data.acquirePath).toHaveBeenCalledWith('self.navigation.attitude', 'default');
+      path$.next({ data: { value: { roll: -0.0384, pitch: 0.0091, yaw: null }, timestamp: new Date() }, state: 'normal' });
+
+      const point = emissions[1] as IGraphDatapoint;
+      expect(point.data.value).toBeCloseTo(-0.0384);
+      // Roll is a signed angle: its stats stay negative instead of wrapping to ~2π.
+      expect(point.data.lastAverage).toBeCloseTo(-0.0384);
+      expect(point.data.lastMinimum).toBeCloseTo(-0.0384);
     });
   });
 });

@@ -5,11 +5,12 @@ import { MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { of } from 'rxjs';
 import { WidgetHistoryGraphDialogComponent } from './widget-history-graph-dialog.component';
 import { AppService } from '../../services/app-service';
-import { HistoryApiClientService } from '../../services/history-api-client.service';
+import { HistoryApiClientService, IHistoryValuesResponse } from '../../services/history-api-client.service';
 import { HistoryToGraphMapperService } from '../../services/history-to-graph-mapper.service';
 import { UnitsService } from '../../services/units.service';
 import { IWidget } from '../../interfaces/widgets-interface';
 import { ISkipSeriesDefinition } from '../../contracts/skip-series-contract';
+import { GraphStatsDomain } from '../../utils/graph-stats.util';
 
 describe('WidgetHistoryGraphDialogComponent', () => {
   let fixture: ComponentFixture<WidgetHistoryGraphDialogComponent>;
@@ -1071,5 +1072,60 @@ describe('WidgetHistoryGraphDialogComponent', () => {
     expect(resolvePathMeasureMock).not.toHaveBeenCalled();
     expect(convertToUnitMock).toHaveBeenCalledWith('deg', 14.5);
     expect(dataset?.data[0].y).toBe(14.5);
+  });
+
+  describe('pointer paths', () => {
+    const series = (path: string): ISkipSeriesDefinition => ({
+      seriesId: `widget-numeric-1:${path}`,
+      seriesUuid: `widget-numeric-1:${path}`,
+      ownerWidgetUuid: 'widget-numeric-1',
+      ownerWidgetSelector: 'widget-numeric',
+      path,
+      enabled: true
+    });
+    const ts = '2026-09-24T10:00:00Z';
+
+    beforeEach(() => {
+      const realMapper = new HistoryToGraphMapperService();
+      historyMapperMock.mapValuesToChartDatapoints.mockImplementation(
+        (response: IHistoryValuesResponse, options: { domain: GraphStatsDomain }) => realMapper.mapValuesToChartDatapoints(response, options)
+      );
+      historyApiClientMock.getValues.mockImplementation(({ paths }: { paths: string }): Promise<IHistoryValuesResponse> => {
+        const [path, method] = paths.split(':');
+        const value = path === 'navigation.attitude' ? { roll: -0.0384, pitch: 0.0091, yaw: null } : 3.2;
+        return Promise.resolve({ context: 'vessels.self', range: { from: ts, to: ts }, values: [{ path, method: method as 'last' | 'avg' }], data: [[ts, value]] });
+      });
+    });
+
+    async function loadDatasets(paths: string[]): Promise<{ label: string; data: { y: number | null }[] }[]> {
+      (component as unknown as { data: { title: string; widget: IWidget; seriesDefinitions: ISkipSeriesDefinition[] } }).data = {
+        title: 'Attitude History',
+        widget: { uuid: 'widget-numeric-1', type: 'widget-numeric', config: { displayName: 'Attitude' } } as IWidget,
+        seriesDefinitions: paths.map(series)
+      };
+      await component.loadHistoryDatasets();
+      return (component as unknown as { pendingDatasets: { label: string; data: { y: number | null }[] }[] }).pendingDatasets;
+    }
+
+    it('queries the base path with :last for a pointer series and keeps :avg for a plain one', async () => {
+      await loadDatasets(['self.navigation.attitude#/roll', 'self.navigation.speedThroughWater']);
+
+      const requested = historyApiClientMock.getValues.mock.calls.map(([query]) => query.paths);
+      expect(requested).toEqual(['navigation.attitude:last', 'navigation.speedThroughWater:avg']);
+    });
+
+    it('graphs the field from each object row, as two series labelled by their full paths', async () => {
+      const datasets = await loadDatasets(['self.navigation.attitude#/roll', 'self.navigation.attitude#/pitch']);
+
+      expect(datasets.map(d => d.label)).toEqual(['navigation.attitude#/roll', 'navigation.attitude#/pitch']);
+      expect(datasets.map(d => d.data[0].y)).toEqual([-0.0384, 0.0091]);
+    });
+
+    it('requests nothing for a malformed pointer', async () => {
+      const datasets = await loadDatasets(['self.navigation.attitude#roll']);
+
+      expect(historyApiClientMock.getValues).not.toHaveBeenCalled();
+      expect(datasets).toEqual([]);
+    });
   });
 });

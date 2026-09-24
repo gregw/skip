@@ -30,6 +30,14 @@ describe('angle-domain.util', () => {
     expect(resolveAngleDomain('self.environment.wind.angleApparent', 'rad')).toBe('signed');
   });
 
+  it('resolves attitude fields to the signed domain in pointer and dotted form', () => {
+    expect(resolveAngleDomain('self.navigation.attitude#/roll', 'rad')).toBe('signed');
+    expect(resolveAngleDomain('self.navigation.attitude#/pitch', 'rad')).toBe('signed');
+    expect(resolveAngleDomain('self.navigation.attitude#/yaw', 'rad')).toBe('signed');
+    // Unmigrated group-widget children and hand-typed history paths still use the dotted form.
+    expect(resolveAngleDomain('self.navigation.attitude.roll', 'rad')).toBe('signed');
+  });
+
   it('lets a per-chart override win over the allowlist for any radian path', () => {
     // Allowlisted (signed) path forced to direction.
     expect(resolveAngleDomain('self.steering.rudderAngle', 'rad', 'direction')).toBe('direction');

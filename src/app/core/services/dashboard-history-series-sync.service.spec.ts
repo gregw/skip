@@ -509,4 +509,40 @@ describe('DashboardHistorySeriesSyncService', () => {
             sampleTime: 1000,
         });
     });
+
+    it('builds a distinct series per pointer field of one base path, keyed by the full path', () => {
+        const service = TestBed.inject(DashboardHistorySeriesSyncService);
+        const slot = (path: string): IWidgetPath => ({
+            description: path,
+            path,
+            source: 'default',
+            pathType: 'number',
+            isPathConfigurable: true
+        });
+        const widget: IWidget = {
+            uuid: 'widget-numeric-1',
+            type: 'widget-numeric',
+            config: {
+                paths: {
+                    rollPath: slot('self.navigation.attitude#/roll'),
+                    pitchPath: slot('self.navigation.attitude#/pitch')
+                }
+            }
+        };
+
+        const series = service.resolveSeriesForWidget(widget);
+        expect(series.map(item => item.path)).toEqual(['self.navigation.attitude#/roll', 'self.navigation.attitude#/pitch']);
+        expect(new Set(series.map(item => item.seriesId)).size).toBe(2);
+    });
+
+    it('keeps a pointer datachartPath whole in the data graph series', () => {
+        const service = TestBed.inject(DashboardHistorySeriesSyncService);
+        const widget: IWidget = {
+            uuid: 'widget-data-1',
+            type: 'widget-data-chart',
+            config: { datachartPath: 'self.navigation.attitude#/roll', datachartSource: 'default' }
+        };
+
+        expect(service.resolveSeriesForWidget(widget)).toMatchObject([{ path: 'self.navigation.attitude#/roll' }]);
+    });
 });

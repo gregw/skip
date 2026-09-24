@@ -12,7 +12,7 @@ import { MatInputModule } from '@angular/material/input';
 import { IPathMetaData, ISkPathData } from '../../core/interfaces/app-interfaces';
 import { debounceTime, tap } from 'rxjs';
 import { RouterLink } from '@angular/router';
-import { pathRequiredValidator, pathSlotWarning } from '../../core/utils/path-validators.util';
+import { pathPointerValidator, pathRequiredValidator, pathSlotWarning } from '../../core/utils/path-validators.util';
 
 @Component({
   selector: 'config-graph-data-options',
@@ -82,7 +82,7 @@ export class GraphDataOptionsComponent implements OnInit {
       }
     });
 
-    this.datachartPath().setValidators([pathRequiredValidator]);
+    this.datachartPath().setValidators([pathRequiredValidator, pathPointerValidator]);
     this.datachartPath().updateValueAndValidity({ emitEvent: false });
     const currentPath = this.datachartPath()?.value;
     this.refreshPathWarning(currentPath);
@@ -96,9 +96,9 @@ export class GraphDataOptionsComponent implements OnInit {
   }
 
   private refreshPathWarning(path: string | null): void {
-    this.pathWarning.set(pathSlotWarning(path, path ? this.data.getPathObject(path) : null, {
+    this.pathWarning.set(path ? pathSlotWarning(path, this.data.getPathObject(path), {
       pathType: 'number', supportsPutOnly: false, zonesOnly: false, selfOnly: this.filterSelfPaths().value
-    }));
+    }, this.data.getPathMeta(path)) : null);
   }
 
   private refreshPathUnit(path: string | null): void {
@@ -151,7 +151,7 @@ export class GraphDataOptionsComponent implements OnInit {
   }
 
   private getPaths(): IPathMetaData[] {
-    return this.data.getPathsAndMetaByType('number', false, false, this.filterSelfPaths().value).sort();
+    return this.data.getPathsAndFieldsByType('number', false, false, this.filterSelfPaths().value).sort();
   }
 
   protected clearPathInputField(): void {
