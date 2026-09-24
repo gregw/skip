@@ -201,9 +201,9 @@ export class WidgetStreamsDirective implements OnDestroy {
 
   /** Create (or reuse) base observable, assemble pipeline, and subscribe with diff-aware replacement. */
   private buildAndSubscribe(pathName: string, next: (value: IPathUpdate) => void, cfg: IWidgetSvcConfig, pathCfg: { path: string; pathType: string; convertUnitTo?: string; showConvertUnitTo?: boolean; source?: string; suppressBootstrapNull?: boolean }, observePointer?: string): void {
-    const normalizedPath = this.normalizePath(pathCfg.path);
-    const split = normalizedPath ? splitPointerPath(normalizedPath) : null;
-    if (!normalizedPath || !split?.valid) {
+    // The same test normalizeWidgetPath applies, kept as a split for its base path and pointer.
+    const split = splitPointerPath(pathCfg.path);
+    if (!split.valid || !split.basePath) {
       const existing = this.subscriptions.get(pathName);
       if (existing) existing.sub.unsubscribe();
       this.subscriptions.delete(pathName);
@@ -336,8 +336,7 @@ export class WidgetStreamsDirective implements OnDestroy {
         takeUntilDestroyed(this.destroyRef)
       )
       .subscribe(observer);
-    const normalizedCfg = { ...pathCfg, path: normalizedPath };
-    const signature = this.computePathSignature(normalizedCfg);
+    const signature = this.computePathSignature(pathCfg);
     // Replace any existing subscription
     const existing = this.subscriptions.get(pathName);
     if (existing) existing.sub.unsubscribe();
