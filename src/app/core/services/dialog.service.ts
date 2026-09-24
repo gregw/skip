@@ -11,6 +11,8 @@ import { UpgradeConfigComponent } from '../components/upgrade-config/upgrade-con
 import { DialogDashboardPageEditorComponent } from '../components/dialog-dashboard-page-editor/dialog-dashboard-page-editor.component';
 import { DialogAisTargetComponent } from '../../widgets/widget-ais-radar/dialog-ais-target/dialog-ais-target.component';
 import { MenuNotificationsComponent } from '../components/menu-notifications/menu-notifications.component';
+import { DialogSiScaleResetsComponent } from '../components/dialog-si-scale-resets/dialog-si-scale-resets.component';
+import type { ISiScaleReset } from '../interfaces/app-settings.interfaces';
 import type { IWidgetHistoryGraphDialogData, WidgetHistoryGraphDialogComponent } from '../components/widget-history-graph-dialog/widget-history-graph-dialog.component';
 
 @Injectable({
@@ -75,6 +77,18 @@ export class DialogService {
         data: data,
         minWidth: "35vw",
         minHeight: "25vh",
+      }
+    ).afterClosed();
+  }
+
+  /** Resolves true when the user dismisses the list for good; false or undefined when it should be shown again. */
+  public openSiScaleResetsDialog(resets: ISiScaleReset[]): Observable<boolean | undefined> {
+    return this.dialog.open<DialogSiScaleResetsComponent, ISiScaleReset[], boolean>(DialogSiScaleResetsComponent,
+      {
+        data: resets,
+        minWidth: "35vw",
+        maxWidth: "90vw",
+        maxHeight: "90vh",
       }
     ).afterClosed();
   }
