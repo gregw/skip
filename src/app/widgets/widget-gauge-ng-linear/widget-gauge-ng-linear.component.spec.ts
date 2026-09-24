@@ -157,6 +157,19 @@ describe('WidgetGaugeNgLinearComponent header row and sizing', () => {
     expect(sizeUpdates[0].height as number).toBeLessThan(sizeUpdates[0].width as number);
   });
 
+  it('sizes the gauge the same when it measures its own box as when a resize reports it', () => {
+    // An options rebuild after the view is ready re-measures the element; the size it applies must
+    // match the resize path's, or the canvas depends on which of the two ran last.
+    options.set(makeConfig('horizontal'));
+    (component as unknown as { gauge: () => { nativeElement: { getBoundingClientRect: () => { width: number; height: number } } } }).gauge =
+      () => ({ nativeElement: { getBoundingClientRect: () => ({ width: 690, height: 79 }) } });
+    component.onResized(resizeEntry(690, 79));
+    (component as unknown as { applyInitialSize: () => void }).applyInitialSize();
+
+    expect(sizeUpdates).toHaveLength(2);
+    expect(sizeUpdates[1]).toEqual(sizeUpdates[0]);
+  });
+
   it('caps the thickness at a third of the length on a box that is not short', () => {
     options.set(makeConfig('horizontal'));
     component.onResized(resizeEntry(300, 400));

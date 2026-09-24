@@ -418,16 +418,19 @@ export class WidgetGaugeNgLinearComponent implements AfterViewInit {
     const el = this.gauge()?.nativeElement as HTMLElement | null;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const isVertical = this.runtime.options()?.gauge?.subType === 'vertical';
-    const { width, height } = this.gaugeSize(rect.width, rect.height, isVertical);
-    this.updateGaugeSize(width, height);
+    this.fitGaugeToBox(rect.width, rect.height);
   }
 
   public onResized(evt: ResizeObserverEntry): void {
+    this.fitGaugeToBox(evt.contentRect.width, evt.contentRect.height);
+  }
+
+  /** The one sizing rule for both ways the box is measured, so neither overrides the other's inset. */
+  private fitGaugeToBox(boxWidth: number, boxHeight: number): void {
     const cfg = this.runtime.options();
     if (!cfg) return;
     const isVertical = cfg.gauge?.subType === 'vertical';
-    const { width, height } = this.gaugeSize(evt.contentRect.width, evt.contentRect.height, isVertical);
+    const { width, height } = this.gaugeSize(boxWidth, boxHeight, isVertical);
     this.updateGaugeSize(width, height - GAUGE_HEIGHT_INSET);
   }
 }
