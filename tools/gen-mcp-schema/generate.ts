@@ -12,6 +12,7 @@ import {
   findArrayLiteral,
   findLazyLoadedModuleSpecifier,
   findPropertyInitializer,
+  findOptionalStaticPropertyInitializer,
   findStaticPropertyInitializer,
   getObjectProperties,
   literalToValue,
@@ -109,8 +110,25 @@ export function extractWidgetSchemas(opts: GenerateOptions): WidgetSchemaEntry[]
     }
     const bindingKind = deriveBindingKind(defaultConfig);
     const pathSlots = bindingKind === 'paths-record' ? extractPathSlots(defaultConfig) : [];
-    return { ...entry, bindingKind, defaultConfig, pathSlots };
+    const optionUnits = readOptionUnits(componentSource, entry.componentClassName, resolveConst);
+    return { ...entry, bindingKind, defaultConfig, pathSlots, ...(optionUnits ? { optionUnits } : {}) };
   });
+}
+
+/** A widget's static OPTION_UNITS, checked to be a map of option name to unit string. */
+function readOptionUnits(
+  source: ts.SourceFile,
+  className: string,
+  resolveConst: ReturnType<typeof collectModuleConstants>,
+): Record<string, string> | undefined {
+  const initializer = findOptionalStaticPropertyInitializer(source, className, 'OPTION_UNITS');
+  if (!initializer) return undefined;
+  const value = literalToValue(initializer, resolveConst);
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !Object.values(value).every((unit) => typeof unit === 'string')) {
+    throw new Error(`OPTION_UNITS of ${className} is not a map of option name to unit`);
+  }
+  return value as Record<string, string>;
 }
 
 /** Derives how a widget binds Signal K data from its DEFAULT_CONFIG shape. */
