@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // cannot instantiate under jsdom, and a per-spec vi.mock only wins when this file is the
 // first in its worker to load the module, which is what made #544 look like a flake.
 
-import { signal } from '@angular/core';
+import { Provider, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { EMPTY, Subject } from 'rxjs';
+import { EMPTY, NEVER, Subject } from 'rxjs';
 import { WidgetDataGraphComponent } from './widget-data-graph.component';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { HistoryGraphStreamService, HISTORY_UNAVAILABLE } from '../../core/services/history-graph-stream.service';
@@ -15,6 +15,9 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { UnitsService } from '../../core/services/units.service';
 import { CanvasService } from '../../core/services/canvas.service';
 import type { ITheme } from '../../core/services/app-service';
+import { DataService } from '../../core/services/data.service';
+import { SignalKDeltaService } from '../../core/services/signalk-delta.service';
+import type { IMeta } from '../../core/interfaces/app-interfaces';
 
 // Any color property the graph-options builder reads resolves to a valid string.
 const themeMock = new Proxy({}, { get: () => '#000000' }) as unknown as ITheme;
@@ -38,7 +41,7 @@ describe('WidgetDataGraphComponent', () => {
   const unitsMock = { convertToUnit: (_unit: string, value: number) => value, getUnitDisplaySymbol: (measure: string) => measure, resolvePathMeasure: () => 'knots' };
   const canvasMock = { releaseCanvas: vi.fn() };
 
-  const setup = async (config: IWidgetSvcConfig): Promise<void> => {
+  const setup = async (config: IWidgetSvcConfig, extraProviders: Provider[] = []): Promise<void> => {
     options.set(config);
 
     await TestBed.configureTestingModule({
@@ -47,7 +50,8 @@ describe('WidgetDataGraphComponent', () => {
         { provide: WidgetRuntimeDirective, useValue: runtimeMock },
         { provide: HistoryGraphStreamService, useValue: historyMock },
         { provide: UnitsService, useValue: unitsMock },
-        { provide: CanvasService, useValue: canvasMock }
+        { provide: CanvasService, useValue: canvasMock },
+        ...extraProviders
       ]
     }).compileComponents();
 
@@ -165,6 +169,42 @@ describe('WidgetDataGraphComponent', () => {
     const title = readTitle();
     expect(title).toContain('knots');
     expect(title).not.toContain('celsius');
+  });
+
+  it('takes the measure of a pointer datachartPath from the field metadata', async () => {
+    const emissions$ = new Subject<IGraphDatapoint>();
+    historyMock.getBackfillThenLive.mockReturnValue(emissions$);
+    const metadataUpdates$ = new Subject<IMeta>();
+    // Stands in for UnitsService's measure resolution with the field's own units, read through the
+    // real, pointer-aware DataService.
+    const resolvePathMeasure = vi.fn((path: string) => TestBed.inject(DataService).getPathMeta(path)?.units ?? 'unitless');
+
+    await setup(makeConfig({ datachartPath: 'self.navigation.attitude#/roll', numDecimal: 4 }), [
+      { provide: UnitsService, useValue: { ...unitsMock, resolvePathMeasure } },
+      {
+        provide: SignalKDeltaService,
+        useValue: {
+          subscribeDataPathsUpdates: () => NEVER,
+          subscribeMetadataUpdates: () => metadataUpdates$.asObservable(),
+          subscribeNotificationsUpdates: () => NEVER,
+          subscribeSelfUpdates: () => NEVER
+        }
+      }
+    ]);
+
+    metadataUpdates$.next({
+      context: 'self',
+      path: 'navigation.attitude',
+      meta: { description: 'Vessel attitude', units: 'm', properties: { roll: { type: 'number', units: 'rad', description: 'Roll' } } }
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    emissions$.next({ timestamp: 1000, data: { value: -0.0384 } });
+    fixture.detectChanges();
+
+    expect(resolvePathMeasure).toHaveBeenCalledWith('self.navigation.attitude#/roll');
+    // The field's rad, never the base path's own units.
+    expect(readTitle()).toBe('-0.0384 rad');
   });
 
   interface AxisState {
