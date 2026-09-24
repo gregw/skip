@@ -870,6 +870,13 @@ describe('ModalWidgetComponent scale bounds stored in SI', () => {
     return field?.querySelector('[matTextSuffix]')?.textContent?.trim() ?? null;
   };
 
+  /** A slider on `path`; its slot is structural and has no convertUnitTo, as the slider's defaults. */
+  const slider = (path: string): IWidgetSvcConfig => {
+    const config = structuredClone(WidgetSliderComponent.DEFAULT_CONFIG);
+    config.paths = { gaugePath: { ...(config.paths as Record<string, IWidgetPath>)['gaugePath'], path } };
+    return config;
+  };
+
   const gauge = (path: string | null, convertUnitTo: string, lower: number | null, upper: number | null): IWidgetSvcConfig => {
     const config = structuredClone(WidgetGaugeNgRadialComponent.DEFAULT_CONFIG);
     config.paths = { gaugePath: { ...(config.paths as Record<string, IWidgetPath>)['gaugePath'], path, convertUnitTo } };
@@ -999,6 +1006,18 @@ describe('ModalWidgetComponent scale bounds stored in SI', () => {
       expect(lastSaved().displayScale?.upper).toBeCloseTo(60, 9);
     });
 
+    it("fills a re-pointed slider's scale in SI, the unit the slider works in", async () => {
+      metaOf(TEMPERATURE).next(meta('K', 'celsius'));
+      metaOf(RPM).next(meta('Hz', 'rpm', { lower: 0, upper: 60, type: 'linear' }));
+      const fixture = open('widget-slider', slider(TEMPERATURE));
+      await pick(fixture, 'gaugePath', RPM);
+      expect(scale(fixture).get('upper')?.value).toBe(60);
+
+      fixture.componentInstance.submitConfig();
+      expect(lastSaved().displayScale?.lower).toBe(0);
+      expect(lastSaved().displayScale?.upper).toBe(60);
+    });
+
     it('re-points a numeric to a path without meta scale: same numbers, new unit', async () => {
       metaOf(SPEED).next(meta('m/s', 'knots'));
       metaOf(DEPTH).next(meta('m', 'feet'));
@@ -1036,10 +1055,7 @@ describe('ModalWidgetComponent scale bounds stored in SI', () => {
 
   it("leaves a slider's scale, which is already SI, as it is", () => {
     metaOf(RPM).next(meta('Hz', 'rpm'));
-    const config = structuredClone(WidgetSliderComponent.DEFAULT_CONFIG);
-    // A slot unit keeps path-control-config from failing on the slider's slot, which has none.
-    config.paths = { gaugePath: { ...(config.paths as Record<string, IWidgetPath>)['gaugePath'], path: RPM, convertUnitTo: 'rpm' } };
-    const fixture = open('widget-slider', config);
+    const fixture = open('widget-slider', slider(RPM));
     expect(scale(fixture).get('upper')?.value).toBe(1);
     expect(suffix(fixture, 'upper')).toBeNull();
   });
