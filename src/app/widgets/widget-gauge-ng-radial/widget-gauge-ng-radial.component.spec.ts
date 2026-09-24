@@ -6,10 +6,11 @@ import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.dir
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { UnitsService } from '../../core/services/units.service';
-import { IPathUpdate } from '../../core/services/data.service';
-import { IWidgetSvcConfig, IPathArray } from '../../core/interfaces/widgets-interface';
+import { RadialGaugeOptions } from '@godind/ng-canvas-gauges';
+import { DataService, IPathUpdate } from '../../core/services/data.service';
+import { IWidgetSvcConfig, IPathArray, IDataHighlight } from '../../core/interfaces/widgets-interface';
 import { IScale } from '../../core/utils/dataScales.util';
-import { States } from '../../core/interfaces/signalk-interfaces';
+import { ISkZone, States } from '../../core/interfaces/signalk-interfaces';
 
 /**
  * Regression tests for the gauge's displayScale reinterpretation — the P2b unit-flip mechanic.
@@ -286,5 +287,173 @@ describe('WidgetGaugeNgRadialComponent displayScale reinterpretation (P2b flip)'
     expect(internals.value()).toBe(42);
     expect(internals.textValue()).toBe('');
     expect(internals.effectiveUnit()).toBe('percent');
+  });
+});
+
+/**
+ * What the gauge draws for a set of SI inputs, through the real UnitsService: the value handed to
+ * the library after clamping, the scale bounds and major ticks, the units label and the zone
+ * highlights, for both subtypes. Pins the output so a change of the unit the widget computes in
+ * cannot move anything on screen. The stored scale is 0..100 °C; the server may present the path
+ * in another measure.
+ */
+describe('WidgetGaugeNgRadialComponent output from SI inputs', () => {
+  let fixture: ComponentFixture<WidgetGaugeNgRadialComponent>;
+  let units: UnitsService;
+  let next: ((u: IPathUpdate) => void) | undefined;
+  let zones: WritableSignal<ISkZone[]>;
+
+  interface RadialOutput {
+    value: () => number | null | undefined;
+    textValue: () => string;
+    gaugeOptions: RadialGaugeOptions;
+    highlights: () => IDataHighlight[];
+  }
+
+  const KELVIN = 273.15;
+  const theme = {
+    contrast: '#fff', contrastDim: '#ccc', contrastDimmer: '#999', cardColor: '#111', background: '#000',
+    zoneNominal: '#0f0', zoneAlert: '#00f', zoneWarn: '#ff0', zoneAlarm: '#f00', zoneEmergency: '#f0f'
+  };
+  // Zones are SI: warn 50..70 °C, alarm 70..100 °C.
+  const temperatureZones: ISkZone[] = [
+    { state: States.Warn, lower: KELVIN + 50, upper: KELVIN + 70 },
+    { state: States.Alarm, lower: KELVIN + 70, upper: KELVIN + 100 }
+  ];
+
+  /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
+  const feed = (si: number | null, measure: string): void => {
+    const legacy = si == null || !measure ? si : units.convertToUnit(measure, si);
+    next?.({ data: { value: legacy, timestamp: null, measure }, state: States.Normal });
+    fixture.detectChanges();
+  };
+
+  const render = (subType: 'measuring' | 'capacity'): void => {
+    const dflt = WidgetGaugeNgRadialComponent.DEFAULT_CONFIG;
+    const gaugePath = (dflt.paths as IPathArray)['gaugePath'];
+    const cfg: IWidgetSvcConfig = {
+      ...dflt,
+      ignoreZones: false,
+      displayScale: { lower: 0, upper: 100, type: 'linear' },
+      gauge: { ...dflt.gauge, type: 'ngRadial', subType },
+      paths: { gaugePath: { ...gaugePath, path: 'self.propulsion.main.temperature', convertUnitTo: 'celsius' } }
+    };
+    zones = signal<ISkZone[]>(temperatureZones);
+    TestBed.configureTestingModule({
+      imports: [WidgetGaugeNgRadialComponent],
+      providers: [
+        UnitsService,
+        { provide: DataService, useValue: {} },
+        { provide: WidgetRuntimeDirective, useValue: { options: signal(cfg) } },
+        { provide: WidgetStreamsDirective, useValue: { observe: (_p: string, n: (u: IPathUpdate) => void) => { next = n; } } },
+        { provide: WidgetMetadataDirective, useValue: { zones, observe: () => undefined } }
+      ]
+    });
+    units = TestBed.inject(UnitsService);
+    fixture = TestBed.createComponent(WidgetGaugeNgRadialComponent);
+    fixture.componentRef.setInput('id', 'gauge-1');
+    fixture.componentRef.setInput('type', 'widget-gauge-ng-radial');
+    fixture.componentRef.setInput('theme', theme);
+    fixture.detectChanges();
+  };
+
+  const shown = () => {
+    const c = fixture.componentInstance as unknown as RadialOutput;
+    const o = c.gaugeOptions;
+    return {
+      value: c.value(),
+      text: c.textValue(),
+      min: o.minValue,
+      max: o.maxValue,
+      ticks: o.majorTicks,
+      units: o.units,
+      highlights: c.highlights()
+    };
+  };
+
+  describe('measuring', () => {
+    beforeEach(() => render('measuring'));
+
+    it('shows a reading in the stored measure on the stored scale, with its zones', () => {
+      feed(KELVIN + 42.5, 'celsius');
+      const s = shown();
+      expect(s.value).toBeCloseTo(42.5);
+      expect(s.text).toBe('');
+      expect([s.min, s.max, s.units]).toEqual([0, 100, '°C']);
+      expect(s.ticks).toEqual([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(50), to: expect.closeTo(70), color: '#ff0' },
+        { from: expect.closeTo(70), to: expect.closeTo(100), color: '#f00' }
+      ]);
+    });
+
+    it('re-expresses the stored scale and the zones in a server measure that differs', () => {
+      feed(KELVIN + 42.5, 'fahrenheit');
+      const s = shown();
+      expect(s.value).toBeCloseTo(108.5);
+      // 32..212 °F, widened to the nice tick range.
+      expect([s.min, s.max, s.units]).toEqual([20, 220, '°F']);
+      expect(s.ticks).toEqual([20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220]);
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(122), to: expect.closeTo(158), color: '#ff0' },
+        { from: expect.closeTo(158), to: expect.closeTo(212), color: '#f00' }
+      ]);
+    });
+
+    it('clamps a reading above the scale to the re-expressed upper bound, not the tick range', () => {
+      feed(KELVIN + 150, 'fahrenheit');
+      expect(shown().value).toBeCloseTo(212);
+    });
+
+    it('clamps a reading below the scale to its lower bound', () => {
+      feed(KELVIN - 40, 'celsius');
+      expect(shown().value).toBeCloseTo(0);
+    });
+
+    it('parks the needle at the re-expressed lower bound with a placeholder on a null reading', () => {
+      feed(null, 'fahrenheit');
+      const s = shown();
+      expect(s.value).toBeCloseTo(32);
+      expect(s.text).toBe('--');
+    });
+
+    it('clamps the SI number against the stored scale while the measure is still empty', () => {
+      feed(KELVIN + 42.5, '');
+      const s = shown();
+      expect(s.value).toBe(100);
+      expect([s.min, s.max, s.units]).toEqual([0, 100, '']);
+      expect(s.highlights).toEqual([
+        { from: expect.closeTo(50), to: expect.closeTo(70), color: '#ff0' },
+        { from: expect.closeTo(70), to: expect.closeTo(100), color: '#f00' }
+      ]);
+    });
+  });
+
+  describe('capacity', () => {
+    beforeEach(() => render('capacity'));
+
+    it('uses the bounds as they are, with no ticks and no zone bands', () => {
+      feed(KELVIN + 42.5, 'celsius');
+      const s = shown();
+      expect(s.value).toBeCloseTo(42.5);
+      expect([s.min, s.max, s.units]).toEqual([0, 100, '°C']);
+      expect(s.ticks).toBe(0);
+      expect(s.highlights).toEqual([]);
+    });
+
+    it('re-expresses the bounds in a server measure that differs and clamps against them', () => {
+      feed(KELVIN + 150, 'fahrenheit');
+      const s = shown();
+      expect(s.value).toBeCloseTo(212);
+      expect(s.min).toBeCloseTo(32);
+      expect(s.max).toBeCloseTo(212);
+      expect(s.units).toBe('°F');
+    });
+
+    it('parks the needle at the re-expressed lower bound on a null reading', () => {
+      feed(null, 'fahrenheit');
+      expect(shown().value).toBeCloseTo(32);
+      expect(shown().text).toBe('--');
+    });
   });
 });
