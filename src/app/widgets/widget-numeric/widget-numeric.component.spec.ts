@@ -5,10 +5,12 @@ import { WidgetNumericComponent } from './widget-numeric.component';
 import { MinigraphComponent } from '../minigraph/minigraph.component';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
+import { WidgetMetadataDirective } from '../../core/directives/widget-metadata.directive';
 import { TDurationFormat, UnitsService } from '../../core/services/units.service';
 import { CanvasService } from '../../core/services/canvas.service';
 import { DataService, IPathUpdate } from '../../core/services/data.service';
 import { IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
+import { ISkDisplayScale } from '../../core/interfaces/signalk-interfaces';
 
 const unitsServiceStub = {
   getUnitDisplaySymbol: (measure: string | null | undefined) => measure ?? '',
@@ -37,10 +39,13 @@ type MiniGraphInputs = Pick<MinigraphComponent,
  * that reads it too. ngAfterViewInit registers the stream callback through the streams fake.
  */
 describe('WidgetNumericComponent output from SI inputs', () => {
+  const KNOTS_PER_MS = 3600 / 1852;
   let internals: NumericInternals;
   let options: WritableSignal<IWidgetSvcConfig | undefined>;
   let next: ((u: IPathUpdate) => void) | undefined;
   let streamCalls: string[];
+  let metaScale: WritableSignal<ISkDisplayScale | undefined>;
+  let metaObserved: string[];
 
   const makeConfig = (overrides: Partial<IWidgetSvcConfig> = {}, convertUnitTo = 'unitless'): IWidgetSvcConfig => {
     const defaults = structuredClone(WidgetNumericComponent.DEFAULT_CONFIG);
@@ -78,6 +83,8 @@ describe('WidgetNumericComponent output from SI inputs', () => {
     options = signal<IWidgetSvcConfig | undefined>(undefined);
     next = undefined;
     streamCalls = [];
+    metaScale = signal<ISkDisplayScale | undefined>(undefined);
+    metaObserved = [];
     const streamsFake = {
       observe: (pathName: string, cb: (u: IPathUpdate) => void) => {
         streamCalls.push(`observe:${pathName}`);
@@ -89,6 +96,7 @@ describe('WidgetNumericComponent output from SI inputs', () => {
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
         { provide: WidgetStreamsDirective, useValue: streamsFake },
+        { provide: WidgetMetadataDirective, useValue: { displayScale: metaScale, observe: (key: string) => { metaObserved.push(key); } } },
         // The widget's conversions read no path state, so the real service needs no DataService.
         { provide: DataService, useValue: {} },
         UnitsService
@@ -158,7 +166,7 @@ describe('WidgetNumericComponent output from SI inputs', () => {
   });
 
   it('writes a value beyond the chart range as it is, and hands the chart its stored range', () => {
-    render(makeConfig({ showMiniChart: true, yScaleMin: 0, yScaleMax: 10, numDecimal: 0 }, 'knots'));
+    render(makeConfig({ showMiniChart: true, yScaleMin: 0, yScaleMax: 10 / KNOTS_PER_MS, numDecimal: 0 }, 'knots'));
     feed(100, 'knots');
     expect({ value: internals.getValueText(), graph: miniGraphInputs() }).toEqual({
       value: '194',
@@ -168,10 +176,40 @@ describe('WidgetNumericComponent output from SI inputs', () => {
         convertUnitTo: 'knots',
         numDecimal: 0,
         yScaleMin: 0,
-        yScaleMax: 10,
+        yScaleMax: expect.closeTo(10),
         inverseYAxis: false,
         verticalChart: false
       }
+    });
+  });
+
+  describe('minigraph y range', () => {
+    const range = () => { const g = miniGraphInputs(); return [g.yScaleMin, g.yScaleMax]; };
+
+    it('hands the chart an SI range in the measure the value is shown in', () => {
+      render(makeConfig({ showMiniChart: true, yScaleMin: 0, yScaleMax: 10 / KNOTS_PER_MS }, 'knots'));
+      feed(3, 'knots');
+      expect(range()).toEqual([0, expect.closeTo(10)]);
+      feed(3, 'm/s');
+      expect(range()).toEqual([0, expect.closeTo(5.14)]);
+    });
+
+    it("takes the path's meta scale for bounds that are not set", () => {
+      render(makeConfig({ showMiniChart: true, yScaleMin: null, yScaleMax: null }, 'knots'));
+      metaScale.set({ lower: 0, upper: 20 / KNOTS_PER_MS, type: 'linear' });
+      feed(3, 'knots');
+      expect(range()).toEqual([0, expect.closeTo(20)]);
+    });
+
+    it('uses 0..10 in the presentation measure when neither the config nor meta sets a bound', () => {
+      render(makeConfig({ showMiniChart: true, yScaleMin: null, yScaleMax: null }, 'knots'));
+      feed(3, 'knots');
+      expect(range()).toEqual([0, 10]);
+    });
+
+    it('observes its path meta for the scale', () => {
+      render(makeConfig({ showMiniChart: true }, 'knots'));
+      expect(metaObserved).toContain('numericPath');
     });
   });
 
@@ -324,6 +362,7 @@ describe('WidgetNumericComponent label row layout', () => {
       providers: [
         { provide: WidgetRuntimeDirective, useValue: { options } },
         { provide: WidgetStreamsDirective, useValue: { observe: () => undefined, useSiValues: () => undefined } },
+        { provide: WidgetMetadataDirective, useValue: { displayScale: () => undefined, observe: () => undefined } },
         { provide: UnitsService, useValue: unitsServiceStub },
         { provide: CanvasService, useValue: canvasFake }
       ]
