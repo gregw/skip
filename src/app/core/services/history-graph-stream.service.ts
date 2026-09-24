@@ -1,5 +1,4 @@
 import { Injectable, inject } from '@angular/core';
-import type { Path } from '@jsonjoy.com/json-pointer';
 import { EMPTY, Observable, Subscription, distinctUntilChanged, filter, map, merge, shareReplay, take, timer, withLatestFrom } from 'rxjs';
 import { DataService, IPathUpdate } from './data.service';
 import { HistoryApiClientService, HistoryRequestError } from './history-api-client.service';
@@ -8,8 +7,8 @@ import { ConnectionState, ConnectionStateMachine } from './connection-state-mach
 import { resolveAngleDomain } from '../utils/angle-domain.util';
 import { IGraphDatapoint } from '../interfaces/graph-data.interfaces';
 import { computeWindowStats, windowSma, GraphStatsDomain } from '../utils/graph-stats.util';
-import { resolvePointer, splitPointerPath } from '../utils/pointer-path.util';
-import { resolvePointerInHistoryRows } from '../utils/history-pointer.util';
+import { resolvePointer } from '../utils/pointer-path.util';
+import { historyQueryTarget, resolvePointerInHistoryRows, type IHistoryQueryTarget } from '../utils/history-pointer.util';
 
 /** Emitted (instead of datapoints) when trend history cannot be served — no history provider. */
 export interface IHistoryUnavailable {
@@ -71,15 +70,6 @@ export interface IHistoryGraphStreamParams {
 
 type StreamEmission = IGraphDatapoint[] | IGraphDatapoint | IHistoryUnavailable;
 
-/**
- * The Signal K path a stream reads and the pointer to the graphed field of its value. Only called for
- * paths getBackfillThenLive accepted, so an invalid pointer never reaches it.
- */
-function streamTarget(path: string): { basePath: string; pointer: Path | null } {
-  const split = splitPointerPath(path);
-  return { basePath: split.basePath, pointer: split.valid ? split.pointer : null };
-}
-
 /** Per-stream mutable state shared between the live tail and the reconnect re-backfill (#85). */
 interface IStreamCtx {
   /** Client-clock timestamp of the newest emitted point (backfill, live, or re-backfill) — the seam the
@@ -129,8 +119,8 @@ export class HistoryGraphStreamService {
    * does not disable the graph: it falls through to the live delta tail with no backfill seed.
    */
   public getBackfillThenLive(params: IHistoryGraphStreamParams): Observable<StreamEmission> {
-    // A malformed pointer addresses nothing, the same as in a live widget.
-    if (!splitPointerPath(params.path).valid) return EMPTY;
+    const target = historyQueryTarget(params.path);
+    if (!target) return EMPTY;
     return new Observable<StreamEmission>(subscriber => {
       const domain = resolveAngleDomain(params.path, this.data.getPathUnitType(params.path), params.angleDomainOverride);
       const ctx: IStreamCtx = { lastEmittedTs: null, connected: true, backfillInFlight: false, reconnectPending: false, sourceIntervalMs: null, resetCadenceBaseline: false, seeded: false, disposed: false, holdDeadline: null };
@@ -159,14 +149,14 @@ export class HistoryGraphStreamService {
             sawDisconnected = true;
             return;
           }
-          if (!ctx.seeded || sawDisconnected) void this.reBackfill(params, domain, buffer, subscriber, ctx);
+          if (!ctx.seeded || sawDisconnected) void this.reBackfill(params, target, domain, buffer, subscriber, ctx);
         });
-        const live = this.startLive(params, domain, buffer, offsetMs, newestBackfillTs, subscriber, ctx);
+        const live = this.startLive(params, target, domain, buffer, offsetMs, newestBackfillTs, subscriber, ctx);
         liveSub = live.sub;
         releaseLive = live.release;
       };
 
-      this.fetchBackfill(params, domain)
+      this.fetchBackfill(params, target, domain)
         .then(result => {
           if (ctx.disposed) return;
           if (result === null) {
@@ -217,6 +207,7 @@ export class HistoryGraphStreamService {
 
   private startLive(
     params: IHistoryGraphStreamParams,
+    target: IHistoryQueryTarget,
     domain: GraphStatsDomain,
     buffer: number[],
     offsetMs: number | null,
@@ -227,7 +218,7 @@ export class HistoryGraphStreamService {
     // One shared upstream so the freshness tracker, the immediate first value and the resampler all
     // draw from a single path registration; its release is returned so getBackfillThenLive's teardown
     // frees it once the live subscriptions below are gone.
-    const { basePath, pointer } = streamTarget(params.path);
+    const { basePath, pointer } = target;
     const handle = this.data.acquirePath(basePath, params.source);
     const path$ = handle.data$.pipe(
       map(u => pointer && u?.data ? { ...u, data: { ...u.data, value: resolvePointer(u.data.value, pointer) } } : u),
@@ -318,12 +309,11 @@ export class HistoryGraphStreamService {
     return { sub, release: handle.release };
   }
 
-  private async fetchBackfill(params: IHistoryGraphStreamParams, domain: GraphStatsDomain, fromMs: number = Date.now() - params.windowMs, signal?: AbortSignal): Promise<{ points: IGraphDatapoint[]; offsetMs: number } | null> {
-    const { basePath, pointer } = streamTarget(params.path);
-    const normalizedPath = basePath.replace(/^(vessels\.)?self\./, '');
+  private async fetchBackfill(params: IHistoryGraphStreamParams, target: IHistoryQueryTarget, domain: GraphStatsDomain, fromMs: number = Date.now() - params.windowMs, signal?: AbortSignal): Promise<{ points: IGraphDatapoint[]; offsetMs: number } | null> {
+    const { historyPath, pointer } = target;
     // Only the raw per-bucket value is fetched; the SMA overlay is derived client-side below so it
     // uses the same circular-aware smoothing as the live tail (#162).
-    const paths = `${normalizedPath}:last`;
+    const paths = `${historyPath}:last`;
     const resolutionSeconds = Math.max(1, Math.round(params.sampleTime / 1000));
 
     const response = await this.history.getValues({
@@ -375,6 +365,7 @@ export class HistoryGraphStreamService {
    */
   private async reBackfill(
     params: IHistoryGraphStreamParams,
+    target: IHistoryQueryTarget,
     domain: GraphStatsDomain,
     buffer: number[],
     subscriber: { next: (v: StreamEmission) => void },
@@ -400,7 +391,7 @@ export class HistoryGraphStreamService {
     try {
       const earliest = Date.now() - params.windowMs;
       const fromMs = seam !== null ? Math.max(seam - RECONNECT_FROM_SKEW_MARGIN_MS, earliest) : earliest;
-      const fetchPromise = this.fetchBackfill(params, domain, fromMs, controller.signal);
+      const fetchPromise = this.fetchBackfill(params, target, domain, fromMs, controller.signal);
       // If the hold budget wins the race we abandon this fetch; swallow its late rejection so it does not
       // surface as an unhandled rejection.
       fetchPromise.catch(() => undefined);
@@ -446,7 +437,7 @@ export class HistoryGraphStreamService {
         if (ctx.reconnectPending && ctx.connected && !budgetSpent) {
           // A reconnect landed mid-fetch and the shared budget is not yet spent; run it now from the
           // current seam under the same deadline and defer the gap decision to it.
-          void this.reBackfill(params, domain, buffer, subscriber, ctx);
+          void this.reBackfill(params, target, domain, buffer, subscriber, ctx);
         } else {
           // The chain ends here (delivered, budget spent, or nothing pending): re-arm a fresh budget on the
           // next reconnect, and break the trace honestly if this run drew nothing.

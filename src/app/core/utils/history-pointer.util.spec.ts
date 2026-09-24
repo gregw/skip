@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { IHistoryValuesResponse } from '../services/history-api-client.service';
-import { resolvePointerInHistoryRows } from './history-pointer.util';
+import { historyQueryTarget, resolvePointerInHistoryRows } from './history-pointer.util';
 
 const response = (method: 'last' | 'avg', data: IHistoryValuesResponse['data']): IHistoryValuesResponse => ({
   context: 'vessels.self',
@@ -50,5 +50,32 @@ describe('resolvePointerInHistoryRows', () => {
     ]), ['state']);
 
     expect(resolved.data).toEqual([['2026-09-24T10:00:00Z', null]]);
+  });
+});
+
+describe('historyQueryTarget', () => {
+  it('strips the own-vessel prefix from the base path and parses the pointer', () => {
+    expect(historyQueryTarget(' vessels.self.navigation.attitude #/roll')).toEqual({
+      basePath: 'vessels.self.navigation.attitude',
+      historyPath: 'navigation.attitude',
+      pointer: ['roll']
+    });
+  });
+
+  it('keeps a plain path whole, with no pointer', () => {
+    expect(historyQueryTarget('self.navigation.speedOverGround')).toEqual({
+      basePath: 'self.navigation.speedOverGround',
+      historyPath: 'navigation.speedOverGround',
+      pointer: null
+    });
+  });
+
+  it('leaves another vessel\'s path as it is', () => {
+    expect(historyQueryTarget('vessels.urn:mrn:imo:mmsi:100000001.navigation.position#/latitude')?.historyPath)
+      .toBe('vessels.urn:mrn:imo:mmsi:100000001.navigation.position');
+  });
+
+  it('rejects a malformed pointer', () => {
+    expect(historyQueryTarget('self.navigation.attitude#roll')).toBeNull();
   });
 });

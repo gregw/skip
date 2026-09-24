@@ -27,8 +27,7 @@ import { HistoryApiClientService } from '../../services/history-api-client.servi
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { FormsModule} from '@angular/forms';
-import { splitPointerPath } from '../../utils/pointer-path.util';
-import { resolvePointerInHistoryRows } from '../../utils/history-pointer.util';
+import { historyQueryTarget, resolvePointerInHistoryRows } from '../../utils/history-pointer.util';
 
 registerChartComponents();
 
@@ -361,20 +360,18 @@ export class WidgetHistoryGraphDialogComponent implements OnInit, AfterViewInit,
   }
 
   private buildHistoryRequestCandidates(rawPath: string, context: string | null | undefined): { paths: string; context: string | undefined; labelPath: string; pointer: Path | null }[] {
-    // Split before normalizing so trimming and prefix stripping only ever touch the Signal K path.
-    const split = splitPointerPath(rawPath);
-    const basePath = this.normalizeHistoryPath(split.basePath);
-    if (!split.valid || !basePath.length) {
+    const target = historyQueryTarget(rawPath);
+    if (!target?.historyPath.length) {
       return [];
     }
 
     // An object value has no mean, so a field of one is graphed from each bucket's last sample.
-    const aggregate = split.pointer ? 'last' : 'avg';
+    const aggregate = target.pointer ? 'last' : 'avg';
     return [{
-      paths: `${basePath}:${aggregate}`,
+      paths: `${target.historyPath}:${aggregate}`,
       context: this.resolveHistoryContext(rawPath, context),
       labelPath: this.normalizeHistoryPath(rawPath),
-      pointer: split.pointer
+      pointer: target.pointer
     }];
   }
 
