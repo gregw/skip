@@ -279,6 +279,7 @@ export class WidgetAutopilotComponent implements OnInit, OnDestroy {
   protected apEngaged = signal<boolean | null>(null);
   protected apMode = signal<TApMode | null>(null);
   protected dodgeModeActive = signal<boolean>(false);
+  // Angles in rad, cross-track error in m: the SVG screen converts where it draws.
   protected autopilotTargetHeading = signal<number | null>(null);
   protected autopilotTargetWindHeading = signal<number | null>(null);
   protected heading = signal<number | null>(null);
@@ -577,6 +578,7 @@ export class WidgetAutopilotComponent implements OnInit, OnDestroy {
   }, {equal: isEqual});
 
   constructor() {
+    this.streams?.useSiValues();
     effect(() => {
       const cfg = this.runtime?.options();
       if (!cfg) return;

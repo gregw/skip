@@ -53,7 +53,7 @@ describe('WidgetAutopilotComponent rendering from SI inputs', () => {
   };
   /** An SI sample as the streams directive delivers it to this widget, with its presentation measure. */
   const feed = (pathKey: string, si: number, measure: string): void =>
-    feedRaw(pathKey, unitsServiceStub.convertToUnit(measure, si), measure);
+    feedRaw(pathKey, si, measure);
   const feedAngle = (pathKey: string, deg: number): void => feed(pathKey, deg * DEG, 'deg');
   const feedDistance = (pathKey: string, m: number): void => feed(pathKey, m, 'm');
 

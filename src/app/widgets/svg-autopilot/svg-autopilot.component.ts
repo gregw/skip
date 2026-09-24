@@ -2,6 +2,10 @@ import { Component, ElementRef, input, viewChild, effect, computed, untracked, s
 import { animateRotation, animateRudderWidth, effectiveAnimationDuration } from '../../core/utils/svg-animate.util';
 import { TApMode } from '../../core/interfaces/signalk-autopilot-interfaces';
 
+/** An angle given in rad, in degrees; null stays null. */
+function toDegrees(rad: number | null): number | null {
+  return rad == null ? null : rad * 180 / Math.PI;
+}
 
 @Component({
   selector: 'app-svg-autopilot',
@@ -16,6 +20,7 @@ export class SvgAutopilotComponent implements OnDestroy {
   private readonly rudderStarboardRect = viewChild.required<ElementRef<SVGRectElement>>('rudderStarboardRect');
   private readonly rudderPortRect = viewChild.required<ElementRef<SVGRectElement>>('rudderPortRect');
 
+  // Angles are in rad, cross-track error in m.
   protected readonly apMode = input<TApMode>('off-line');
   protected readonly updateInterval = input<number | undefined>(undefined);
   protected readonly targetPilotHeadingTrue = input.required<boolean>();
@@ -25,6 +30,12 @@ export class SvgAutopilotComponent implements OnDestroy {
   protected readonly headingDirectionTrue = input.required<boolean>();
   protected readonly appWindAngle = input.required<number | null>();
   protected readonly rudderAngle = input.required<number | null>();
+
+  // Angle inputs arrive in rad; the readouts, rotation attributes and rudder bars work in degrees.
+  private readonly autopilotTargetDeg = computed(() => toDegrees(this.autopilotTarget()));
+  private readonly compassHeadingDeg = computed(() => toDegrees(this.compassHeading()));
+  private readonly appWindAngleDeg = computed(() => toDegrees(this.appWindAngle()));
+  private readonly rudderAngleDeg = computed(() => toDegrees(this.rudderAngle()));
 
   /** null until a heading arrives, so the readout shows '--' rather than a fabricated north. */
   protected compassAngle = signal<number | null>(null);
@@ -56,7 +67,7 @@ export class SvgAutopilotComponent implements OnDestroy {
     return "Off-line";
   });
   protected lockedHdg = computed<number | null>(() => {
-    const target = this.autopilotTarget();
+    const target = this.autopilotTargetDeg();
     if (target == null || !Number.isFinite(target)) return null;
     return this.roundDeg(target);
   });
@@ -93,7 +104,7 @@ export class SvgAutopilotComponent implements OnDestroy {
 
   constructor() {
     effect(() => {
-      const heading = this.compassHeading();
+      const heading = this.compassHeadingDeg();
       // A heading that stops arriving must read as absent, not hold its last value: a frozen dial
       // is indistinguishable from a live one. Clearing `compassInitialized` also places the next
       // real heading without sweeping to it from a stale angle.
@@ -128,7 +139,7 @@ export class SvgAutopilotComponent implements OnDestroy {
     });
 
     effect(() => {
-      const aWA = this.appWindAngle();
+      const aWA = this.appWindAngleDeg();
       if (aWA == null || !Number.isFinite(aWA)) return;
       const nextRaw = this.roundDeg(aWA);
       const next = (nextRaw + 360) % 360;
@@ -155,7 +166,7 @@ export class SvgAutopilotComponent implements OnDestroy {
     });
 
     effect(() => {
-      const rudderAngle = this.rudderAngle();
+      const rudderAngle = this.rudderAngleDeg();
       if (rudderAngle == null || !Number.isFinite(rudderAngle)) return;
       untracked(() => {
         this.updateRudderAngle(-rudderAngle);
@@ -164,7 +175,7 @@ export class SvgAutopilotComponent implements OnDestroy {
 
     effect(() => {
       const state = this.apMode();
-      const awaRaw = this.appWindAngle();
+      const awaRaw = this.appWindAngleDeg();
       const awa = (awaRaw != null && Number.isFinite(awaRaw)) ? this.roundDeg(awaRaw) : null;
       let xteValue = this.courseXte();
 
