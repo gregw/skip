@@ -20,6 +20,11 @@ describe('buildSchema', () => {
     expect(schema.meta.skipVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
+  it('explains units that follow a path, and a null scale bound', () => {
+    expect(schema.meta.optionUnitsRule).toContain("'SI unit of <slot>'");
+    expect(schema.meta.optionUnitsRule).toContain('null');
+  });
+
   it('states that a config written in optionUnits must carry the SI marker', () => {
     expect(schema.meta.optionUnitsRule).toContain(`${SI_VERSION_KEY} set to the widget's defaultConfig.${SI_VERSION_KEY}`);
     for (const widget of schema.widgets.filter((w) => w.optionUnits)) {

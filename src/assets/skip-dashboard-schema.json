@@ -579,8 +579,8 @@
   },
   "meta": {
     "configFileVersion": 11,
-    "configVersion": 21,
-    "optionUnitsRule": "A widget's optionUnits maps an option, named by its dotted path inside the widget config, to the unit it is stored in; for an array option the unit applies to each element. A widget config that holds any of these options must also carry siVersion set to the widget's defaultConfig.siVersion. Skip reads a widget config without siVersion as holding the older, pre-SI units and converts it, so SI values written without the marker are converted a second time.",
+    "configVersion": 22,
+    "optionUnitsRule": "A widget's optionUnits maps an option, named by its dotted path inside the widget config, to the unit it is stored in; for an array option the unit applies to each element. A widget config that holds any of these options must also carry siVersion set to the widget's defaultConfig.siVersion. Skip reads a widget config without siVersion as holding the older, pre-SI units and converts it, so SI values written without the marker are converted a second time. A unit written as 'SI unit of <slot>' is the Signal K SI unit of the path that path slot (or path option) points at, such as K for a temperature. A scale bound set to null is unset: the widget uses the path's own display scale, and a data graph scales itself.",
     "schemaVersion": 1,
     "skipVersion": "1.5.0"
   },
@@ -1104,10 +1104,15 @@
         "showLabel": true,
         "showTimeScale": false,
         "showYScale": false,
+        "siVersion": 22,
         "startScaleAtZero": false,
         "timeScale": "minute",
         "trackAgainstAverage": false,
-        "verticalChart": false
+        "verticalChart": false,
+        "yScaleMax": null,
+        "yScaleMin": null,
+        "yScaleSuggestedMax": null,
+        "yScaleSuggestedMin": null
       },
       "defaultHeight": 6,
       "defaultWidth": 6,
@@ -1116,6 +1121,12 @@
       "minHeight": 3,
       "minWidth": 2,
       "name": "Data Graph",
+      "optionUnits": {
+        "yScaleMax": "SI unit of datachartPath",
+        "yScaleMin": "SI unit of datachartPath",
+        "yScaleSuggestedMax": "SI unit of datachartPath",
+        "yScaleSuggestedMin": "SI unit of datachartPath"
+      },
       "pathSlots": [],
       "requiredPlugins": [],
       "selector": "widget-data-chart"
@@ -1257,9 +1268,9 @@
         "dataTimeout": 5,
         "displayName": "Gauge Label",
         "displayScale": {
-          "lower": 0,
+          "lower": null,
           "type": "linear",
-          "upper": 100
+          "upper": null
         },
         "enableTimeout": false,
         "filterSelfPaths": true,
@@ -1286,6 +1297,7 @@
             "suppressBootstrapNull": true
           }
         },
+        "siVersion": 22,
         "supportAutomaticHistoricalSeries": true,
         "updateInterval": 500
       },
@@ -1296,6 +1308,10 @@
       "minHeight": 2,
       "minWidth": 1,
       "name": "Linear",
+      "optionUnits": {
+        "displayScale.lower": "SI unit of gaugePath",
+        "displayScale.upper": "SI unit of gaugePath"
+      },
       "pathSlots": [
         {
           "defaultConvertUnitTo": "unitless",
@@ -1323,9 +1339,9 @@
         "dataTimeout": 5,
         "displayName": "Gauge Label",
         "displayScale": {
-          "lower": 0,
+          "lower": null,
           "type": "linear",
-          "upper": 100
+          "upper": null
         },
         "enableTimeout": false,
         "filterSelfPaths": true,
@@ -1355,6 +1371,7 @@
             "suppressBootstrapNull": true
           }
         },
+        "siVersion": 22,
         "supportAutomaticHistoricalSeries": true,
         "updateInterval": 500
       },
@@ -1365,6 +1382,10 @@
       "minHeight": 2,
       "minWidth": 1,
       "name": "Radial",
+      "optionUnits": {
+        "displayScale.lower": "SI unit of gaugePath",
+        "displayScale.upper": "SI unit of gaugePath"
+      },
       "pathSlots": [
         {
           "defaultConvertUnitTo": "unitless",
@@ -1391,9 +1412,9 @@
         "dataTimeout": 5,
         "displayName": "Gauge Label",
         "displayScale": {
-          "lower": 0,
+          "lower": null,
           "type": "linear",
-          "upper": 100
+          "upper": null
         },
         "enableTimeout": false,
         "filterSelfPaths": true,
@@ -1420,6 +1441,7 @@
             "source": null
           }
         },
+        "siVersion": 22,
         "supportAutomaticHistoricalSeries": true,
         "updateInterval": 500
       },
@@ -1430,6 +1452,10 @@
       "minHeight": 2,
       "minWidth": 1,
       "name": "Classic Steel",
+      "optionUnits": {
+        "displayScale.lower": "SI unit of gaugePath",
+        "displayScale.upper": "SI unit of gaugePath"
+      },
       "pathSlots": [
         {
           "defaultConvertUnitTo": "unitless",
@@ -1809,11 +1835,12 @@
         "showMax": false,
         "showMin": false,
         "showMiniChart": false,
+        "siVersion": 22,
         "supportAutomaticHistoricalSeries": true,
         "updateInterval": 500,
         "verticalChart": false,
-        "yScaleMax": 10,
-        "yScaleMin": 0
+        "yScaleMax": null,
+        "yScaleMin": null
       },
       "defaultHeight": 6,
       "defaultWidth": 4,
@@ -1822,6 +1849,10 @@
       "minHeight": 2,
       "minWidth": 1,
       "name": "Numeric",
+      "optionUnits": {
+        "yScaleMax": "SI unit of numericPath",
+        "yScaleMin": "SI unit of numericPath"
+      },
       "pathSlots": [
         {
           "defaultConvertUnitTo": "unitless",
@@ -2777,9 +2808,9 @@
         "dataTimeout": 5,
         "displayName": "Gauge Label",
         "displayScale": {
-          "lower": 0,
+          "lower": null,
           "type": "linear",
-          "upper": 100
+          "upper": null
         },
         "enableTimeout": false,
         "filterSelfPaths": true,
@@ -2802,6 +2833,7 @@
             "source": null
           }
         },
+        "siVersion": 22,
         "supportAutomaticHistoricalSeries": true,
         "updateInterval": 500
       },
@@ -2812,6 +2844,10 @@
       "minHeight": 2,
       "minWidth": 1,
       "name": "Compact Linear",
+      "optionUnits": {
+        "displayScale.lower": "SI unit of gaugePath",
+        "displayScale.upper": "SI unit of gaugePath"
+      },
       "pathSlots": [
         {
           "defaultConvertUnitTo": "unitless",
