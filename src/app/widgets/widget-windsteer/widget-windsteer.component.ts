@@ -18,17 +18,15 @@ const DEFAULT_WIND_SECTOR_WINDOW_SECONDS = 5;
 // Single source of truth for the default config and the missing/invalid-value fallback.
 const DEFAULT_DATA_TIMEOUT_SECONDS = 5;
 
-// Overlay auto-hide thresholds in SI (m/s). Compared against the true speed regardless of the
-// path's display unit. The current-set arrow shows from SHOW and hides only below HIDE, so a drift
-// estimate hovering near one limit cannot blink it; the COG arrow hides below SOG.
+// Overlay auto-hide thresholds in m/s. The current-set arrow shows from SHOW and hides only below
+// HIDE, so a drift estimate hovering near one limit cannot blink it; the COG arrow hides below SOG.
 const SET_ARROW_SHOW_MS = 0.1;
 const SET_ARROW_HIDE_MS = 0.05;
 const SOG_HIDE_LIMIT_MS = 0.05;
-// Change-detection dedup granularity in SI (m/s): a speed signal only re-sets when it moves at least
-// this much, converted to the value's own display unit each update — never a fixed display-unit step.
+// Change-detection dedup granularity: a speed signal only re-sets when it moves at least this much.
 const SPEED_DEDUP_MS = 0.05;
 const DEG_TO_RAD = Math.PI / 180;
-// Angle dedup granularity for the SI overlay inputs: 1° expressed in radians.
+// Angle dedup granularity: an angle signal only re-sets when it moves at least 1°.
 const ANGLE_DEDUP_RAD = DEG_TO_RAD;
 
 @Component({
@@ -272,25 +270,27 @@ export class WidgetWindComponent implements OnDestroy {
   protected appWindAngle = signal(0);
   protected appWindSpeed = signal(0);
   private appWindSpeedMeasure = signal('');
+  protected appWindSpeedDisplay = computed(() => this.toPresentation(this.appWindSpeedMeasure(), this.appWindSpeed()));
   protected appWindSpeedUnit = computed(() => this.speedUnitSymbol(this.appWindSpeedMeasure()));
   protected trueWindAngle = signal(0);
   protected trueWindFresh = signal(false);
   protected trueWindSpeed = signal(0);
   private trueWindSpeedMeasure = signal('');
+  protected trueWindSpeedDisplay = computed(() => this.toPresentation(this.trueWindSpeedMeasure(), this.trueWindSpeed()));
   protected trueWindSpeedUnit = computed(() => this.speedUnitSymbol(this.trueWindSpeedMeasure()));
   protected driftFlow = signal(0);
   private driftMeasure = signal('');
+  protected driftFlowDisplay = computed(() => this.toPresentation(this.driftMeasure(), this.driftFlow()));
   protected driftUnit = computed(() => this.speedUnitSymbol(this.driftMeasure()));
   // Evaluated on every raw sample, not the deduped driftFlow: the dedup step equals the band width.
   protected setArrowActive = signal(false);
   protected driftSet = signal(0);
   protected sog = signal<number | undefined>(undefined);
-  private sogMeasure = signal('');
   // SOG absent (boat publishes COG but not speed) is treated as "moving" so the COG arrow still
   // shows; only a present, sub-threshold SOG hides it.
   protected sogActive = computed(() => {
     const s = this.sog();
-    return s == null || s >= this.speedInDisplayUnit(this.sogMeasure(), SOG_HIDE_LIMIT_MS);
+    return s == null || s >= SOG_HIDE_LIMIT_MS;
   });
   protected waypointAngle = signal<number | undefined>(undefined);
   // Per-path data freshness: true while a valid sample arrived within the TTL, false after it
@@ -306,7 +306,7 @@ export class WidgetWindComponent implements OnDestroy {
   // Each tracks its own freshness so a stalled half hides rather than showing a frozen value.
   protected driftFresh = signal(false);
   protected setFresh = signal(false);
-  // Signed degrees, +ve = starboard (after invertRudder). null = no rudder data (bar hidden).
+  // Signed rad, +ve = starboard (after invertRudder). null = no rudder data (bar hidden).
   protected rudderAngle = signal<number | null>(null);
   // The bearing's own freshness gates only the overlay mode; the waypoint marker keeps its own rule.
   private waypointFresh = signal(false);
@@ -318,10 +318,16 @@ export class WidgetWindComponent implements OnDestroy {
   private hasOverlayStw = false;
   private overlayTws = signal(0);          // m/s
   private overlayTwsFresh = signal(false);
-  private overlayTwa = signal(0);          // rad, water-referenced, signed
+  protected overlayTwa = signal(0);        // rad, water-referenced, signed
   private overlayTwaFresh = signal(false);
   private overlayStw = signal(0);          // m/s
   private overlayStwFresh = signal(false);
+
+  /** The close-hauled angle in rad; the stored option is in degrees. */
+  protected closeHauledLineAngle = computed(() => {
+    const deg = this.runtime.options()?.laylineAngle;
+    return typeof deg === 'number' ? deg * DEG_TO_RAD : undefined;
+  });
 
   protected overlayMode = computed<PolarOverlayMode>(() => {
     const cfg = this.runtime.options();
@@ -356,7 +362,7 @@ export class WidgetWindComponent implements OnDestroy {
   });
   /** Water TWD = HDG + water TWA, rad; changes under 1° do not propagate. */
   private overlayTwd = computed(
-    () => normalizeRadians(this.currentHeading() * DEG_TO_RAD + this.overlayTwa()),
+    () => normalizeRadians(this.currentHeading() + this.overlayTwa()),
     { equal: (a, b) => radianDelta(a, b) < ANGLE_DEDUP_RAD }
   );
   /** Compass-frame VMC curve toward the waypoint. */
@@ -365,10 +371,8 @@ export class WidgetWindComponent implements OnDestroy {
     const scale = this.overlayScale();
     const bearing = this.waypointAngle();
     if (!profile || !scale || bearing == null) return null;
-    return vmcCurve(profile, this.overlayTwd(), bearing * DEG_TO_RAD, scale);
+    return vmcCurve(profile, this.overlayTwd(), bearing, scale);
   });
-  /** Rotation of the polar curve group: the water TWA the curve is anchored to, degrees. */
-  protected overlayTwaDeg = computed(() => this.overlayTwa() / DEG_TO_RAD);
   /** Radius of the dot on the bow axis; null hides it. */
   protected overlayDotRadius = computed<number | null>(() => {
     const mode = this.overlayMode();
@@ -377,7 +381,7 @@ export class WidgetWindComponent implements OnDestroy {
     const stw = this.overlayStw();
     if (mode === 'polar') return speedToRadius(stw, scale);
     const bearing = this.waypointAngle();
-    return bearing == null ? null : vmcDotRadius(stw, this.currentHeading() * DEG_TO_RAD, bearing * DEG_TO_RAD, scale);
+    return bearing == null ? null : vmcDotRadius(stw, this.currentHeading(), bearing, scale);
   });
 
   protected historicalWindDirection: { timestamp: number; windDirection: number; }[] = [];
@@ -393,8 +397,6 @@ export class WidgetWindComponent implements OnDestroy {
   private windSampleIndex = 0;
   private lastUnwrapped: number | null = null;
   private lastSector: { min?: number; mid?: number; max?: number } = {};
-
-  private readonly DEG_EPSILON = 1;      // degrees — angle paths are structurally fixed to degrees
 
   // On each valid sample a path's active flag is set true and its hide-timer re-armed; when the
   // timer fires (no valid sample within the TTL) the flag goes false and the indicator hides.
@@ -417,6 +419,7 @@ export class WidgetWindComponent implements OnDestroy {
   }
 
   constructor() {
+    this.stream.useSiValues();
     // Stable stream callbacks registered via effect; directive handles diffing
     effect(() => {
       const cfg = this.runtime.options();
@@ -441,18 +444,18 @@ export class WidgetWindComponent implements OnDestroy {
   private onHeadingUpdate = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;   // freeze on absent/invalid
-    const next = this.normalizeAngle(raw);
+    const next = normalizeRadians(raw);
     this.markFresh('heading', this.headingFresh);
-    if (!this.hasHeading || this.angleDelta(this.currentHeading(), next) >= this.DEG_EPSILON) {
+    if (!this.hasHeading || radianDelta(this.currentHeading(), next) >= ANGLE_DEDUP_RAD) {
       this.currentHeading.set(next); this.hasHeading = true;
     }
   };
   private onCOGUpdate = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
-    const next = this.normalizeAngle(raw);
+    const next = normalizeRadians(raw);
     this.markFresh('cog', this.courseFresh);
-    if (!this.hasCOG || this.angleDelta(this.courseOverGroundAngle(), next) >= this.DEG_EPSILON) {
+    if (!this.hasCOG || radianDelta(this.courseOverGroundAngle(), next) >= ANGLE_DEDUP_RAD) {
       this.courseOverGroundAngle.set(next); this.hasCOG = true;
     }
   };
@@ -460,12 +463,11 @@ export class WidgetWindComponent implements OnDestroy {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
     this.markFresh('drift', this.driftFresh);
-    const measure = u.data.measure ?? '';
+    this.driftMeasure.set(u.data.measure ?? '');
     const limit = this.setArrowActive() ? SET_ARROW_HIDE_MS : SET_ARROW_SHOW_MS;
-    this.setArrowActive.set(raw >= this.speedInDisplayUnit(measure, limit));
-    if (!this.hasDrift || Math.abs(this.driftFlow() - raw) >= this.speedInDisplayUnit(measure, SPEED_DEDUP_MS)) {
+    this.setArrowActive.set(raw >= limit);
+    if (!this.hasDrift || Math.abs(this.driftFlow() - raw) >= SPEED_DEDUP_MS) {
       this.driftFlow.set(raw); this.hasDrift = true;
-      this.driftMeasure.set(measure);
     }
   };
   private onSOGUpdate = (u: IPathUpdate) => {
@@ -477,17 +479,16 @@ export class WidgetWindComponent implements OnDestroy {
     }
     const next = u.data.value;
     const cur = this.sog();
-    if (!this.hasSOG || cur == null || Math.abs(cur - next) >= this.speedInDisplayUnit(u.data.measure ?? '', SPEED_DEDUP_MS)) {
+    if (!this.hasSOG || cur == null || Math.abs(cur - next) >= SPEED_DEDUP_MS) {
       this.sog.set(next); this.hasSOG = true;
-      this.sogMeasure.set(u.data.measure ?? '');
     }
   };
   private onSetUpdate = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
-    const next = this.normalizeAngle(raw);
+    const next = normalizeRadians(raw);
     this.markFresh('set', this.setFresh);
-    if (!this.hasSet || this.angleDelta(this.driftSet(), next) >= this.DEG_EPSILON) {
+    if (!this.hasSet || radianDelta(this.driftSet(), next) >= ANGLE_DEDUP_RAD) {
       this.driftSet.set(next); this.hasSet = true;
     }
   };
@@ -497,10 +498,10 @@ export class WidgetWindComponent implements OnDestroy {
       this.waypointAngle.set(undefined); this.hasWPT = true;
       return;
     }
-    const next = this.normalizeAngle(raw);
+    const next = normalizeRadians(raw);
     if (Number.isFinite(next)) this.markFresh('wpt', this.waypointFresh);
     const cur = this.waypointAngle();
-    if (!this.hasWPT || cur == null || this.angleDelta(cur, next) >= this.DEG_EPSILON) {
+    if (!this.hasWPT || cur == null || radianDelta(cur, next) >= ANGLE_DEDUP_RAD) {
       this.waypointAngle.set(next); this.hasWPT = true;
     }
   };
@@ -543,9 +544,9 @@ export class WidgetWindComponent implements OnDestroy {
   private onAppWindAngle = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
-    const next = this.normalizeAngle(raw);
+    const next = normalizeRadians(raw);
     this.markFresh('awa', this.appWindFresh);
-    if (!this.hasAWA || this.angleDelta(this.appWindAngle(), next) >= this.DEG_EPSILON) {
+    if (!this.hasAWA || radianDelta(this.appWindAngle(), next) >= ANGLE_DEDUP_RAD) {
       this.appWindAngle.set(next); this.hasAWA = true;
     }
   };
@@ -553,18 +554,18 @@ export class WidgetWindComponent implements OnDestroy {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
     this.markFresh('aws', this.appWindSpeedFresh);
-    if (!this.hasAWS || Math.abs(this.appWindSpeed() - raw) >= this.speedInDisplayUnit(u.data.measure ?? '', SPEED_DEDUP_MS)) {
+    this.appWindSpeedMeasure.set(u.data.measure ?? '');
+    if (!this.hasAWS || Math.abs(this.appWindSpeed() - raw) >= SPEED_DEDUP_MS) {
       this.appWindSpeed.set(raw); this.hasAWS = true;
-      this.appWindSpeedMeasure.set(u.data.measure ?? '');
     }
   };
   private onTrueWindSpeed = (u: IPathUpdate) => {
     const raw = u.data.value;
     if (raw == null || !Number.isFinite(raw)) return;
     this.markFresh('tws', this.trueWindSpeedFresh);
-    if (!this.hasTWS || Math.abs(this.trueWindSpeed() - raw) >= this.speedInDisplayUnit(u.data.measure ?? '', SPEED_DEDUP_MS)) {
+    this.trueWindSpeedMeasure.set(u.data.measure ?? '');
+    if (!this.hasTWS || Math.abs(this.trueWindSpeed() - raw) >= SPEED_DEDUP_MS) {
       this.trueWindSpeed.set(raw); this.hasTWS = true;
-      this.trueWindSpeedMeasure.set(u.data.measure ?? '');
     }
   };
   private onTrueWindAngle = (u: IPathUpdate) => {
@@ -572,12 +573,12 @@ export class WidgetWindComponent implements OnDestroy {
     if (raw == null || !Number.isFinite(raw)) return;   // freeze; the TTL timer hides after lapse
     this.lastRawTrueWindAngle = raw;
     this.markFresh('twa', this.trueWindFresh);
-    const next = this.normalizeAngle(this.computeTrueWindBase(raw));
-    if (!this.hasTWA || this.angleDelta(this.trueWindAngle(), next) >= this.DEG_EPSILON) {
+    const next = normalizeRadians(this.computeTrueWindBase(raw));
+    if (!this.hasTWA || radianDelta(this.trueWindAngle(), next) >= ANGLE_DEDUP_RAD) {
       this.trueWindAngle.set(next); this.hasTWA = true;
     }
     if (this.runtime.options()?.windSectorEnable) {
-      this.addHistoricalWindDirection(this.normalizeAngle(this.computeTrueWindDirection(raw)));
+      this.addHistoricalWindDirection(normalizeRadians(this.computeTrueWindDirection(raw)));
     }
   };
 
@@ -598,7 +599,7 @@ export class WidgetWindComponent implements OnDestroy {
 
   private applyTrueWindBase() {
     if (this.lastRawTrueWindAngle == null) return;
-    this.trueWindAngle.set(this.normalizeAngle(this.computeTrueWindBase(this.lastRawTrueWindAngle)));
+    this.trueWindAngle.set(normalizeRadians(this.computeTrueWindBase(this.lastRawTrueWindAngle)));
   }
 
   // Resolve the signed rudder angle from the last raw sample. steering.rudderAngle is +ve to
@@ -612,7 +613,7 @@ export class WidgetWindComponent implements OnDestroy {
     }
     const signed = (this.runtime.options()?.invertRudder ?? false) ? -raw : raw;
     const cur = this.rudderAngle();
-    if (cur == null || Math.abs(cur - signed) >= this.DEG_EPSILON) {
+    if (cur == null || Math.abs(cur - signed) >= ANGLE_DEDUP_RAD) {
       this.rudderAngle.set(signed);
     }
   }
@@ -718,13 +719,13 @@ export class WidgetWindComponent implements OnDestroy {
     const minU = this.windMinDeque[0].u;
     const maxU = this.windMaxDeque[0].u;
     const midU = (minU + maxU) / 2;
-    const nextMin = this.normalizeAngle(minU);
-    const nextMid = this.normalizeAngle(midU);
-    const nextMax = this.normalizeAngle(maxU);
+    const nextMin = normalizeRadians(minU);
+    const nextMid = normalizeRadians(midU);
+    const nextMax = normalizeRadians(maxU);
     const changed =
-      this.lastSector.min === undefined || this.angleDelta(this.lastSector.min!, nextMin) >= this.DEG_EPSILON ||
-      this.lastSector.mid === undefined || this.angleDelta(this.lastSector.mid!, nextMid) >= this.DEG_EPSILON ||
-      this.lastSector.max === undefined || this.angleDelta(this.lastSector.max!, nextMax) >= this.DEG_EPSILON;
+      this.lastSector.min === undefined || radianDelta(this.lastSector.min!, nextMin) >= ANGLE_DEDUP_RAD ||
+      this.lastSector.mid === undefined || radianDelta(this.lastSector.mid!, nextMid) >= ANGLE_DEDUP_RAD ||
+      this.lastSector.max === undefined || radianDelta(this.lastSector.max!, nextMax) >= ANGLE_DEDUP_RAD;
     if (changed) {
       this.trueWindMinHistoric.set(nextMin);
       this.trueWindMidHistoric.set(nextMid);
@@ -743,15 +744,11 @@ export class WidgetWindComponent implements OnDestroy {
       return a;
     }
     const last = this.lastUnwrapped;
-    const lastMod = ((last % 360) + 360) % 360;
-    const diff = ((a - lastMod + 540) % 360) - 180;
+    const diff = normalizeRadians(a - last + Math.PI) - Math.PI;
     const u = last + diff;
     this.lastUnwrapped = u;
     return u;
   }
-
-  private normalizeAngle(a: number): number { return ((a % 360) + 360) % 360; }
-  private angleDelta(from: number, to: number): number { const d = ((to - from + 540) % 360) - 180; return Math.abs(d); }
 
   // The speed readouts derive their unit symbol from the measure the streams directive tagged the
   // value with (server-resolved for these display paths), never the stored convertUnitTo. An empty
@@ -761,10 +758,10 @@ export class WidgetWindComponent implements OnDestroy {
     return measure && measure !== 'unitless' ? this.unitsService.getUnitDisplaySymbol(measure) : '';
   }
 
-  // Express an SI (m/s) speed in the value's own display unit, so a threshold or change-step compares
-  // as a true physical speed regardless of the unit the value is rendered in.
-  private speedInDisplayUnit(measure: string, speedMs: number): number {
-    return measure ? (this.unitsService.convertToUnit(measure, speedMs) ?? speedMs) : speedMs;
+  // A speed readout in its presentation unit. An empty or unitless measure shows the m/s value, as
+  // the symbol stays blank for it.
+  private toPresentation(measure: string, speedMs: number): number {
+    return measure && measure !== 'unitless' ? (this.unitsService.convertToUnit(measure, speedMs) ?? speedMs) : speedMs;
   }
 
 }
@@ -793,14 +790,8 @@ function radianDelta(a: number, b: number): number {
   return Math.abs(normalizeRadians(b - a + Math.PI) - Math.PI);
 }
 
-function addHeadingDeg(h1: number, h2: number): number {
-  let h3 = (h1 + h2) % 360;
-  if (h3 < 0) h3 += 360;
-  return h3;
-}
-
 /**
- * Resolves the base angle to display for the configured true-wind path.
+ * Resolves the base angle to display for the configured true-wind path; angles in rad.
  *
  * `angleTrueWater` / `angleTrueGround` are boat-relative (true wind ANGLE). In enhanced/compass
  * mode the dial rotates with heading, so for those paths the heading is added to convert the angle
@@ -810,5 +801,5 @@ function addHeadingDeg(h1: number, h2: number): number {
  */
 export function computeTrueWindBaseAngle(path: string, value: number, heading: number, compassModeEnabled: boolean): number {
   const isBoatRelativeTrueWind = path.includes('angleTrueWater') || path.includes('angleTrueGround');
-  return isBoatRelativeTrueWind && compassModeEnabled ? addHeadingDeg(heading, value) : value;
+  return isBoatRelativeTrueWind && compassModeEnabled ? normalizeRadians(heading + value) : value;
 }

@@ -60,8 +60,7 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
   const feed = (pathKey: string, si: number, measure: string): void => {
     const callback = callbacks.get(pathKey);
     if (!callback) throw new Error(`${pathKey} is not observed`);
-    const legacy = unitsServiceStub.convertToUnit(measure, si);
-    callback({ data: { value: legacy, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
+    callback({ data: { value: si, timestamp: null, measure }, state: 'normal' } as IPathUpdate);
   };
   const feedAngle = (pathKey: string, deg: number): void => feed(pathKey, deg * DEG, 'deg');
   const feedSpeed = (pathKey: string, ms: number): void => feed(pathKey, ms, 'knots');
@@ -70,7 +69,8 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
     fixture.debugElement.query(By.directive(SvgWindsteerComponent)).componentInstance as SvgWindsteerComponent;
   const rotation = (ref: string): string | null => {
     const element = (svg() as unknown as Record<string, () => { nativeElement: SVGGElement }>)[ref]().nativeElement;
-    return element.getAttribute('transform');
+    // Six decimals: a rad input converted to degrees for the attribute carries float noise.
+    return element.getAttribute('transform')?.replace(/-?\d+\.\d+/g, n => String(Number(Number(n).toFixed(6)))) ?? null;
   };
   const attr = (selector: string, name: string): string | null =>
     (fixture.nativeElement as HTMLElement).querySelector(selector)?.getAttribute(name) ?? null;

@@ -7,6 +7,16 @@ describe('SvgWindsteerComponent', () => {
     let fixture: ComponentFixture<SvgWindsteerComponent>;
     let component: SvgWindsteerComponent;
 
+    // The tests speak degrees; the component takes its angle inputs in rad.
+    const ANGLE_INPUTS = new Set([
+        'compassHeading', 'courseOverGroundAngle', 'trueWindAngle', 'appWindAngle', 'closeHauledLineAngle', 'driftSet',
+        'waypointAngle', 'trueWindMinHistoric', 'trueWindMidHistoric', 'trueWindMaxHistoric', 'rudderAngle', 'polarCurveRotation'
+    ]);
+    const setInput = (key: string, value: unknown): void => {
+        const converted = ANGLE_INPUTS.has(key) && typeof value === 'number' ? value * Math.PI / 180 : value;
+        fixture.componentRef.setInput(key, converted);
+    };
+
     const setRequiredInputs = (overrides: Record<string, unknown> = {}): void => {
         const defaults: Record<string, unknown> = {
             compassHeading: 15,
@@ -35,9 +45,7 @@ describe('SvgWindsteerComponent', () => {
             sogActive: true
         };
 
-        Object.entries({ ...defaults, ...overrides }).forEach(([key, value]) => {
-            fixture.componentRef.setInput(key, value);
-        });
+        Object.entries({ ...defaults, ...overrides }).forEach(([key, value]) => setInput(key, value));
     };
 
     beforeEach(async () => {
@@ -85,7 +93,7 @@ describe('SvgWindsteerComponent', () => {
         fixture.detectChanges();
         rafSpy.mockClear();
 
-        fixture.componentRef.setInput('appWindAngle', 42);
+        setInput('appWindAngle', 42);
         fixture.detectChanges();
 
         expect(rafSpy).toHaveBeenCalled();
@@ -122,7 +130,7 @@ describe('SvgWindsteerComponent', () => {
             trueWindAngle: 40,
             appWindAngle: 20, // deliberately different from true wind
             closeHauledLineEnabled: true,
-            laylineAngle: 30,
+            closeHauledLineAngle: 30,
             trueWindFresh: true
         });
         fixture.detectChanges();
@@ -138,7 +146,7 @@ describe('SvgWindsteerComponent', () => {
     });
 
     it('hides laylines when true wind is unavailable', () => {
-        setRequiredInputs({ closeHauledLineEnabled: true, laylineAngle: 30, trueWindFresh: false });
+        setRequiredInputs({ closeHauledLineEnabled: true, closeHauledLineAngle: 30, trueWindFresh: false });
         fixture.detectChanges();
         const layer = fixture.nativeElement.querySelector('#LayerLayline') as SVGGElement;
         expect(layer.style.display).toBe('none');
@@ -156,7 +164,7 @@ describe('SvgWindsteerComponent', () => {
             compassHeading: 30,
             windSectorEnabled: true,
             closeHauledLineEnabled: false,
-            laylineAngle: 0,
+            closeHauledLineAngle: 0,
             trueWindMinHistoric: 100,
             trueWindMidHistoric: 110,
             trueWindMaxHistoric: 120,
@@ -177,7 +185,7 @@ describe('SvgWindsteerComponent', () => {
             compassHeading: 30,
             windSectorEnabled: true,
             closeHauledLineEnabled: false,
-            laylineAngle: 0,
+            closeHauledLineAngle: 0,
             trueWindMinHistoric: 100,
             trueWindMidHistoric: 110,
             trueWindMaxHistoric: 120,
@@ -195,7 +203,7 @@ describe('SvgWindsteerComponent', () => {
             compassHeading: 30,
             trueWindAngle: 40, // boat-relative TWA in simple mode
             closeHauledLineEnabled: true,
-            laylineAngle: 30,
+            closeHauledLineAngle: 30,
             trueWindFresh: true
         });
         fixture.detectChanges();
@@ -213,7 +221,7 @@ describe('SvgWindsteerComponent', () => {
             compassHeading: 0,
             windSectorEnabled: true,
             closeHauledLineEnabled: false,
-            laylineAngle: 0,
+            closeHauledLineAngle: 0,
             trueWindMinHistoric: 100,
             trueWindMidHistoric: 110,
             trueWindMaxHistoric: 120,
@@ -222,9 +230,9 @@ describe('SvgWindsteerComponent', () => {
         fixture.detectChanges();
         expect((component as unknown as { portWindSectorPath: () => string }).portWindSectorPath()).not.toBe('');
 
-        fixture.componentRef.setInput('trueWindMinHistoric', undefined);
-        fixture.componentRef.setInput('trueWindMidHistoric', undefined);
-        fixture.componentRef.setInput('trueWindMaxHistoric', undefined);
+        setInput('trueWindMinHistoric', undefined);
+        setInput('trueWindMidHistoric', undefined);
+        setInput('trueWindMaxHistoric', undefined);
         fixture.detectChanges();
 
         expect((component as unknown as { portWindSectorPath: () => string }).portWindSectorPath()).toBe('');
@@ -366,7 +374,7 @@ describe('SvgWindsteerComponent', () => {
 
         const { frames, restore } = queueFrames();
         try {
-            fixture.componentRef.setInput('compassHeading', 45);
+            setInput('compassHeading', 45);
             fixture.detectChanges();
 
             // The arrow animates rather than snaps: frames are queued and it has not moved yet.
@@ -401,7 +409,7 @@ describe('SvgWindsteerComponent', () => {
 
         const { frames, restore } = queueFrames();
         try {
-            fixture.componentRef.setInput('compassHeading', 30);
+            setInput('compassHeading', 30);
             fixture.detectChanges();
 
             // Halfway through, the short way passes the bow (0); the long way would be near 180.
@@ -685,7 +693,7 @@ describe('SvgWindsteerComponent', () => {
             fixture.detectChanges();
             rafSpy.mockClear();
 
-            fixture.componentRef.setInput('polarCurveRotation', 60);
+            setInput('polarCurveRotation', 60);
             fixture.detectChanges();
             expect(rafSpy).toHaveBeenCalled();
         });
@@ -695,7 +703,7 @@ describe('SvgWindsteerComponent', () => {
             const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame');
             setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, polarCurveRotation: 45, appWindAngle: 18 });
             fixture.detectChanges();
-            fixture.componentRef.setInput('polarCurveRotation', 90);
+            setInput('polarCurveRotation', 90);
             fixture.detectChanges();
 
             cancelSpy.mockClear();

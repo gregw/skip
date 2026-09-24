@@ -13,6 +13,8 @@ import { OverlayPoint, OverlayScale, POLAR_OVERLAY_PATH_KEYS, VMC_HEADING_STEP, 
 import { PolarOverlayMode } from '../svg-windsteer/svg-windsteer.component';
 import hurmaPolar from '../../core/utils/polar-engine.hurma-polar.fixture.json';
 
+const DEG = Math.PI / 180;
+
 const unitsServiceStub = {
   getUnitDisplaySymbol: (measure: string | null | undefined) => measure ?? '',
   // Model only what the gate needs: SI m/s in, display unit out (knots ~1.94384x; m/s identity).
@@ -36,21 +38,21 @@ describe('computeTrueWindBaseAngle (#1066, #1063)', () => {
 
   it('keeps boat-relative true wind angle unchanged in simple mode (compass mode off)', () => {
     // heading 90°, boat-relative TWA 45° -> must stay 45° in simple mode (NOT 135°)
-    expect(computeTrueWindBaseAngle(TRUE_WATER, 45, 90, false)).toBe(45);
-    expect(computeTrueWindBaseAngle(TRUE_GROUND, 45, 90, false)).toBe(45);
+    expect(computeTrueWindBaseAngle(TRUE_WATER, 45 * DEG, 90 * DEG, false)).toBe(45 * DEG);
+    expect(computeTrueWindBaseAngle(TRUE_GROUND, 45 * DEG, 90 * DEG, false)).toBe(45 * DEG);
   });
 
   it('converts true wind angle to the compass frame (adds heading) in enhanced/compass mode', () => {
-    expect(computeTrueWindBaseAngle(TRUE_WATER, 45, 90, true)).toBe(135);
+    expect(computeTrueWindBaseAngle(TRUE_WATER, 45 * DEG, 90 * DEG, true)).toBeCloseTo(135 * DEG, 12);
   });
 
-  it('wraps the compass-frame result into 0..359 in enhanced/compass mode', () => {
-    expect(computeTrueWindBaseAngle(TRUE_WATER, 300, 90, true)).toBe(30); // 390 -> 30
+  it('wraps the compass-frame result into [0, 2π) in enhanced/compass mode', () => {
+    expect(computeTrueWindBaseAngle(TRUE_WATER, 300 * DEG, 90 * DEG, true)).toBeCloseTo(30 * DEG, 12); // 390 -> 30
   });
 
   it('passes through non boat-relative true wind paths (e.g. directionTrue) in both modes', () => {
-    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200, 90, false)).toBe(200);
-    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200, 90, true)).toBe(200);
+    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200 * DEG, 90 * DEG, false)).toBe(200 * DEG);
+    expect(computeTrueWindBaseAngle(DIRECTION_TRUE, 200 * DEG, 90 * DEG, true)).toBe(200 * DEG);
   });
 });
 
@@ -82,7 +84,8 @@ describe('WidgetWindComponent live compass-mode toggle (#73)', () => {
     callbacks = new Map<string, (u: IPathUpdate) => void>();
 
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
 
     TestBed.configureTestingModule({
@@ -98,14 +101,14 @@ describe('WidgetWindComponent live compass-mode toggle (#73)', () => {
   });
 
   it('recomputes the TWA base on a live compass-mode toggle without a new wind sample', () => {
-    callbacks.get('headingPath')!(update(90));
-    callbacks.get('trueWindAngle')!(update(45));
-    expect(twa()).toBe(45); // simple mode: boat-relative angle shown as-is
+    callbacks.get('headingPath')!(update(90 * DEG));
+    callbacks.get('trueWindAngle')!(update(45 * DEG));
+    expect(twa()).toBeCloseTo(45 * DEG, 12); // simple mode: boat-relative angle shown as-is
 
     options.set(makeConfig(true));
     TestBed.tick();
 
-    expect(twa()).toBe(135); // compass mode: heading (90) added to the cached angle (45)
+    expect(twa()).toBeCloseTo(135 * DEG, 12); // compass mode: heading (90) added to the cached angle (45)
   });
 });
 
@@ -132,7 +135,8 @@ describe('WidgetWindComponent true-wind sector source', () => {
     options = signal<IWidgetSvcConfig | undefined>(makeConfig());
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
     TestBed.configureTestingModule({
       providers: [
@@ -188,7 +192,8 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
     TestBed.configureTestingModule({
       providers: [
@@ -204,12 +209,12 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
   it('freezes every angle/speed path on a null sample instead of resetting it to 0', () => {
     vi.useFakeTimers();
     try {
-      callbacks.get('headingPath')!(update(123));
-      callbacks.get('appWindAngle')!(update(45));
-      callbacks.get('courseOverGround')!(update(20));
+      callbacks.get('headingPath')!(update(123 * DEG));
+      callbacks.get('appWindAngle')!(update(45 * DEG));
+      callbacks.get('courseOverGround')!(update(20 * DEG));
       callbacks.get('trueWindSpeed')!(update(12));
       callbacks.get('appWindSpeed')!(update(9));
-      callbacks.get('set')!(update(80));
+      callbacks.get('set')!(update(80 * DEG));
       callbacks.get('drift')!(update(0.4));
       callbacks.get('headingPath')!(update(null));
       callbacks.get('appWindAngle')!(update(null));
@@ -218,12 +223,12 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
       callbacks.get('appWindSpeed')!(update(null));
       callbacks.get('set')!(update(null));
       callbacks.get('drift')!(update(null));
-      expect(sig('currentHeading')).toBe(123);        // all frozen, none reset to 0
-      expect(sig('appWindAngle')).toBe(45);
-      expect(sig('courseOverGroundAngle')).toBe(20);
+      expect(sig('currentHeading')).toBeCloseTo(123 * DEG, 12);        // all frozen, none reset to 0
+      expect(sig('appWindAngle')).toBeCloseTo(45 * DEG, 12);
+      expect(sig('courseOverGroundAngle')).toBeCloseTo(20 * DEG, 12);
       expect(sig('trueWindSpeed')).toBe(12);
       expect(sig('appWindSpeed')).toBe(9);
-      expect(sig('driftSet')).toBe(80);
+      expect(sig('driftSet')).toBeCloseTo(80 * DEG, 12);
       expect(sig('driftFlow')).toBe(0.4);
     } finally { vi.useRealTimers(); }
   });
@@ -263,12 +268,12 @@ describe('WidgetWindComponent freeze-then-hide on data loss (#475)', () => {
   it('re-shows a path when data resumes after it went stale', () => {
     vi.useFakeTimers();
     try {
-      callbacks.get('appWindAngle')!(update(30));
+      callbacks.get('appWindAngle')!(update(30 * DEG));
       vi.advanceTimersByTime(5000);
       expect(sig('appWindFresh')).toBe(false);   // hidden
-      callbacks.get('appWindAngle')!(update(35)); // data resumes
+      callbacks.get('appWindAngle')!(update(35 * DEG)); // data resumes
       expect(sig('appWindFresh')).toBe(true);     // shown again
-      expect(sig('appWindAngle')).toBe(35);
+      expect(sig('appWindAngle')).toBeCloseTo(35 * DEG, 12);
     } finally { vi.useRealTimers(); }
   });
 
@@ -307,7 +312,8 @@ describe('WidgetWindComponent speed unit symbol source', () => {
     options = signal<IWidgetSvcConfig | undefined>(makeConfig());
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
     TestBed.configureTestingModule({
       providers: [
@@ -362,7 +368,8 @@ describe('WidgetWindComponent waypoint presence (#441)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
     TestBed.configureTestingModule({
       providers: [
@@ -376,8 +383,8 @@ describe('WidgetWindComponent waypoint presence (#441)', () => {
   });
 
   it('propagates a real waypoint bearing', () => {
-    callbacks.get('nextWaypointBearing')!(update(120));
-    expect(wpt()).toBe(120);
+    callbacks.get('nextWaypointBearing')!(update(120 * DEG));
+    expect(wpt()).toBeCloseTo(120 * DEG, 12);
   });
 
   it('treats a zero bearing as a real value (waypoint due north)', () => {
@@ -386,8 +393,8 @@ describe('WidgetWindComponent waypoint presence (#441)', () => {
   });
 
   it('clears the bearing to undefined when the destination goes away (null)', () => {
-    callbacks.get('nextWaypointBearing')!(update(120));
-    expect(wpt()).toBe(120);
+    callbacks.get('nextWaypointBearing')!(update(120 * DEG));
+    expect(wpt()).toBeCloseTo(120 * DEG, 12);
     callbacks.get('nextWaypointBearing')!(update(null));
     expect(wpt()).toBeUndefined();
   });
@@ -412,7 +419,8 @@ describe('WidgetWindComponent rudder angle (#435)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG, ...cfg });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
     TestBed.configureTestingModule({
       providers: [
@@ -495,7 +503,8 @@ describe('WidgetWindComponent speed-over-ground gating (#442)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
     TestBed.configureTestingModule({
       providers: [
@@ -541,9 +550,8 @@ describe('WidgetWindComponent speed-over-ground gating (#442)', () => {
 
 /**
  * #441/#637: the drift readout shows at any magnitude; only the set arrow is gated on speed, with
- * hysteresis so an estimate hovering near the limit cannot blink it. The limits are SI (m/s) and
- * expressed in the value's own display unit before comparison, so the cutoff is the same real
- * current whether the readout is in knots, m/s, or km/h.
+ * hysteresis so an estimate hovering near the limit cannot blink it. The limits and the value are
+ * both in m/s, so the cutoff is the same real current whether the readout is in knots, m/s, or km/h.
  */
 describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
   let component: WidgetWindComponent;
@@ -553,7 +561,6 @@ describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
   const update = (value: number | null, measure?: string): IPathUpdate => ({ data: { value, timestamp: null, measure }, state: 'normal' });
   const setArrowActive = (): boolean => (component as unknown as { setArrowActive: () => boolean }).setArrowActive();
   const driftUnit = (): string => (component as unknown as { driftUnit: () => string }).driftUnit();
-  const KNOTS_PER_MS = 1.94384;
   // Show at 0.1 m/s, hide below 0.05 m/s: the band between keeps the arrow's last state.
   const HYSTERESIS_STEPS_MS: [number, boolean][] = [[0.12, true], [0.07, true], [0.04, false], [0.07, false], [0.11, true]];
 
@@ -561,7 +568,8 @@ describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
     options = signal<IWidgetSvcConfig | undefined>({ ...WidgetWindComponent.DEFAULT_CONFIG });
     callbacks = new Map<string, (u: IPathUpdate) => void>();
     const streamsMock = {
-      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); }
+      observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined
     };
     TestBed.configureTestingModule({
       providers: [
@@ -578,14 +586,14 @@ describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
     expect(setArrowActive()).toBe(false);
   });
 
-  it('applies set-arrow hysteresis to drift in knots', () => {
+  it('applies set-arrow hysteresis to drift presented in knots', () => {
     for (const [ms, shown] of HYSTERESIS_STEPS_MS) {
-      callbacks.get('drift')!(update(ms * KNOTS_PER_MS, 'knots'));
+      callbacks.get('drift')!(update(ms, 'knots'));
       expect(setArrowActive(), `${ms} m/s`).toBe(shown);
     }
   });
 
-  it('applies set-arrow hysteresis to drift already in m/s', () => {
+  it('applies set-arrow hysteresis to drift presented in m/s', () => {
     for (const [ms, shown] of HYSTERESIS_STEPS_MS) {
       callbacks.get('drift')!(update(ms, 'm/s'));
       expect(setArrowActive(), `${ms} m/s`).toBe(shown);
@@ -627,7 +635,6 @@ describe('resolvePolarOverlayMode', () => {
 
 /** Wind Steer polar overlay (#478): option, SI inputs, mode decision and geometry handed to the SVG. */
 describe('WidgetWindComponent polar overlay', () => {
-  const DEG = Math.PI / 180;
   const TTL_MS = 5000;
   const TWS_MS = 5;
   const WATER_TWA_DEG = 45;
@@ -662,7 +669,7 @@ describe('WidgetWindComponent polar overlay', () => {
     overlayMode: () => PolarOverlayMode;
     polarCurvePoints: () => OverlayPoint[] | null;
     vmcCurvePoints: () => OverlayPoint[] | null;
-    overlayTwaDeg: () => number;
+    overlayTwa: () => number;
     overlayDotRadius: () => number | null;
   }
 
@@ -692,10 +699,10 @@ describe('WidgetWindComponent polar overlay', () => {
     feed('polarTrueWindSpeed', twsMs);
     feed('polarTrueWindAngle', waterTwaDeg * DEG);
   };
-  /** Compass mode with fresh heading and a fresh waypoint bearing, degrees as the structural paths deliver them. */
+  /** Compass mode with fresh heading and a fresh waypoint bearing. */
   const feedWaypoint = (headingDeg: number, bearingDeg: number): void => {
-    feed('headingPath', headingDeg);
-    feed('nextWaypointBearing', bearingDeg);
+    feed('headingPath', headingDeg * DEG);
+    feed('nextWaypointBearing', bearingDeg * DEG);
   };
   const create = (config: IWidgetSvcConfig): void => {
     options.set(config);
@@ -722,6 +729,7 @@ describe('WidgetWindComponent polar overlay', () => {
     polarService = new FakeActivePolarService();
     const streamsMock = {
       observe: (pathName: string, next: (u: IPathUpdate) => void) => { callbacks.set(pathName, next); },
+      useSiValues: () => undefined,
       unobserve: (pathName: string) => { unobserved.push(pathName); callbacks.delete(pathName); }
     };
     TestBed.configureTestingModule({
@@ -819,13 +827,13 @@ describe('WidgetWindComponent polar overlay', () => {
       expect(view.polarCurvePoints()).toEqual(polarCurve(hurma, TWS_MS, 0.8, scaleOf(hurma)));
     });
 
-    it('ignores the display TWS in knots; the geometry gets m/s from the SI slot', () => {
+    it('takes the geometry TWS from the SI slot, not the displayed TWS', () => {
       create(makeConfig());
-      feed('trueWindSpeed', TWS_MS * 1.94384, 'knots');
+      feed('trueWindSpeed', TWS_MS, 'knots');
       feedWind();
       expect(view.polarCurvePoints()).toEqual(polarCurve(hurma, TWS_MS, 1, scaleOf(hurma)));
 
-      feed('trueWindSpeed', 20, 'knots');
+      feed('trueWindSpeed', 10, 'knots');
       expect(view.polarCurvePoints()).toEqual(polarCurve(hurma, TWS_MS, 1, scaleOf(hurma)));
     });
 
@@ -835,16 +843,16 @@ describe('WidgetWindComponent polar overlay', () => {
         paths: { ...paths, trueWindAngle: { ...paths['trueWindAngle'], path: 'self.environment.wind.angleTrueGround' } }
       }));
       feed('headingPath', 0);
-      feed('trueWindAngle', 60);
+      feed('trueWindAngle', 60 * DEG);
       feedWind(TWS_MS, 45);
 
-      expect(view.overlayTwaDeg()).toBeCloseTo(45, 9);
+      expect(view.overlayTwa()).toBeCloseTo(45 * DEG, 9);
       expect(view.overlayMode()).toBe('polar');
     });
 
     it('stays hidden without a water TWA even when the displayed true wind is fresh', () => {
       create(makeConfig());
-      feed('trueWindAngle', 45);
+      feed('trueWindAngle', 45 * DEG);
       feed('trueWindSpeed', 10, 'knots');
       feed('polarTrueWindSpeed', TWS_MS);
       expect(view.overlayMode()).toBe('hidden');
@@ -854,9 +862,9 @@ describe('WidgetWindComponent polar overlay', () => {
       create(makeConfig());
       feedWind(TWS_MS, 45);
       feed('polarTrueWindAngle', 45.6 * DEG);
-      expect(view.overlayTwaDeg()).toBeCloseTo(45, 9);
+      expect(view.overlayTwa()).toBeCloseTo(45 * DEG, 9);
       feed('polarTrueWindAngle', 46.2 * DEG);
-      expect(view.overlayTwaDeg()).toBeCloseTo(46.2, 9);
+      expect(view.overlayTwa()).toBeCloseTo(46.2 * DEG, 9);
     });
 
     it('hides only the dot when STW goes stale', () => {
@@ -968,11 +976,11 @@ describe('WidgetWindComponent polar overlay', () => {
       feedWaypoint(30, 10);
       vi.advanceTimersByTime(TTL_MS - 1000);
       feedWind();
-      feed('nextWaypointBearing', 10);
+      feed('nextWaypointBearing', 10 * DEG);
       vi.advanceTimersByTime(2000);
       expect(view.overlayMode()).toBe('polar');
 
-      feed('headingPath', 31);
+      feed('headingPath', 31 * DEG);
       expect(view.overlayMode()).toBe('vmc');
     });
 
@@ -996,7 +1004,7 @@ describe('WidgetWindComponent polar overlay', () => {
       feedWaypoint(30, 10);
       vi.advanceTimersByTime(TTL_MS - 1000);
       feedWind();
-      feed('headingPath', 30);
+      feed('headingPath', 30 * DEG);
       vi.advanceTimersByTime(2000);
       expect(view.overlayMode()).toBe('polar');
     });
