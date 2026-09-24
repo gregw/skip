@@ -749,9 +749,15 @@ describe('WidgetWindComponent polar overlay', () => {
   });
 
   describe('option and paths', () => {
-    it('defaults the option off and declares the three SI slots hidden, structural and optional', () => {
+    it('keeps the overlay off in a stored config that has it off, through the defaults merge', () => {
+      const runtime = TestBed.runInInjectionContext(() => new WidgetRuntimeDirective());
+      runtime.initialize(WidgetWindComponent.DEFAULT_CONFIG, { polarOverlayEnable: false } as IWidgetSvcConfig);
+      expect(runtime.options()?.polarOverlayEnable).toBe(false);
+    });
+
+    it('defaults the option on and declares the three SI slots hidden, structural and optional', () => {
       const paths = WidgetWindComponent.DEFAULT_CONFIG.paths as Record<string, IWidgetPath>;
-      expect(WidgetWindComponent.DEFAULT_CONFIG.polarOverlayEnable).toBe(false);
+      expect(WidgetWindComponent.DEFAULT_CONFIG.polarOverlayEnable).toBe(true);
       for (const [key, path, unit] of [
         ['polarTrueWindSpeed', 'self.environment.wind.speedTrue', 'm/s'],
         ['polarTrueWindAngle', 'self.environment.wind.angleTrueWater', 'rad'],

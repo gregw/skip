@@ -1,3 +1,6 @@
+import { TestBed } from '@angular/core/testing';
+import { WidgetRuntimeDirective } from '../app/core/directives/widget-runtime.directive';
+import type { IWidgetSvcConfig } from '../app/core/interfaces/widgets-interface';
 import { describe, expect, it } from 'vitest';
 import { DefaultDashboard } from './config.blank.dashboard';
 import { WidgetPositionComponent } from '../app/widgets/widget-position/widget-position.component';
@@ -78,6 +81,16 @@ describe('DefaultDashboard seed', () => {
       expect(cfg['closeHauledLineAngle']).toBe(defaults.closeHauledLineAngle);
       expect(cfg['siVersion']).toBe(defaults.siVersion);
       expect('laylineAngle' in cfg).toBe(false);
+    }
+  });
+
+  it('seeds widget-wind-steer with the polar overlay on once merged over its DEFAULT_CONFIG', () => {
+    const seedWidgets = seededWidgetsOfType('widget-wind-steer');
+    expect(seedWidgets.length).toBeGreaterThan(0);
+    for (const widget of seedWidgets) {
+      const runtime = TestBed.runInInjectionContext(() => new WidgetRuntimeDirective());
+      runtime.initialize(WidgetWindComponent.DEFAULT_CONFIG, widget.input?.widgetProperties?.config as IWidgetSvcConfig);
+      expect(runtime.options()?.polarOverlayEnable).toBe(true);
     }
   });
 

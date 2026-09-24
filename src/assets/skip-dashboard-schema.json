@@ -3257,7 +3257,7 @@
             "source": "default"
           }
         },
-        "polarOverlayEnable": false,
+        "polarOverlayEnable": true,
         "rudderEnable": true,
         "sailSetupEnable": false,
         "siVersion": 20,
