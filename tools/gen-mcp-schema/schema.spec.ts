@@ -27,9 +27,32 @@ describe('buildSchema', () => {
 
   it('states that a config written in optionUnits must carry the SI marker', () => {
     expect(schema.meta.optionUnitsRule).toContain(`${SI_VERSION_KEY} set to the widget's defaultConfig.${SI_VERSION_KEY}`);
-    for (const widget of schema.widgets.filter((w) => w.optionUnits)) {
+    // The slider's bounds were SI before the first SI step, so no step converts it and it has no marker.
+    const siSinceBeforeTheSteps = new Set(['widget-slider']);
+    for (const widget of schema.widgets.filter((w) => w.optionUnits && !siSinceBeforeTheSteps.has(w.selector))) {
       expect(typeof widget.defaultConfig[SI_VERSION_KEY], widget.selector).toBe('number');
     }
+  });
+
+  it('gives every numeric default option a unit: SI in optionUnits, or a widget setting unit', () => {
+    expect(schema.meta.optionUnitsRule).toContain('widgetSettingUnits');
+    const settings = schema.meta.widgetSettingUnits;
+    const missing: string[] = [];
+    const walk = (value: unknown, path: string, selector: string, optionUnits: Record<string, string>): void => {
+      if (typeof value === 'number') {
+        if (path !== SI_VERSION_KEY && !(path in optionUnits) && !(path in settings)) missing.push(`${selector}: ${path}`);
+      } else if (Array.isArray(value)) {
+        // An array option's unit applies to each element, so its elements share its path.
+        for (const element of value) walk(element, path, selector, optionUnits);
+      } else if (value && typeof value === 'object') {
+        for (const [key, child] of Object.entries(value)) {
+          if (key === 'paths' || key === 'multiChildCtrls') continue;
+          walk(child, path ? `${path}.${key}` : key, selector, optionUnits);
+        }
+      }
+    };
+    for (const widget of schema.widgets) walk(widget.defaultConfig, '', widget.selector, widget.optionUnits ?? {});
+    expect(missing).toEqual([]);
   });
 
   it('includes the widget schemas and the design system', () => {

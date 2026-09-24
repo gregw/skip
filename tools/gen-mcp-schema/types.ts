@@ -161,6 +161,8 @@ export interface SchemaMeta {
   configVersion: number;
   /** How to write an option listed in a widget's `optionUnits`, and the marker such a config needs. */
   optionUnitsRule: string;
+  /** Units of the numeric options that configure a widget rather than hold a measured quantity, by option path. */
+  widgetSettingUnits: Record<string, string>;
 }
 
 /**
