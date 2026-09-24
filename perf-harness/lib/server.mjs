@@ -124,12 +124,14 @@ function historyResponse(paths, rows, stepSec) {
  * Returns { origin, appUrl, setControl(c), setConfigDocument(doc), blast(n), streamCount(), stop() }.
  * control: { streaming:bool, rateHz, selfPaths:[], selfValues:{path:value|fn}, selfMeta:{path:meta},
  *            staticScene:{ownShip, targets:[]}, ais:{count, churnPerSec},
- *            restSelfValues:{path:value}, resources:{'<type>/<id>':body} }
+ *            restSelfValues:{path:value}, resources:{'<type>/<id>':body}, unitPreferences:{<name>:body} }
  * restSelfValues answers GET /signalk/v1/api/vessels/self/<path as segments> with a v1 leaf; resources
  * answers GET /signalk/v2/api/resources/<type>/<id>. Anything else under those roots stays as before.
+ * unitPreferences answers GET /signalk/v1/unitpreferences/<name> (`categories`, `active`); without it
+ * those routes 404, as on a server older than 2.23.
  */
 export async function startServer({ publicDir, base, port }) {
-  const control = { streaming: false, rateHz: 10, selfPaths: ['navigation.speedOverGround'], selfValues: null, selfMeta: null, restSelfValues: null, resources: null, ais: { count: 0, churnPerSec: 0 } };
+  const control = { streaming: false, rateHz: 10, selfPaths: ['navigation.speedOverGround'], selfValues: null, selfMeta: null, restSelfValues: null, resources: null, unitPreferences: null, ais: { count: 0, churnPerSec: 0 } };
   let history = { rows: 0, stepSec: 1, paths: ['navigation.speedOverGround'] };
   let configDoc = null; // IConfig served from applicationData (set per scenario by the runner)
   let sent = 0;
@@ -181,6 +183,12 @@ export async function startServer({ publicDir, base, port }) {
     const restPath = selfLeaf?.[1].split('/').join('.');
     if (restPath && control.restSelfValues && restPath in control.restSelfValues) {
       return json(res, { value: control.restSelfValues[restPath], $source: 'mock.0', timestamp: iso(Date.now()) });
+    }
+    const unitPreference = p.match(/^\/signalk\/v1\/unitpreferences\/(.+)$/)?.[1];
+    if (unitPreference) {
+      if (control.unitPreferences && unitPreference in control.unitPreferences) return json(res, control.unitPreferences[unitPreference]);
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end('{}');
     }
     const resource = p.match(/^\/signalk\/v2\/api\/resources\/(.+)$/)?.[1];
     if (resource && control.resources) {

@@ -856,7 +856,8 @@ export class UnitsService {
         : unitGroup.units.some(unit => unit.measure == pathUnitType));
 
       if (groupList.length > 0) {
-        const serverDefault = this.resolveServerDefaultMeasure(path, groupList);
+        // A coordinate's degrees take the preset's plain-degree target, which the Position group has no measure for.
+        const serverDefault = coordinate ? undefined : this.resolveServerDefaultMeasure(path, groupList);
         return { base: serverDefault ?? UNITLESS, conversions: groupList };
       }
 

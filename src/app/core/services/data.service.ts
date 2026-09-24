@@ -5,6 +5,7 @@ import { ISkPathData, IPathValueData, IPathMetaData, IMeta, IPathUpdateEvent } f
 import { ISignalKDataValueUpdate, ISkMetadata, ISkDisplayUnits, ISignalKNotification, ISkPropertyMeta, States, TState } from '../interfaces/signalk-interfaces'
 import { SignalKDeltaService } from './signalk-delta.service';
 import { SignalKConnectionService } from './signalk-connection.service';
+import { UnitPreferencesService } from './unit-preferences.service';
 import { cloneDeep, merge } from 'lodash-es';
 import type { TDurationFormat } from './units.service';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -81,9 +82,14 @@ const propertyAsMeta = (property: ISkPropertyMeta): ISkMetadata => {
 /**
  * The metadata a pointer path presents: the named field's own entry in `meta.properties`, walking
  * nested `properties` per token. Only the field's declared keys carry over, so the base path's
- * zones, `supportsPut` and `displayUnits` never apply to a field.
+ * zones, `supportsPut` and `displayUnits` never apply to a field. The field's `displayUnits` are
+ * instead the ones the server's unit preferences give its SI unit, if any.
  */
-const fieldMeta = (meta: ISkMetadata | null | undefined, pointer: Path): ISkMetadata | null => {
+const fieldMeta = (
+  meta: ISkMetadata | null | undefined,
+  pointer: Path,
+  displayUnits: ReadonlyMap<string, ISkDisplayUnits> | null,
+): ISkMetadata | null => {
   let properties = meta?.properties;
   let property: ISkPropertyMeta | undefined;
   for (const token of pointer) {
@@ -92,7 +98,11 @@ const fieldMeta = (meta: ISkMetadata | null | undefined, pointer: Path): ISkMeta
     property = properties[key];
     properties = property?.properties;
   }
-  return property ? propertyAsMeta(property) : null;
+  if (!property) return null;
+  const result = propertyAsMeta(property);
+  const preferred = result.units ? displayUnits?.get(result.units) : undefined;
+  if (preferred) result.displayUnits = { ...preferred };
+  return result;
 };
 
 /**
@@ -194,6 +204,7 @@ export class DataService implements OnDestroy {
   private delta = inject(SignalKDeltaService);
   private readonly _connection = inject(SignalKConnectionService);
   private readonly _http = inject(HttpClient);
+  private readonly _unitPreferences = inject(UnitPreferencesService);
   private readonly _destroyRef = inject(DestroyRef);
 
   // Performance stats
@@ -1071,12 +1082,10 @@ export class DataService implements OnDestroy {
   /**
    * Server-supplied display-unit preference for a path (Signal K unit-preferences plugin), captured
    * off the existing sendMeta=all stream. Returns undefined when the plugin is absent or the path
-   * carries no displayUnits meta. A pointer path has none: the base path's preference describes the
-   * whole value, not a field's unit.
+   * carries no displayUnits meta. A pointer path takes its field's, from {@link getPathMeta}.
    */
   public getPathDisplayUnits(path: string): ISkDisplayUnits | undefined {
-    const split = splitPointerPath(path);
-    return split.valid && !split.pointer ? this._skData.get(split.basePath)?.meta?.displayUnits : undefined;
+    return this.getPathMeta(path)?.displayUnits;
   }
 
   /**
@@ -1186,7 +1195,9 @@ export class DataService implements OnDestroy {
     }
     const { basePath, pointer } = split;
     const baseMeta$ = this.getOrCreatePathMeta(basePath).asObservable();
-    return pointer ? baseMeta$.pipe(map(meta => fieldMeta(meta, pointer))) : baseMeta$;
+    return pointer
+      ? combineLatest([baseMeta$, this._unitPreferences.displayUnits$]).pipe(map(([meta, units]) => fieldMeta(meta, pointer, units)))
+      : baseMeta$;
   }
 
   /**
@@ -1216,7 +1227,7 @@ export class DataService implements OnDestroy {
     const split = splitPointerPath(path);
     if (!split.valid) return null;
     const meta = this._skData.get(split.basePath)?.meta;
-    return split.pointer ? fieldMeta(meta, split.pointer) : meta || null;
+    return split.pointer ? fieldMeta(meta, split.pointer, this._unitPreferences.displayUnits$.value) : meta || null;
   }
 
   public isResetService(): Observable<boolean> {

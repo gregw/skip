@@ -4,6 +4,11 @@ import { TDurationFormat, UnitsService } from './units.service';
 import { DataService } from './data.service';
 import { CONSOLE_MIGRATION_SINK, migrateWidgetConfig } from '../utils/config-migration.util';
 import { IWidgetPath, IWidgetSvcConfig } from '../interfaces/widgets-interface';
+import { ISkDisplayUnits } from '../interfaces/signalk-interfaces';
+import { IMeta } from '../interfaces/app-interfaces';
+import { BehaviorSubject, EMPTY, Subject } from 'rxjs';
+import { SignalKDeltaService } from './signalk-delta.service';
+import { displayUnitsBySiUnit, UnitPreferencesService } from './unit-preferences.service';
 
 describe('UnitsService', () => {
   function setup(): UnitsService {
@@ -443,11 +448,11 @@ describe('UnitsService', () => {
       'self.environment.sunlight.position#/elevation': 'deg',
     };
 
-    function setupWithUnits(): UnitsService {
+    function setupWithUnits(displayUnits: Record<string, ISkDisplayUnits> = {}): UnitsService {
       TestBed.resetTestingModule();
       const dataStub: Partial<DataService> = {
         getPathUnitType: path => UNITS[path] ?? null,
-        getPathDisplayUnits: () => undefined,
+        getPathDisplayUnits: path => displayUnits[path],
       };
       TestBed.configureTestingModule({
         providers: [UnitsService, { provide: DataService, useValue: dataStub }],
@@ -486,6 +491,79 @@ describe('UnitsService', () => {
 
     it('resolves a field without a server preference to unitless, so the slot\'s stored unit applies', () => {
       expect(setupWithUnits().resolvePathMeasure('self.navigation.attitude#/roll')).toBe('unitless');
+    });
+
+    it('resolves a field to the display unit the server preferences give its SI unit', () => {
+      const service = setupWithUnits({ 'self.navigation.attitude#/roll': { category: 'angle', targetUnit: 'degree' } });
+
+      const measure = service.resolvePathMeasure('self.navigation.attitude#/roll');
+
+      expect(measure).toBe('deg');
+      expect(service.convertToUnit(measure, -0.0384)?.toFixed(1)).toBe('-2.2');
+    });
+
+    it('keeps a coordinate out of the angle preference its degrees would otherwise take', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const service = setupWithUnits({ 'self.navigation.position#/latitude': { category: 'angleDegrees', targetUnit: 'deg' } });
+
+      expect(service.getConversionsForPath('self.navigation.position#/latitude')).toMatchObject({ base: 'unitless' });
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+  });
+
+  describe('object fields with server unit preferences', () => {
+    function setup(): { service: UnitsService; meta$: Subject<IMeta> } {
+      TestBed.resetTestingModule();
+      const meta$ = new Subject<IMeta>();
+      const units = displayUnitsBySiUnit(
+        { categoryToBaseUnit: { angle: 'rad', angleDegrees: 'deg', distance: 'm', depth: 'm' } },
+        { categories: {
+          angle: { baseUnit: 'rad', targetUnit: 'degree', symbol: '°' },
+          angleDegrees: { baseUnit: 'deg', targetUnit: 'deg' },
+          distance: { baseUnit: 'm', targetUnit: 'naut-mile' },
+        } },
+      );
+      TestBed.configureTestingModule({
+        providers: [
+          UnitsService,
+          DataService,
+          {
+            provide: SignalKDeltaService,
+            useValue: {
+              subscribeDataPathsUpdates: () => EMPTY,
+              subscribeMetadataUpdates: () => meta$.asObservable(),
+              subscribeNotificationsUpdates: () => EMPTY,
+              subscribeSelfUpdates: () => EMPTY,
+            },
+          },
+          { provide: UnitPreferencesService, useValue: { displayUnits$: new BehaviorSubject(units) } },
+        ],
+      });
+      return { service: TestBed.inject(UnitsService), meta$ };
+    }
+
+    it('seeds the same resolved unit for each attitude field a slot is re-pointed to', () => {
+      const { service, meta$ } = setup();
+      meta$.next({ context: 'self', path: 'navigation.attitude', meta: { description: 'Attitude', properties: {
+        roll: { type: 'number', units: 'rad' },
+        pitch: { type: 'number', units: 'rad' },
+      } } });
+
+      expect(service.getConversionsForPath('self.navigation.attitude#/roll').base).toBe('deg');
+      expect(service.getConversionsForPath('self.navigation.attitude#/pitch').base).toBe('deg');
+    });
+
+    it('keeps a field in SI when several categories share its SI unit', () => {
+      const { service, meta$ } = setup();
+      meta$.next({ context: 'self', path: 'navigation.position', meta: { description: 'Position', properties: {
+        latitude: { type: 'number', units: 'deg' },
+        altitude: { type: 'number', units: 'm' },
+      } } });
+
+      expect(service.resolvePathMeasure('self.navigation.position#/altitude')).toBe('unitless');
+      expect(service.getConversionsForPath('self.navigation.position#/latitude')).toMatchObject({ base: 'unitless' });
+      expect(service.getConversionsForPath('self.navigation.position#/latitude').conversions.map(g => g.group)).toEqual(['Position']);
     });
   });
 });
