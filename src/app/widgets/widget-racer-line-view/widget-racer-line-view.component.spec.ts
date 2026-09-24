@@ -9,6 +9,7 @@ import { DashboardService } from '../../core/services/dashboard.service';
 import { signal } from '@angular/core';
 import { By } from '@angular/platform-browser';
 import { RacerLineViewComponent } from './racer-line-view/racer-line-view.component';
+import { parsePointer } from '../../core/utils/pointer-path.util';
 
 /**
  * The widget subscribes and hands the values down; the drawing turns them into SVG. These tests
@@ -22,7 +23,13 @@ describe('WidgetRacerLineViewComponent', () => {
   let feeds: Map<string, (pkt: unknown) => void>;
 
   const runtimeMock = { options: () => WidgetRacerLineViewComponent.DEFAULT_CONFIG };
-  const requestsMock = { putRequest: vi.fn() };
+  // The real service answers with the request id it sent under, and the widget treats a
+  // null as the request never having gone out - so a mock returning undefined silently
+  // turns off everything the widget does optimistically on a successful send.
+  const requestsMock = {
+    putRequest: vi.fn<(path: string, value: unknown, widgetUUID: string) => string | null>(
+      () => 'req-1')
+  };
   // Only the lock state is read, and a locked dashboard is the state the controls are
   // usable in; unlocked covers them with the drag overlay.
   const dashboardMock = { isDashboardStatic: signal(true) };
@@ -35,7 +42,16 @@ describe('WidgetRacerLineViewComponent', () => {
     feeds = new Map();
     requestsMock.putRequest.mockClear();
     const streamsMock = {
-      observe: vi.fn((key: string, cb: (pkt: unknown) => void) => { feeds.set(key, cb); })
+      // The real directive throws on a pointer that is not RFC 6901 ('lines' instead of
+      // '/lines'), and a mock that takes anything hides it: the widget's effect dies, the
+      // named lines never arrive, and every test here still passes because it feeds the
+      // callback directly. So the mock applies the same rule.
+      observe: vi.fn((key: string, cb: (pkt: unknown) => void, pointer?: string) => {
+        if (pointer !== undefined && !parsePointer(pointer)) {
+          throw new Error(`observe() pointer '${pointer}' is not an RFC 6901 pointer`);
+        }
+        feeds.set(key, cb);
+      })
     };
 
     await TestBed.configureTestingModule({

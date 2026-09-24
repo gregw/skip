@@ -70,7 +70,7 @@ export class WidgetRacerLineViewComponent {
     paths: {
       // The plugin publishes one object at navigation.racing.lines holding both the
       // current line's name and the list of known lines, so both keys point at it and
-      // pick their field out with observe()'s subField.
+      // pick their field out with observe()'s RFC 6901 pointer ('/lines').
       startLineNamePath: {
         description: 'The current named start line',
         path: 'self.navigation.racing.lines',
@@ -503,7 +503,7 @@ export class WidgetRacerLineViewComponent {
     effect(() => {
       if (!this.pathsRecord['startLineNamePath']?.path) return;
       untracked(() => this.streams.observe('startLineNamePath', pkt =>
-        this.startLineName.set((pkt?.data?.value as string) ?? null), 'startLineName'));
+        this.startLineName.set((pkt?.data?.value as string) ?? null), '/startLineName'));
     });
 
     effect(() => {
@@ -517,7 +517,7 @@ export class WidgetRacerLineViewComponent {
           }
         }
         this.lines.set(named);
-      }, 'lines'));
+      }, '/lines'));
     });
 
     effect(() => {

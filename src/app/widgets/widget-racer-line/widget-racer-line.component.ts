@@ -108,8 +108,8 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
       },
       // One object at navigation.racing.lines carries both the current line's name and
       // the list of known lines, so both keys point at it and pick their field out with
-      // observe()'s subField. It is published when the lines change and not again, so it
-      // also opts out of the stale-data timeout.
+      // observe()'s RFC 6901 pointer ('/lines'). It is published when the lines change and
+      // not again, so it also opts out of the stale-data timeout.
       startLineNamePath: {
         description: 'The current named start line',
         path: 'self.navigation.racing.lines',
@@ -264,7 +264,7 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
           }
         }
         this.draw();
-      }, 'startLineName'));
+      }, '/startLineName'));
     });
 
     // Observe lines
@@ -284,7 +284,7 @@ export class WidgetRacerLineComponent implements AfterViewInit, OnDestroy {
             }
           }
         }
-      }, 'lines'));
+      }, '/lines'));
     });
 
     // Stream: TTL
