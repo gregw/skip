@@ -1,15 +1,15 @@
 import { WritableSignal, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WidgetWindComponent, computeTrueWindBaseAngle, resolvePolarOverlayMode, PolarOverlayModeInputs } from './widget-windsteer.component';
+import { WidgetWindComponent, computeTrueWindBaseAngle, resolvePolarOverlayMode, PolarOverlayModeInputs, resolvePolarLineAngles } from './widget-windsteer.component';
 import { WidgetRuntimeDirective } from '../../core/directives/widget-runtime.directive';
 import { WidgetStreamsDirective } from '../../core/directives/widget-streams.directive';
 import { UnitsService } from '../../core/services/units.service';
 import { IPathUpdate } from '../../core/services/data.service';
 import { IWidgetPath, IWidgetSvcConfig } from '../../core/interfaces/widgets-interface';
 import { ActivePolarService, ActivePolarStatus } from '../../core/services/active-polar.service';
-import { Polar, toCanonicalPolarTable } from '../../core/utils/polar-engine.util';
-import { OverlayPoint, OverlayScale, POLAR_OVERLAY_PATH_KEYS, VMC_HEADING_STEP, polarCurve, speedToRadius } from '../../core/utils/polar-overlay.util';
+import { Polar, PolarResult, PolarTargets, toCanonicalPolarTable } from '../../core/utils/polar-engine.util';
+import { OverlayPoint, OverlayScale, POLAR_PATH_KEYS, VMC_HEADING_STEP, polarCurve, speedToRadius } from '../../core/utils/polar-overlay.util';
 import { PolarOverlayMode } from '../svg-windsteer/svg-windsteer.component';
 import { SI_VERSION_KEY, V20_MIGRATION_OUTPUT_VERSION } from '../../core/utils/config-migration.util';
 import hurmaPolar from '../../core/utils/polar-engine.hurma-polar.fixture.json';
@@ -610,6 +610,8 @@ describe('WidgetWindComponent default config', () => {
   it('stores the close-hauled angle in rad, 45° by default, and carries the SI marker of the v20 step', () => {
     expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledLineAngle).toBe(Math.PI / 4);
     expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledLineEnable).toBe(true);
+    expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledAngleFromPolar).toBe(true);
+    expect(WidgetWindComponent.DEFAULT_CONFIG.runLineEnable).toBe(false);
     expect(WidgetWindComponent.DEFAULT_CONFIG[SI_VERSION_KEY as 'siVersion']).toBe(V20_MIGRATION_OUTPUT_VERSION);
     expect(WidgetWindComponent.OPTION_UNITS).toEqual({ closeHauledLineAngle: 'rad' });
   });
@@ -632,6 +634,49 @@ describe('resolvePolarOverlayMode', () => {
     ['no active waypoint', { waypointActive: false }, 'polar']
   ] as [string, Partial<PolarOverlayModeInputs>, PolarOverlayMode][])('%s gives %s', (_label, change, mode) => {
     expect(resolvePolarOverlayMode({ ...all, ...change })).toBe(mode);
+  });
+});
+
+describe('resolvePolarLineAngles', () => {
+  const FIXED = 45 * DEG;
+  const targets = (tws: 'in_range' | 'below_range' | 'above_range', beat: number | null, run: number | null): PolarResult<PolarTargets> => ({
+    value: {
+      beat: beat === null ? null : { twa: beat, speed: 3, vmg: 2 },
+      run: run === null ? null : { twa: run, speed: 3, vmg: 2 },
+      maxSpeed: { twa: 2, speed: 4 }
+    },
+    state: { available: true, tws, twa: null }
+  });
+
+  it('takes the polar beat and run angles', () => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: true, targets: targets('in_range', 0.7, 2.6) }))
+      .toEqual({ closeHauled: 0.7, run: 2.6 });
+  });
+
+  it('keeps the fixed angle with the switch off, and still draws the run lines', () => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: false, runLines: true, targets: targets('in_range', 0.7, 2.6) }))
+      .toEqual({ closeHauled: FIXED, run: 2.6 });
+  });
+
+  it.each([
+    ['above', targets('above_range', 0.7, 2.6)],
+    ['below', targets('below_range', 0.7, 2.6)]
+  ])('takes the nearest column\'s angles for a TWS %s the table, so gusts across its edge do not flip the lines', (_label, result) => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: true, targets: result }))
+      .toEqual({ closeHauled: 0.7, run: 2.6 });
+  });
+
+  it.each([
+    ['no polar targets (no polar, stale TWS)', null],
+    ['a table with no beat or run side at this TWS', targets('in_range', null, null)]
+  ])('falls back to the fixed angle and hides the run lines with %s', (_label, result) => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: true, targets: result }))
+      .toEqual({ closeHauled: FIXED, run: null });
+  });
+
+  it('hides the run lines with their option off', () => {
+    expect(resolvePolarLineAngles({ fixedCloseHauledAngle: FIXED, angleFromPolar: true, runLines: false, targets: targets('in_range', 0.7, 2.6) }).run)
+      .toBeNull();
   });
 });
 
@@ -668,6 +713,8 @@ describe('WidgetWindComponent polar overlay', () => {
   }
 
   interface OverlayView {
+    closeHauledAngle: () => number;
+    runLineAngle: () => number | null;
     overlayMode: () => PolarOverlayMode;
     polarCurvePoints: () => OverlayPoint[] | null;
     vmcCurvePoints: () => OverlayPoint[] | null;
@@ -776,11 +823,11 @@ describe('WidgetWindComponent polar overlay', () => {
     it('shares its SI slot keys with the options dialog: exactly the hidden polar slots of the default config', () => {
       const paths = WidgetWindComponent.DEFAULT_CONFIG.paths as Record<string, IWidgetPath>;
       const hiddenPolarSlots = Object.keys(paths).filter(key => key.startsWith('polar') && paths[key].hideFromConfig);
-      expect([...POLAR_OVERLAY_PATH_KEYS].sort()).toEqual(hiddenPolarSlots.sort());
+      expect([...POLAR_PATH_KEYS].sort()).toEqual(hiddenPolarSlots.sort());
     });
 
-    it('with the option off, observes none of the SI slots and never starts the polar service', () => {
-      create(makeConfig({ polarOverlayEnable: false }));
+    it('with every polar feature off, observes none of the SI slots and never starts the polar service', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false, runLineEnable: false }));
       expect([...callbacks.keys()].filter(key => key.startsWith('polar'))).toEqual([]);
       expect(polarService.starts).toBe(0);
       expect(view.overlayMode()).toBe('hidden');
@@ -795,23 +842,135 @@ describe('WidgetWindComponent polar overlay', () => {
     });
 
     it('releases the SI slots when the option is turned off and hides the overlay', () => {
-      create(makeConfig());
+      create(makeConfig({ closeHauledAngleFromPolar: false }));
       feedWind();
       expect(view.overlayMode()).toBe('polar');
 
-      reconfigure(makeConfig({ polarOverlayEnable: false }));
+      reconfigure(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false }));
       expect(unobserved.sort()).toEqual(['polarSpeedThroughWater', 'polarTrueWindAngle', 'polarTrueWindSpeed']);
       expect(view.overlayMode()).toBe('hidden');
     });
 
     it('waits for fresh SI samples after the option is turned back on', () => {
-      create(makeConfig());
+      create(makeConfig({ closeHauledAngleFromPolar: false }));
       feedWind();
-      reconfigure(makeConfig({ polarOverlayEnable: false }));
-      reconfigure(makeConfig());
+      reconfigure(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false }));
+      reconfigure(makeConfig({ closeHauledAngleFromPolar: false }));
       expect(view.overlayMode()).toBe('hidden');
       feedWind();
       expect(view.overlayMode()).toBe('polar');
+    });
+  });
+
+  describe('close-hauled and run lines', () => {
+    const beatAt = (tws: number): number => hurma.targetsAt({ tws }).value?.beat?.twa ?? NaN;
+    const runAt = (tws: number): number => hurma.targetsAt({ tws }).value?.run?.twa ?? NaN;
+
+    it('draws the lines at the polar beat angle for a fresh TWS, and moves them with TWS', () => {
+      // Beats wider in light air: the fixture's beat angle sits on its 40° floor at every TWS.
+      const widening = polarFrom({
+        kind: 'polarTable',
+        units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+        symmetry: { portStarboardSymmetric: true },
+        axes: { tws: [3, 8], twa: [30, 40, 50, 60, 90, 120, 150, 180].map(deg => deg * DEG) },
+        values: { boatSpeedMatrix: [[1.0, 2.0, 3.2, 3.5, 3.8, 3.6, 3.0, 2.6], [3.0, 5.0, 5.4, 5.6, 6.0, 6.2, 5.8, 5.2]] }
+      });
+      polarService.use(widening);
+      const beat = (tws: number): number => widening.targetsAt({ tws }).value?.beat?.twa ?? NaN;
+      create(makeConfig());
+      feed('polarTrueWindSpeed', 3.5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beat(3.5), 9);
+      feed('polarTrueWindSpeed', 7.5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beat(7.5), 9);
+      expect(beat(7.5)).not.toBeCloseTo(beat(3.5), 2);
+    });
+
+    it('keeps the fixed angle with the switch off', () => {
+      create(makeConfig({ closeHauledAngleFromPolar: false }));
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+    });
+
+    it('holds the top column\'s angles above the table, and falls back to the fixed angle with stale TWS', () => {
+      create(makeConfig({ runLineEnable: true }));
+      feed('polarTrueWindSpeed', 12);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(9.26), 9);
+      expect(view.runLineAngle()).toBeCloseTo(runAt(9.26), 9);
+
+      vi.advanceTimersByTime(TTL_MS + 1);
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+      expect(view.runLineAngle()).toBeNull();
+    });
+
+    it.each([
+      ['no active polar', (): void => { polarService.status.set({ kind: 'loading' }); polarService.polar.set(null); }],
+      ['a polar that failed to load', (): void => { polarService.status.set({ kind: 'fetch-failed', cause: 401 }); }]
+    ])('falls back to the fixed angle and hides the run lines with %s', (_label, lose) => {
+      create(makeConfig({ runLineEnable: true }));
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(5), 9);
+      expect(view.runLineAngle()).toBeCloseTo(runAt(5), 9);
+
+      lose();
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+      expect(view.runLineAngle()).toBeNull();
+    });
+
+    it('keeps TWS and the polar angle when the overlay is turned off, and releases only the overlay slots', () => {
+      create(makeConfig());
+      feedWind();
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(TWS_MS), 9);
+
+      reconfigure(makeConfig({ polarOverlayEnable: false }));
+      expect(unobserved.sort()).toEqual(['polarSpeedThroughWater', 'polarTrueWindAngle']);
+      expect(view.overlayMode()).toBe('hidden');
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(TWS_MS), 9);
+
+      reconfigure(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false }));
+      expect(unobserved).toContain('polarTrueWindSpeed');
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+
+      reconfigure(makeConfig({ polarOverlayEnable: false }));
+      expect(view.closeHauledAngle()).toBe(Math.PI / 4);
+      feed('polarTrueWindSpeed', TWS_MS);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(TWS_MS), 9);
+    });
+
+    it('keeps the wind sectors on the polar angle with the close-hauled lines off', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledLineEnable: false, windSectorEnable: true }));
+      expect(polarService.starts).toBeGreaterThan(0);
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(5), 9);
+    });
+
+    it('draws the run lines at the polar run angle only with their option on', () => {
+      create(makeConfig());
+      feed('polarTrueWindSpeed', 5);
+      expect(view.runLineAngle()).toBeNull();
+
+      reconfigure(makeConfig({ runLineEnable: true }));
+      expect(view.runLineAngle()).toBeCloseTo(runAt(5), 9);
+    });
+
+    it('with the overlay off, loads the polar and observes TWS for the polar lines alone', () => {
+      create(makeConfig({ polarOverlayEnable: false }));
+      expect(polarService.starts).toBeGreaterThan(0);
+      expect([...callbacks.keys()].filter(key => key.startsWith('polar'))).toEqual(['polarTrueWindSpeed']);
+      feed('polarTrueWindSpeed', 5);
+      expect(view.closeHauledAngle()).toBeCloseTo(beatAt(5), 9);
+      expect(view.overlayMode()).toBe('hidden');
+    });
+
+    it('with the run lines alone, loads the polar and observes TWS', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledAngleFromPolar: false, runLineEnable: true }));
+      expect(polarService.starts).toBeGreaterThan(0);
+      expect([...callbacks.keys()].filter(key => key.startsWith('polar'))).toEqual(['polarTrueWindSpeed']);
+    });
+
+    it('with the close-hauled lines and the wind sectors off, the angle switch alone does not load the polar', () => {
+      create(makeConfig({ polarOverlayEnable: false, closeHauledLineEnable: false, windSectorEnable: false }));
+      expect(polarService.starts).toBe(0);
+      expect(callbacks.has('polarTrueWindSpeed')).toBe(false);
     });
   });
 

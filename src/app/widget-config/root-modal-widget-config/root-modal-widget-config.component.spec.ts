@@ -649,10 +649,24 @@ describe('ModalWidgetComponent options stored in SI', () => {
     expect(edited.ais?.cogVectorsSeconds).toBeCloseTo(900, 9);
   });
 
+  it('offers the polar close-hauled angle and the run lines, and saves their switches', () => {
+    const fixture = open(windsteer(Math.PI / 4));
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="closeHauledAngleFromPolar"]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="runLineEnable"]')).not.toBeNull();
+
+    fixture.componentInstance.formMaster.get('closeHauledAngleFromPolar')?.setValue(false);
+    fixture.componentInstance.formMaster.get('runLineEnable')?.setValue(true);
+    fixture.componentInstance.submitConfig();
+    expect(saved().closeHauledAngleFromPolar).toBe(false);
+    expect(saved().runLineEnable).toBe(true);
+  });
+
   it('shows no close-hauled section for a widget without the option', () => {
     const fixture = open({ ...structuredClone(WidgetRacesteerComponent.DEFAULT_CONFIG), widgetName: 'Race Steer' } as IWidgetSvcConfig);
     expect(fixture.nativeElement.querySelector('input[name="closeHauledLineAngle"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('mat-checkbox[name="closeHauledLineEnable"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="closeHauledAngleFromPolar"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-checkbox[name="runLineEnable"]')).toBeNull();
   });
 });
 

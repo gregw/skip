@@ -79,8 +79,21 @@ svg {
   stroke: var(--skip-grey-color);
 }
 
+.close-hauled-line,
+.run-line {
+  fill: none;
+  stroke: var(--skip-contrast-color);
+  stroke-width: 5;
+  stroke-opacity: 0.6;
+}
+
 .close-hauled-line {
-  stroke:  var(--skip-contrast-color);
+  stroke-dasharray: 40, 20;
+}
+
+// Short dashes keep the run lines apart from the close-hauled lines in the single-hue night theme.
+.run-line {
+  stroke-dasharray: 8, 16;
 }
 
 .wind-sector-port {

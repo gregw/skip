@@ -389,8 +389,12 @@ export interface IWidgetSvcConfig {
   windSectorWindowSeconds?: number;
   /** Used by wind Widget: show the close-hauled lines, the headings at the close-hauled angle either side of the true wind */
   closeHauledLineEnable?: boolean;
-  /** Used by wind Widget: the close-hauled angle off the true wind, rad */
+  /** Used by wind Widget: the close-hauled angle off the true wind, rad; the fixed angle when the polar gives none */
   closeHauledLineAngle?: number;
+  /** Used by wind Widget: take the close-hauled angle from the active polar's beat angle for the present TWS */
+  closeHauledAngleFromPolar?: boolean;
+  /** Used by wind Widget: show the run lines, the headings at the active polar's run angle either side of the true wind */
+  runLineEnable?: boolean;
   /** The version of the last SI config step whose shape this widget config is in (config-migration.util SI_VERSION_KEY) */
   siVersion?: number;
   /** Used by wind Widget: enable/disable Waypoint UI feature */

@@ -537,24 +537,22 @@
       </g>
       <!-- Moved inside rotating dial so they rotate passively with the boat -->
       <g id="LayerCloseHauledLines" [style.display]="closeHauledLineEnabled() && trueWindFresh() ? 'inline' : 'none'">
-        <path id="StbdCloseHauledLine"
-          [attr.d]="closeHauledLineStbdPath()"
-          style="fill:none;stroke-width:5;stroke-dasharray:40, 20;stroke-dashoffset:0;stroke-opacity:0.6"
-          class="close-hauled-line" />
-        <path id="PortCloseHauledLine"
-          [attr.d]="closeHauledLinePortPath()"
-          class="close-hauled-line"
-          style="fill:none;stroke-width:5;stroke-dasharray:40, 20;stroke-dashoffset:0;stroke-opacity:0.6" />
+        <path id="StbdTackCloseHauledLine" class="close-hauled-line" [attr.d]="stbdTackCloseHauledLine.path() || null" />
+        <path id="PortTackCloseHauledLine" class="close-hauled-line" [attr.d]="portTackCloseHauledLine.path() || null" />
+      </g>
+      <g id="LayerRunLines" [style.display]="runLineAngle() !== null && trueWindFresh() ? 'inline' : 'none'">
+        <path id="StbdTackRunLine" class="run-line" [attr.d]="stbdTackRunLine.path() || null" />
+        <path id="PortTackRunLine" class="run-line" [attr.d]="portTackRunLine.path() || null" />
       </g>
       <g id="LayerWindShift" [style.display]="windSectorEnabled() ? 'inline' : 'none'">
-        <path id="portSectorShift"
-          [style.display]="portWindSectorPath() ? 'inline' : 'none'"
-          [attr.d]="portWindSectorPath() || null"
+        <path id="PortTackSector"
+          [style.display]="portTackSectorPath() ? 'inline' : 'none'"
+          [attr.d]="portTackSectorPath() || null"
           class="wind-sector-port"
           style="fill-opacity:0.5;stroke:none" />
-        <path id="StbdSectorShift"
-          [style.display]="stbdWindSectorPath() ? 'inline' : 'none'"
-          [attr.d]="stbdWindSectorPath() || null"
+        <path id="StbdTackSector"
+          [style.display]="stbdTackSectorPath() ? 'inline' : 'none'"
+          [attr.d]="stbdTackSectorPath() || null"
           class="wind-sector-stbd"
           style="fill-opacity:0.5;stroke:none" />
      </g>

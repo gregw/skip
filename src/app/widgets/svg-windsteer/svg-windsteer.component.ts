@@ -1,5 +1,5 @@
 import { Component, ElementRef, input, viewChild, signal, computed, effect, untracked, ChangeDetectionStrategy, OnDestroy, NgZone, inject } from '@angular/core';
-import { animateProgress, animateRotation, animateAngleTransition, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
+import { animateProgress, animateRotation, animateSectorTransition, effectiveAnimationDuration, SectorAngles } from '../../core/utils/svg-animate.util';
 import { DecimalPipe } from '@angular/common';
 import { OverlayPoint, interpolateOverlay, vmcEdgeRuns } from '../../core/utils/polar-overlay.util';
 import { toDegrees } from '../../core/utils/si-presentation.util';
@@ -42,6 +42,54 @@ class OverlayTween<T> {
   }
 }
 
+/** Dial angle changes smaller than this (degrees) draw at once instead of easing. */
+const DIAL_EPSILON_DEG = 1;
+
+/** The signed turn from one dial angle to another along the shorter arc, degrees in [−180, 180). */
+function dialTurn(from: number, to: number): number {
+  return ((((to - from) % 360) + 540) % 360) - 180;
+}
+
+/**
+ * A line from the dial center to its rim at a dial angle (degrees, clockwise from up). It eases from
+ * the angle drawn to each new angle along the shorter arc, so a new target mid-ease carries on from
+ * where the line is; the first angle, and a change under DIAL_EPSILON_DEG, draw at once.
+ */
+class DialLine {
+  readonly path = signal('');
+  private drawn: number | null = null;
+  private cancel: (() => void) | null = null;
+
+  constructor(private readonly draw: (angleDeg: number) => string) {}
+
+  moveTo(angleDeg: number, duration: number | null, ngZone: NgZone): void {
+    this.stop();
+    const from = this.drawn;
+    const turn = from === null ? 0 : dialTurn(from, angleDeg);
+    if (from === null || duration === null || Math.abs(turn) < DIAL_EPSILON_DEG) {
+      this.show(angleDeg);
+      return;
+    }
+    this.cancel = animateProgress(duration, t => this.show(from + turn * t), ngZone);
+  }
+
+  clear(): void {
+    this.stop();
+    this.drawn = null;
+    this.path.set('');
+  }
+
+  stop(): void {
+    this.cancel?.();
+    this.cancel = null;
+  }
+
+  private show(angleDeg: number): void {
+    this.drawn = angleDeg;
+    this.path.set(this.draw(angleDeg));
+  }
+}
+
 interface ISVGRotationObject {
   oldValue: number,
   newValue: number,
@@ -81,6 +129,8 @@ export class SvgWindsteerComponent implements OnDestroy {
   protected readonly appWindSpeed = input.required<number>();
   protected readonly appWindSpeedUnit = input.required<string>();
   protected readonly closeHauledLineAngle = input<number | undefined>(undefined);
+  /** The run angle off the true wind, rad; null hides the run lines. */
+  protected readonly runLineAngle = input<number | null>(null);
   protected readonly closeHauledLineEnabled = input.required<boolean>();
   protected readonly sailSetupEnabled = input.required<boolean>();
   protected readonly windSectorEnabled = input.required<boolean>();
@@ -121,6 +171,7 @@ export class SvgWindsteerComponent implements OnDestroy {
   private readonly trueWindAngleDeg = computed(() => toDegrees(this.trueWindAngle()));
   private readonly appWindAngleDeg = computed(() => toDegrees(this.appWindAngle()));
   private readonly closeHauledLineAngleDeg = computed(() => toDegrees(this.closeHauledLineAngle()));
+  private readonly runLineAngleDeg = computed(() => { const a = this.runLineAngle(); return a == null ? null : toDegrees(a); });
   private readonly driftSetDeg = computed(() => toDegrees(this.driftSet()));
   private readonly waypointAngleDeg = computed(() => toDegrees(this.waypointAngle()));
   private readonly trueWindMinHistoricDeg = computed(() => toDegrees(this.trueWindMinHistoric()));
@@ -167,20 +218,19 @@ export class SvgWindsteerComponent implements OnDestroy {
     return r === null ? null : this.CENTER - r;
   });
 
-  // Close-hauled lines
-  private portCloseHauledLinePrev = 0;
-  private stbdCloseHauledLinePrev = 0;
-  private portCloseHauledLineAnimId: number | null = null;
-  private stbdCloseHauledLineAnimId: number | null = null;
-  protected closeHauledLinePortPath = signal<string>("M 500,500 500,500");
-  protected closeHauledLineStbdPath = signal<string>("M 500,500 500,500");
-  //WindSectors
+  // Close-hauled and run lines, named by the tack whose course they mark: a heading clockwise of the
+  // true wind has the wind on the port side.
+  protected readonly portTackCloseHauledLine = new DialLine(angle => this.dialLinePath(angle));
+  protected readonly stbdTackCloseHauledLine = new DialLine(angle => this.dialLinePath(angle));
+  protected readonly portTackRunLine = new DialLine(angle => this.dialLinePath(angle));
+  protected readonly stbdTackRunLine = new DialLine(angle => this.dialLinePath(angle));
+  // Wind sectors, named by tack like the lines
   private portSectorPrev = { min: 0, mid: 0, max: 0 };
   private stbdSectorPrev = { min: 0, mid: 0, max: 0 };
   private portSectorAnimId: number | null = null;
   private stbdSectorAnimId: number | null = null;
-  protected portWindSectorPath = signal<string>("");
-  protected stbdWindSectorPath = signal<string>("");
+  protected portTackSectorPath = signal<string>("");
+  protected stbdTackSectorPath = signal<string>("");
   // Rotation Animation
   private animationFrameIds = new WeakMap<SVGGElement, number>();
 
@@ -191,7 +241,6 @@ export class SvgWindsteerComponent implements OnDestroy {
   private readonly SET_ARROW_CENTER: [number, number] = [904, 912];
   protected readonly setArrowTranslate = `translate(${this.SET_ARROW_CENTER[0]} ${this.SET_ARROW_CENTER[1]})`;
   private readonly animationDuration = computed(() => effectiveAnimationDuration(this.updateInterval()));
-  private readonly EPS_ANGLE = 1.0; // degrees, gate tiny animations
 
   // Rudder bar: the SVG holds a static 35 arc per side (pathLength 100); the reveal is the
   // stroke-dashoffset. offset 100 = empty, 0 = full; fraction is 1:1 with the rudder angle.
@@ -240,8 +289,8 @@ export class SvgWindsteerComponent implements OnDestroy {
           } else {
             animateRotation(this.rotatingDial().nativeElement, -this.compass.oldValue, -this.compass.newValue, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
           }
-          // Heading affects dial-local geometry for close-hauled lines and sectors; refresh without animation
-          this.updateCloseHauledLines(false);
+          // Heading affects dial-local geometry for the tack lines and sectors; refresh without animation
+          this.updateTackLines(false);
           this.updateWindSectors(false);
         }
       });
@@ -352,17 +401,17 @@ export class SvgWindsteerComponent implements OnDestroy {
             animateRotation(this.twaIndicator().nativeElement, this.twa.oldValue, this.twa.newValue, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
           }
         }
-        // Close-hauled lines are centered on the true wind; recompute whenever TWA changes
-        this.updateCloseHauledLines(!isFirstTwa);
+        // The tack lines are centered on the true wind; recompute whenever TWA changes
+        this.updateTackLines(!isFirstTwa);
       });
     });
 
-    // Recompute the close-hauled lines when their angle changes
+    // Recompute the tack lines when their angles change or a set is switched on or off
     effect(() => {
-      // read to establish dependency
       void this.closeHauledLineAngleDeg();
-      if (!this.closeHauledLineEnabled()) return;
-      untracked(() => this.updateCloseHauledLines());
+      void this.closeHauledLineEnabled();
+      void this.runLineAngleDeg();
+      untracked(() => this.updateTackLines());
     });
 
     // The set arrow sits outside the rotating dial, so it takes the heading itself to stay heading-up.
@@ -447,8 +496,8 @@ export class SvgWindsteerComponent implements OnDestroy {
           if (this.stbdSectorAnimId) cancelAnimationFrame(this.stbdSectorAnimId);
           this.portSectorAnimId = null;
           this.stbdSectorAnimId = null;
-          this.portWindSectorPath.set('');
-          this.stbdWindSectorPath.set('');
+          this.portTackSectorPath.set('');
+          this.stbdTackSectorPath.set('');
           return;
         }
         this.updateWindSectors(true);
@@ -463,49 +512,30 @@ export class SvgWindsteerComponent implements OnDestroy {
     return this.addHeading(heading, boatRelative);
   }
 
-  private updateCloseHauledLines(animate = true): void {
-    if (!this.closeHauledLineEnabled()) return;
-
-    // Close-hauled lines straddle the true wind: boat-relative TWA ± the close-hauled angle.
+  private updateTackLines(animate = true): void {
+    // Each pair straddles the true wind: boat-relative TWA ± its angle, placed in the dial frame.
     const base = Number(this.twa.newValue) || 0;
-    const lay = Number(this.closeHauledLineAngleDeg()) || 0;
+    const duration = animate ? this.animationDuration() : null;
+    const place = (line: DialLine, offset: number) =>
+      line.moveTo(this.toDialLocal(this.addHeading(base, offset)), duration, this.ngZone);
 
-    const portRotate = this.toDialLocal(this.addHeading(base, lay * -1));
-    this.animateCloseHauledLine(this.portCloseHauledLinePrev, portRotate, true, animate);
-    this.portCloseHauledLinePrev = portRotate;
-
-    const stbdRotate = this.toDialLocal(this.addHeading(base, lay));
-    this.animateCloseHauledLine(this.stbdCloseHauledLinePrev, stbdRotate, false, animate);
-    this.stbdCloseHauledLinePrev = stbdRotate;
-  }
-
-  private animateCloseHauledLine(from: number, to: number, isPort: boolean, withAnim = true) {
-    // Cancel any previous animation for this line
-    if (isPort && this.portCloseHauledLineAnimId) cancelAnimationFrame(this.portCloseHauledLineAnimId);
-    if (!isPort && this.stbdCloseHauledLineAnimId) cancelAnimationFrame(this.stbdCloseHauledLineAnimId);
-
-    // Gate tiny animations
-    if (this.angleDelta(from, to) < this.EPS_ANGLE) {
-      this.drawCloseHauledLine(to, isPort);
-      if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null;
-      return;
+    if (this.closeHauledLineEnabled()) {
+      const closeHauled = Number(this.closeHauledLineAngleDeg()) || 0;
+      place(this.portTackCloseHauledLine, closeHauled);
+      place(this.stbdTackCloseHauledLine, -closeHauled);
+    } else {
+      this.portTackCloseHauledLine.clear();
+      this.stbdTackCloseHauledLine.clear();
     }
 
-  if (!withAnim) {
-      this.drawCloseHauledLine(to, isPort);
-      if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null;
-      return;
+    const run = this.runLineAngleDeg();
+    if (run == null) {
+      this.portTackRunLine.clear();
+      this.stbdTackRunLine.clear();
+    } else {
+      place(this.portTackRunLine, run);
+      place(this.stbdTackRunLine, -run);
     }
-
-    const id = animateAngleTransition(
-      from,
-      to,
-      this.animationDuration(),
-      angle => this.drawCloseHauledLine(angle, isPort),
-      () => { if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null; },
-      this.ngZone
-    );
-    if (isPort) this.portCloseHauledLineAnimId = id; else this.stbdCloseHauledLineAnimId = id;
   }
 
   /** Project a dial angle (degrees, 0 = up) onto the dial circle. Unrounded; callers round if needed. */
@@ -525,15 +555,9 @@ export class SvgWindsteerComponent implements OnDestroy {
     return `M ${coords.join(' L ')}${closed ? ' Z' : ''}`;
   }
 
-  private drawCloseHauledLine(angleDeg: number, isPort: boolean) {
-    const [px, py] = this.dialPoint(angleDeg);
-    const x = Math.floor(px);
-    const y = Math.floor(py);
-    if (isPort) {
-      this.closeHauledLinePortPath.set(`M ${this.CENTER},${this.CENTER} L ${x},${y}`);
-    } else {
-      this.closeHauledLineStbdPath.set(`M ${this.CENTER},${this.CENTER} L ${x},${y}`);
-    }
+  private dialLinePath(angleDeg: number): string {
+    const [x, y] = this.dialPoint(angleDeg);
+    return `M ${this.CENTER},${this.CENTER} L ${Math.floor(x)},${Math.floor(y)}`;
   }
 
   private windSectorsInitialized = false;
@@ -556,8 +580,8 @@ export class SvgWindsteerComponent implements OnDestroy {
       this.portSectorAnimId = null;
       this.stbdSectorAnimId = null;
       this.windSectorsInitialized = false;
-      this.portWindSectorPath.set('');
-      this.stbdWindSectorPath.set('');
+      this.portTackSectorPath.set('');
+      this.stbdTackSectorPath.set('');
       return;
     }
 
@@ -570,8 +594,8 @@ export class SvgWindsteerComponent implements OnDestroy {
         this.animateWindSector(portNew, portNew, true);
         this.animateWindSector(stbdNew, stbdNew, false);
       } else {
-        this.portWindSectorPath.set(this.computeSectorPath(portNew, true));
-        this.stbdWindSectorPath.set(this.computeSectorPath(stbdNew, false));
+        this.portTackSectorPath.set(this.computeSectorPath(portNew, true));
+        this.stbdTackSectorPath.set(this.computeSectorPath(stbdNew, false));
       }
       this.portSectorPrev = portNew;
       this.stbdSectorPrev = stbdNew;
@@ -581,41 +605,41 @@ export class SvgWindsteerComponent implements OnDestroy {
     if (animate) {
       // Gate tiny sector animations
       const smallMove =
-        this.angleDelta(this.portSectorPrev.min, portNew.min) < this.EPS_ANGLE &&
-        this.angleDelta(this.portSectorPrev.mid, portNew.mid) < this.EPS_ANGLE &&
-        this.angleDelta(this.portSectorPrev.max, portNew.max) < this.EPS_ANGLE;
+        Math.abs(dialTurn(this.portSectorPrev.min, portNew.min)) < DIAL_EPSILON_DEG &&
+        Math.abs(dialTurn(this.portSectorPrev.mid, portNew.mid)) < DIAL_EPSILON_DEG &&
+        Math.abs(dialTurn(this.portSectorPrev.max, portNew.max)) < DIAL_EPSILON_DEG;
       if (smallMove) {
-        this.portWindSectorPath.set(this.computeSectorPath(portNew, true));
-        this.stbdWindSectorPath.set(this.computeSectorPath(stbdNew, false));
+        this.portTackSectorPath.set(this.computeSectorPath(portNew, true));
+        this.stbdTackSectorPath.set(this.computeSectorPath(stbdNew, false));
       } else {
         this.animateWindSector(this.portSectorPrev, portNew, true);
         this.animateWindSector(this.stbdSectorPrev, stbdNew, false);
       }
     } else {
       // No animation requested (e.g., heading-only updates)
-      this.portWindSectorPath.set(this.computeSectorPath(portNew, true));
-      this.stbdWindSectorPath.set(this.computeSectorPath(stbdNew, false));
+      this.portTackSectorPath.set(this.computeSectorPath(portNew, true));
+      this.stbdTackSectorPath.set(this.computeSectorPath(stbdNew, false));
     }
 
     this.portSectorPrev = portNew;
     this.stbdSectorPrev = stbdNew;
   }
 
-  private animateWindSector(from: { min: number, mid: number, max: number }, to: { min: number, mid: number, max: number }, isPort: boolean) {
-    if (isPort && this.portSectorAnimId) cancelAnimationFrame(this.portSectorAnimId);
-    if (!isPort && this.stbdSectorAnimId) cancelAnimationFrame(this.stbdSectorAnimId);
+  private animateWindSector(from: { min: number, mid: number, max: number }, to: { min: number, mid: number, max: number }, isPortTack: boolean) {
+    if (isPortTack && this.portSectorAnimId) cancelAnimationFrame(this.portSectorAnimId);
+    if (!isPortTack && this.stbdSectorAnimId) cancelAnimationFrame(this.stbdSectorAnimId);
 
     const smallMove =
-      this.angleDelta(from.min, to.min) < this.EPS_ANGLE &&
-      this.angleDelta(from.mid, to.mid) < this.EPS_ANGLE &&
-      this.angleDelta(from.max, to.max) < this.EPS_ANGLE;
+      Math.abs(dialTurn(from.min, to.min)) < DIAL_EPSILON_DEG &&
+      Math.abs(dialTurn(from.mid, to.mid)) < DIAL_EPSILON_DEG &&
+      Math.abs(dialTurn(from.max, to.max)) < DIAL_EPSILON_DEG;
     if (smallMove) {
-      const path = this.computeSectorPath(to, isPort);
+      const path = this.computeSectorPath(to, isPortTack);
 
-      if (isPort) this.portWindSectorPath.set(path);
-      else this.stbdWindSectorPath.set(path);
+      if (isPortTack) this.portTackSectorPath.set(path);
+      else this.stbdTackSectorPath.set(path);
 
-      if (isPort) this.portSectorAnimId = null;
+      if (isPortTack) this.portSectorAnimId = null;
       else this.stbdSectorAnimId = null;
 
       return;
@@ -626,13 +650,13 @@ export class SvgWindsteerComponent implements OnDestroy {
       to as SectorAngles,
       this.animationDuration(),
       (current) => {
-        const path = this.computeSectorPath(current, isPort);
-        if (isPort) this.portWindSectorPath.set(path); else this.stbdWindSectorPath.set(path);
+        const path = this.computeSectorPath(current, isPortTack);
+        if (isPortTack) this.portTackSectorPath.set(path); else this.stbdTackSectorPath.set(path);
       },
-      () => { if (isPort) this.portSectorAnimId = null; else this.stbdSectorAnimId = null; },
+      () => { if (isPortTack) this.portSectorAnimId = null; else this.stbdSectorAnimId = null; },
       this.ngZone
     );
-    if (isPort) this.portSectorAnimId = id; else this.stbdSectorAnimId = id;
+    if (isPortTack) this.portSectorAnimId = id; else this.stbdSectorAnimId = id;
   }
 
   private addHeading(h1 = 0, h2 = 0) {
@@ -646,11 +670,7 @@ export class SvgWindsteerComponent implements OnDestroy {
     this.vmcCurveTween.stop();
     this.overlayDotTween.stop();
 
-    // Cancel close-hauled line animations
-    if (this.portCloseHauledLineAnimId) cancelAnimationFrame(this.portCloseHauledLineAnimId);
-    if (this.stbdCloseHauledLineAnimId) cancelAnimationFrame(this.stbdCloseHauledLineAnimId);
-    this.portCloseHauledLineAnimId = null;
-    this.stbdCloseHauledLineAnimId = null;
+    for (const line of [this.portTackCloseHauledLine, this.stbdTackCloseHauledLine, this.portTackRunLine, this.stbdTackRunLine]) line.stop();
 
     // Cancel wind sector animations
     if (this.portSectorAnimId) cancelAnimationFrame(this.portSectorAnimId);
@@ -677,14 +697,9 @@ export class SvgWindsteerComponent implements OnDestroy {
     }
   }
 
-  private angleDelta(from: number, to: number): number {
-    const d = ((to - from + 540) % 360) - 180;
-    return Math.abs(d);
-  }
-
-  private computeSectorPath(state: { min: number, mid: number, max: number }, isPort: boolean): string {
+  private computeSectorPath(state: { min: number, mid: number, max: number }, isPortTack: boolean): string {
     const lay = Number(this.closeHauledLineAngleDeg()) || 0;
-    const offset = lay * (isPort ? -1 : 1);
+    const offset = lay * (isPortTack ? 1 : -1);
     // Sector min/mid/max are the true wind DIRECTION (absolute compass). Convert to boat-relative
     // using the actual boat heading -- not compass.newValue, which the dial forces to 0 in simple
     // mode -- then place in the dial's local frame via toDialLocal.

@@ -284,6 +284,15 @@
                   Close-hauled Lines
                 </mat-checkbox>
               }
+              @if ((widgetConfig?.closeHauledAngleFromPolar !== undefined)) {
+                <mat-checkbox
+                  class="fields"
+                  name="closeHauledAngleFromPolar"
+                  formControlName="closeHauledAngleFromPolar"
+                >
+                  Angle from Polar
+                </mat-checkbox>
+              }
               @if ((widgetConfig?.closeHauledLineEnable !== undefined)) {
                 <mat-form-field>
                   <mat-label>Optimal Close-hauled Angle</mat-label>
@@ -297,8 +306,17 @@
                     formControlName="closeHauledLineAngle"
                   />
                   <span matTextSuffix>&deg;</span>
-                  <mat-hint>Close-hauled angle line locations, measured from the true wind angle.</mat-hint>
+                  <mat-hint>Measured from the true wind. With Angle from Polar, used while the active polar gives no angle.</mat-hint>
                 </mat-form-field>
+              }
+              @if ((widgetConfig?.runLineEnable !== undefined)) {
+                <mat-checkbox
+                  class="fields"
+                  name="runLineEnable"
+                  formControlName="runLineEnable"
+                >
+                  Run Lines
+                </mat-checkbox>
               }
               @if ((widgetConfig?.windSectorEnable !== undefined)) {
                 <mat-checkbox

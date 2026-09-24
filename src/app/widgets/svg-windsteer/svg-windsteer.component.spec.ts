@@ -10,7 +10,8 @@ describe('SvgWindsteerComponent', () => {
     // The tests speak degrees; the component takes its angle inputs in rad.
     const ANGLE_INPUTS = new Set([
         'compassHeading', 'courseOverGroundAngle', 'trueWindAngle', 'appWindAngle', 'closeHauledLineAngle', 'driftSet',
-        'waypointAngle', 'trueWindMinHistoric', 'trueWindMidHistoric', 'trueWindMaxHistoric', 'rudderAngle', 'polarCurveRotation'
+        'waypointAngle', 'trueWindMinHistoric', 'trueWindMidHistoric', 'trueWindMaxHistoric', 'rudderAngle', 'polarCurveRotation',
+        'runLineAngle'
     ]);
     const setInput = (key: string, value: unknown): void => {
         const converted = ANGLE_INPUTS.has(key) && typeof value === 'number' ? value * Math.PI / 180 : value;
@@ -57,6 +58,23 @@ describe('SvgWindsteerComponent', () => {
         component = fixture.componentInstance;
     });
 
+    // One 1000 ms tween (the default update interval), stepped by hand.
+    const frameQueue = () => {
+        const pending = new Map<number, FrameRequestCallback>();
+        let nextId = 1;
+        vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { pending.set(nextId, cb); return nextId++; });
+        vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { pending.delete(id); });
+        vi.spyOn(performance, 'now').mockReturnValue(0);
+        return {
+            run(now: number) {
+                const callbacks = [...pending.values()];
+                pending.clear();
+                callbacks.forEach(cb => cb(now));
+                fixture.detectChanges();
+            },
+            get size() { return pending.size; }
+        };
+    };
     it('derives the needle animation duration from updateInterval', () => {
         setRequiredInputs({ updateInterval: 100 });
         fixture.detectChanges();
@@ -118,6 +136,7 @@ describe('SvgWindsteerComponent', () => {
     const CENTER = 500;
     const norm = (a: number): number => ((a % 360) + 360) % 360;
     const angleOf = (x: number, y: number): number => norm((Math.atan2(x - CENTER, CENTER - y) * 180) / Math.PI);
+    const pathOf = (id: string): string => fixture.nativeElement.querySelector(`#${id}`)?.getAttribute('d') ?? '';
     const firstPointAngle = (path: string): number => {
         const m = path.match(/L\s*([\d.-]+),([\d.-]+)/);
         return angleOf(parseFloat(m![1]), parseFloat(m![2]));
@@ -136,13 +155,115 @@ describe('SvgWindsteerComponent', () => {
         fixture.detectChanges();
 
         const angles = [
-            firstPointAngle((component as unknown as { closeHauledLinePortPath: () => string }).closeHauledLinePortPath()),
-            firstPointAngle((component as unknown as { closeHauledLineStbdPath: () => string }).closeHauledLineStbdPath())
+            firstPointAngle(pathOf('StbdTackCloseHauledLine')),
+            firstPointAngle(pathOf('PortTackCloseHauledLine'))
         ].sort((a, b) => a - b);
 
         // True-wind based: 40 ± 30 => 10 and 70. (Apparent-based would give 20 ± 30.)
         expect(angles[0]).toBeCloseTo(10, 0);
         expect(angles[1]).toBeCloseTo(70, 0);
+    });
+
+    it('names each close-hauled line by the tack whose course it marks', () => {
+        // Wind dead ahead: heading 45° to starboard puts the wind on the port bow (port tack).
+        setRequiredInputs({ compassHeading: 0, trueWindAngle: 0, closeHauledLineEnabled: true, closeHauledLineAngle: 45, trueWindFresh: true });
+        fixture.detectChanges();
+        expect(firstPointAngle(pathOf('PortTackCloseHauledLine'))).toBeCloseTo(45, 0);
+        expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(315, 0);
+    });
+
+    it('puts the red port-tack wind sector on the right with the wind ahead', () => {
+        setRequiredInputs({
+            compassHeading: 0, windSectorEnabled: true, closeHauledLineAngle: 45, trueWindFresh: true,
+            trueWindMinHistoric: 355, trueWindMidHistoric: 0, trueWindMaxHistoric: 5
+        });
+        fixture.detectChanges();
+        const port = fixture.nativeElement.querySelector('#PortTackSector') as SVGPathElement;
+        const stbd = fixture.nativeElement.querySelector('#StbdTackSector') as SVGPathElement;
+        expect(firstPointAngle(port.getAttribute('d') ?? '')).toBeCloseTo(40, 0);
+        expect(port.getAttribute('class')).toBe('wind-sector-port');
+        expect(firstPointAngle(stbd.getAttribute('d') ?? '')).toBeCloseTo(310, 0);
+        expect(stbd.getAttribute('class')).toBe('wind-sector-stbd');
+    });
+
+    it('draws the run lines at the run angle off the true wind, named by tack', () => {
+        setRequiredInputs({ compassHeading: 0, trueWindAngle: 0, closeHauledLineEnabled: true, closeHauledLineAngle: 45, runLineAngle: 150, trueWindFresh: true });
+        fixture.detectChanges();
+        expect(fixture.nativeElement.querySelector('#LayerRunLines').style.display).toBe('inline');
+        expect(firstPointAngle(pathOf('PortTackRunLine'))).toBeCloseTo(150, 0);
+        expect(firstPointAngle(pathOf('StbdTackRunLine'))).toBeCloseTo(210, 0);
+    });
+
+    it('hides the run lines without a run angle or without true wind', () => {
+        setRequiredInputs({ runLineAngle: null, trueWindFresh: true });
+        fixture.detectChanges();
+        const layer = fixture.nativeElement.querySelector('#LayerRunLines') as SVGGElement;
+        expect(layer.style.display).toBe('none');
+
+        setInput('runLineAngle', 150);
+        setInput('trueWindFresh', false);
+        fixture.detectChanges();
+        expect(layer.style.display).toBe('none');
+    });
+
+    it('draws the run lines with the close-hauled lines off', () => {
+        setRequiredInputs({ compassHeading: 0, trueWindAngle: 0, closeHauledLineEnabled: false, runLineAngle: 150, trueWindFresh: true });
+        fixture.detectChanges();
+        expect(firstPointAngle(pathOf('PortTackRunLine'))).toBeCloseTo(150, 0);
+    });
+
+    describe('tack line easing', () => {
+        afterEach(() => vi.restoreAllMocks());
+        const lineInputs = { compassHeading: 0, trueWindAngle: 20, closeHauledLineEnabled: true, closeHauledLineAngle: 45, trueWindFresh: true };
+
+        it('eases a line along the shorter arc, across north', () => {
+            const frames = frameQueue();
+            setRequiredInputs(lineInputs);
+            fixture.detectChanges();
+            expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(335, 0);
+
+            setInput('trueWindAngle', 60);
+            fixture.detectChanges();
+            frames.run(500);
+            expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(355, 0);
+            frames.run(1000);
+            expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(15, 0);
+            expect(frames.size).toBe(0);
+        });
+
+        it('retargets a running ease from the angle drawn, without a jump', () => {
+            const frames = frameQueue();
+            setRequiredInputs(lineInputs);
+            fixture.detectChanges();
+            setInput('trueWindAngle', 60);
+            fixture.detectChanges();
+            frames.run(500);
+
+            // A polar TWS update nudges the close-hauled angle mid-ease.
+            setInput('closeHauledLineAngle', 46);
+            fixture.detectChanges();
+            expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(355, 0);
+            frames.run(500);
+            expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(4.5, 0);
+            frames.run(1000);
+            expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(14, 0);
+        });
+
+        it('places the close-hauled lines without a sweep when they are switched back on', () => {
+            const frames = frameQueue();
+            setRequiredInputs(lineInputs);
+            fixture.detectChanges();
+            setInput('closeHauledLineEnabled', false);
+            fixture.detectChanges();
+            setInput('trueWindAngle', 120);
+            fixture.detectChanges();
+            frames.run(1000);
+
+            setInput('closeHauledLineEnabled', true);
+            fixture.detectChanges();
+            expect(firstPointAngle(pathOf('StbdTackCloseHauledLine'))).toBeCloseTo(75, 0);
+            expect(frames.size).toBe(0);
+        });
     });
 
     it('hides the close-hauled lines when true wind is unavailable', () => {
@@ -172,7 +293,7 @@ describe('SvgWindsteerComponent', () => {
         });
         fixture.detectChanges();
 
-        const sectorMin = firstPointAngle((component as unknown as { portWindSectorPath: () => string }).portWindSectorPath());
+        const sectorMin = firstPointAngle(pathOf('PortTackSector'));
         expect(sectorMin).toBeCloseTo(100, 0);
     });
 
@@ -193,7 +314,7 @@ describe('SvgWindsteerComponent', () => {
         });
         fixture.detectChanges();
 
-        const sectorMin = firstPointAngle((component as unknown as { portWindSectorPath: () => string }).portWindSectorPath());
+        const sectorMin = firstPointAngle(pathOf('PortTackSector'));
         expect(sectorMin).toBeCloseTo(70, 0);
     });
 
@@ -209,8 +330,8 @@ describe('SvgWindsteerComponent', () => {
         fixture.detectChanges();
 
         const angles = [
-            firstPointAngle((component as unknown as { closeHauledLinePortPath: () => string }).closeHauledLinePortPath()),
-            firstPointAngle((component as unknown as { closeHauledLineStbdPath: () => string }).closeHauledLineStbdPath())
+            firstPointAngle(pathOf('StbdTackCloseHauledLine')),
+            firstPointAngle(pathOf('PortTackCloseHauledLine'))
         ].sort((a, b) => a - b);
         expect(angles[0]).toBeCloseTo(10, 0);
         expect(angles[1]).toBeCloseTo(70, 0);
@@ -228,15 +349,15 @@ describe('SvgWindsteerComponent', () => {
             trueWindFresh: true
         });
         fixture.detectChanges();
-        expect((component as unknown as { portWindSectorPath: () => string }).portWindSectorPath()).not.toBe('');
+        expect(pathOf('PortTackSector')).not.toBe('');
 
         setInput('trueWindMinHistoric', undefined);
         setInput('trueWindMidHistoric', undefined);
         setInput('trueWindMaxHistoric', undefined);
         fixture.detectChanges();
 
-        expect((component as unknown as { portWindSectorPath: () => string }).portWindSectorPath()).toBe('');
-        expect((component as unknown as { stbdWindSectorPath: () => string }).stbdWindSectorPath()).toBe('');
+        expect(pathOf('PortTackSector')).toBe('');
+        expect(pathOf('StbdTackSector')).toBe('');
     });
 
     it('hides the COG, waypoint, drift and current indicators when compass mode is off', () => {
@@ -745,23 +866,6 @@ describe('SvgWindsteerComponent', () => {
         });
 
         describe('easing between updates', () => {
-            // One 1000 ms tween (the default update interval), stepped by hand.
-            const frameQueue = () => {
-                const pending = new Map<number, FrameRequestCallback>();
-                let nextId = 1;
-                vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { pending.set(nextId, cb); return nextId++; });
-                vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { pending.delete(id); });
-                vi.spyOn(performance, 'now').mockReturnValue(0);
-                return {
-                    run(now: number) {
-                        const callbacks = [...pending.values()];
-                        pending.clear();
-                        callbacks.forEach(cb => cb(now));
-                        fixture.detectChanges();
-                    },
-                    get size() { return pending.size; }
-                };
-            };
             const LOBE_A: OverlayPoint[] = [{ angle: 0, r: 100 }, { angle: Math.PI / 2, r: 0 }, { angle: Math.PI, r: 0 }, { angle: -Math.PI / 2, r: 100 }];
             const LOBE_B: OverlayPoint[] = [{ angle: 0, r: 200 }, { angle: Math.PI / 2, r: 0 }, { angle: Math.PI, r: 0 }, { angle: -Math.PI / 2, r: 200 }];
 
