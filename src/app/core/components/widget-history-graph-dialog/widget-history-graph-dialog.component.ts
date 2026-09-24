@@ -3,6 +3,7 @@ import { MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { Chart, ChartConfiguration, ChartDataset, Color, LegendItem } from 'chart.js';
+import type { Path } from '@jsonjoy.com/json-pointer';
 import 'chartjs-adapter-date-fns';
 import { registerChartComponents } from '../../utils/chart-registration.util';
 import { IWidget, IWidgetPath } from '../../interfaces/widgets-interface';
@@ -26,6 +27,8 @@ import { HistoryApiClientService } from '../../services/history-api-client.servi
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { FormsModule} from '@angular/forms';
+import { splitPointerPath } from '../../utils/pointer-path.util';
+import { resolvePointerInHistoryRows } from '../../utils/history-pointer.util';
 
 registerChartComponents();
 
@@ -220,7 +223,8 @@ export class WidgetHistoryGraphDialogComponent implements OnInit, AfterViewInit,
         continue;
       }
 
-      const datapoints = this.historyMapper.mapValuesToChartDatapoints(response, {
+      const rows = candidate.pointer ? resolvePointerInHistoryRows(response, candidate.pointer) : response;
+      const datapoints = this.historyMapper.mapValuesToChartDatapoints(rows, {
         domain: 'scalar'
       });
 
@@ -356,17 +360,22 @@ export class WidgetHistoryGraphDialogComponent implements OnInit, AfterViewInit,
     return palette[safeIndex % palette.length];
   }
 
-  private buildHistoryRequestCandidates(rawPath: string, context: string | null | undefined): { paths: string; context: string | undefined; labelPath: string }[] {
-    const normalizedPath = this.normalizeHistoryPath(rawPath);
-    const contextCandidate = this.resolveHistoryContext(rawPath, context);
-    const pathVariants = [normalizedPath].filter(path => path.length > 0);
-    const requests: { paths: string; context: string | undefined; labelPath: string }[] = [];
+  private buildHistoryRequestCandidates(rawPath: string, context: string | null | undefined): { paths: string; context: string | undefined; labelPath: string; pointer: Path | null }[] {
+    // Split before normalizing so trimming and prefix stripping only ever touch the Signal K path.
+    const split = splitPointerPath(rawPath);
+    const basePath = this.normalizeHistoryPath(split.basePath);
+    if (!split.valid || !basePath.length) {
+      return [];
+    }
 
-    pathVariants.forEach(path => {
-      requests.push({ paths: `${path}:avg`, context: contextCandidate, labelPath: this.normalizeHistoryPath(path) });
-    });
-
-    return requests;
+    // An object value has no mean, so a field of one is graphed from each bucket's last sample.
+    const aggregate = split.pointer ? 'last' : 'avg';
+    return [{
+      paths: `${basePath}:${aggregate}`,
+      context: this.resolveHistoryContext(rawPath, context),
+      labelPath: this.normalizeHistoryPath(rawPath),
+      pointer: split.pointer
+    }];
   }
 
   private async resolveQueryableSeriesDefinitions(): Promise<ISkipSeriesDefinition[]> {

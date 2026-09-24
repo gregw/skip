@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
-import { Observable, Subscription, distinctUntilChanged, filter, merge, shareReplay, take, timer, withLatestFrom } from 'rxjs';
+import type { Path } from '@jsonjoy.com/json-pointer';
+import { EMPTY, Observable, Subscription, distinctUntilChanged, filter, map, merge, shareReplay, take, timer, withLatestFrom } from 'rxjs';
 import { DataService, IPathUpdate } from './data.service';
 import { HistoryApiClientService, HistoryRequestError } from './history-api-client.service';
 import { HistoryToGraphMapperService } from './history-to-graph-mapper.service';
@@ -7,6 +8,8 @@ import { ConnectionState, ConnectionStateMachine } from './connection-state-mach
 import { resolveAngleDomain } from '../utils/angle-domain.util';
 import { IGraphDatapoint } from '../interfaces/graph-data.interfaces';
 import { computeWindowStats, windowSma, GraphStatsDomain } from '../utils/graph-stats.util';
+import { resolvePointer, splitPointerPath } from '../utils/pointer-path.util';
+import { resolvePointerInHistoryRows } from '../utils/history-pointer.util';
 
 /** Emitted (instead of datapoints) when trend history cannot be served — no history provider. */
 export interface IHistoryUnavailable {
@@ -68,6 +71,15 @@ export interface IHistoryGraphStreamParams {
 
 type StreamEmission = IGraphDatapoint[] | IGraphDatapoint | IHistoryUnavailable;
 
+/**
+ * The Signal K path a stream reads and the pointer to the graphed field of its value. Only called for
+ * paths getBackfillThenLive accepted, so an invalid pointer never reaches it.
+ */
+function streamTarget(path: string): { basePath: string; pointer: Path | null } {
+  const split = splitPointerPath(path);
+  return { basePath: split.basePath, pointer: split.valid ? split.pointer : null };
+}
+
 /** Per-stream mutable state shared between the live tail and the reconnect re-backfill (#85). */
 interface IStreamCtx {
   /** Client-clock timestamp of the newest emitted point (backfill, live, or re-backfill) — the seam the
@@ -117,6 +129,8 @@ export class HistoryGraphStreamService {
    * does not disable the graph: it falls through to the live delta tail with no backfill seed.
    */
   public getBackfillThenLive(params: IHistoryGraphStreamParams): Observable<StreamEmission> {
+    // A malformed pointer addresses nothing, the same as in a live widget.
+    if (!splitPointerPath(params.path).valid) return EMPTY;
     return new Observable<StreamEmission>(subscriber => {
       const domain = resolveAngleDomain(params.path, this.data.getPathUnitType(params.path), params.angleDomainOverride);
       const ctx: IStreamCtx = { lastEmittedTs: null, connected: true, backfillInFlight: false, reconnectPending: false, sourceIntervalMs: null, resetCadenceBaseline: false, seeded: false, disposed: false, holdDeadline: null };
@@ -213,8 +227,10 @@ export class HistoryGraphStreamService {
     // One shared upstream so the freshness tracker, the immediate first value and the resampler all
     // draw from a single path registration; its release is returned so getBackfillThenLive's teardown
     // frees it once the live subscriptions below are gone.
-    const handle = this.data.acquirePath(params.path, params.source);
+    const { basePath, pointer } = streamTarget(params.path);
+    const handle = this.data.acquirePath(basePath, params.source);
     const path$ = handle.data$.pipe(
+      map(u => pointer && u?.data ? { ...u, data: { ...u.data, value: resolvePointer(u.data.value, pointer) } } : u),
       filter(u => u?.data?.value !== null && u?.data?.value !== undefined),
       shareReplay({ bufferSize: 1, refCount: true })
     );
@@ -303,7 +319,8 @@ export class HistoryGraphStreamService {
   }
 
   private async fetchBackfill(params: IHistoryGraphStreamParams, domain: GraphStatsDomain, fromMs: number = Date.now() - params.windowMs, signal?: AbortSignal): Promise<{ points: IGraphDatapoint[]; offsetMs: number } | null> {
-    const normalizedPath = params.path.replace(/^(vessels\.)?self\./, '');
+    const { basePath, pointer } = streamTarget(params.path);
+    const normalizedPath = basePath.replace(/^(vessels\.)?self\./, '');
     // Only the raw per-bucket value is fetched; the SMA overlay is derived client-side below so it
     // uses the same circular-aware smoothing as the live tail (#162).
     const paths = `${normalizedPath}:last`;
@@ -317,7 +334,7 @@ export class HistoryGraphStreamService {
     if (!response) {
       return null;
     }
-    const mapped = this.mapper.mapValuesToChartDatapoints(response, {
+    const mapped = this.mapper.mapValuesToChartDatapoints(pointer ? resolvePointerInHistoryRows(response, pointer) : response, {
       domain
     });
     // History timestamps are server time; shift them into the client clock so backfill lines up with
