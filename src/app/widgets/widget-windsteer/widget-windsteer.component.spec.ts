@@ -11,6 +11,7 @@ import { ActivePolarService, ActivePolarStatus } from '../../core/services/activ
 import { Polar, toCanonicalPolarTable } from '../../core/utils/polar-engine.util';
 import { OverlayPoint, OverlayScale, POLAR_OVERLAY_PATH_KEYS, VMC_HEADING_STEP, polarCurve, speedToRadius } from '../../core/utils/polar-overlay.util';
 import { PolarOverlayMode } from '../svg-windsteer/svg-windsteer.component';
+import { SI_VERSION_KEY, V20_MIGRATION_OUTPUT_VERSION } from '../../core/utils/config-migration.util';
 import hurmaPolar from '../../core/utils/polar-engine.hurma-polar.fixture.json';
 
 const DEG = Math.PI / 180;
@@ -113,7 +114,7 @@ describe('WidgetWindComponent live compass-mode toggle (#73)', () => {
 });
 
 /**
- * Wind sectors and layline gating are driven by TRUE wind, not apparent wind.
+ * Wind sectors and close-hauled line gating are driven by TRUE wind, not apparent wind.
  * The sector history must be fed only from the true-wind stream, and trueWindFresh
  * must track whether the configured true-wind path is currently delivering a value.
  */
@@ -610,6 +611,15 @@ describe('WidgetWindComponent drift/current gating (#441, #637)', () => {
   it('exposes the drift display unit for the readout label', () => {
     callbacks.get('drift')!(update(0.4, 'knots'));
     expect(driftUnit()).toBe('knots');
+  });
+});
+
+describe('WidgetWindComponent default config', () => {
+  it('stores the close-hauled angle in rad, 45° by default, and carries the SI marker of the v20 step', () => {
+    expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledLineAngle).toBe(Math.PI / 4);
+    expect(WidgetWindComponent.DEFAULT_CONFIG.closeHauledLineEnable).toBe(true);
+    expect(WidgetWindComponent.DEFAULT_CONFIG[SI_VERSION_KEY as 'siVersion']).toBe(V20_MIGRATION_OUTPUT_VERSION);
+    expect(WidgetWindComponent.OPTION_UNITS).toEqual({ closeHauledLineAngle: 'rad' });
   });
 });
 

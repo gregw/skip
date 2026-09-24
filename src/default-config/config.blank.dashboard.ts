@@ -401,8 +401,8 @@ export const DefaultDashboard: Dashboard[] = [
               "compassModeEnabled": true,
               "windSectorEnable": true,
               "windSectorWindowSeconds": 5,
-              "laylineEnable": true,
-              "laylineAngle": 45,
+              "closeHauledLineEnable": true,
+              "closeHauledLineAngle": 0.7853981633974483,
               "waypointEnable": true,
               "courseOverGroundEnable": true,
               "driftEnable": true,
@@ -414,7 +414,8 @@ export const DefaultDashboard: Dashboard[] = [
               "invertRudder": false,
               "updateInterval": 1000,
               "enableTimeout": false,
-              "dataTimeout": 5
+              "dataTimeout": 5,
+              "siVersion": 20
             }
           }
         }
@@ -1980,8 +1981,8 @@ export const DefaultDashboard: Dashboard[] = [
               "compassModeEnabled": true,
               "windSectorEnable": true,
               "windSectorWindowSeconds": 5,
-              "laylineEnable": true,
-              "laylineAngle": 45,
+              "closeHauledLineEnable": true,
+              "closeHauledLineAngle": 0.7853981633974483,
               "waypointEnable": true,
               "courseOverGroundEnable": true,
               "driftEnable": true,
@@ -1993,7 +1994,8 @@ export const DefaultDashboard: Dashboard[] = [
               "invertRudder": false,
               "updateInterval": 1000,
               "enableTimeout": false,
-              "dataTimeout": 5
+              "dataTimeout": 5,
+              "siVersion": 20
             }
           }
         }

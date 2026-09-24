@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ConfigTooOldError,
+  SI_VERSION_KEY,
+  applySiSteps,
   MIN_MIGRATABLE_APP_CONFIG_VERSION,
   MigrationMessageSink,
   migrateConfig,
@@ -48,7 +50,7 @@ describe('migrateConfig (in-memory migration chain)', () => {
     const result = migrateConfig(config, recordingSink());
 
     expect(result.migrated).toBe(false);
-    expect(result.config).toBe(config);
+    expect(result.config).toEqual(config);
   });
 
   it('migrates a floor (v11) config up to the current version without touching the caller object', () => {
@@ -152,7 +154,7 @@ describe('migrateWidgetConfig (a single widget config through the chain)', () =>
   });
 
   it('returns a current-version widget config unchanged', () => {
-    const cfg = { updateInterval: 1000 } as IWidgetSvcConfig;
+    const cfg = { updateInterval: 1000, siVersion: 20 } as IWidgetSvcConfig;
 
     expect(migrateWidgetConfig('widget-wind-steer', cfg, LATEST_APP_CONFIG_VERSION, recordingSink())).toEqual(cfg);
   });
@@ -184,5 +186,101 @@ describe('removeSplitShellConfigKeys', () => {
     removeSplitShellConfigKeys(app as unknown as IAppConfig);
 
     expect(app).toEqual({ autoNightMode: true });
+  });
+});
+
+// A dashboard holding the given widgets, at the given app-config version.
+const configWith = (version: number, widgets: { type: string; config: Record<string, unknown> }[]): IConfig =>
+  ({
+    app: { configVersion: version },
+    theme: { themeName: '' },
+    dashboards: [{
+      id: 'd1',
+      configuration: widgets.map((w, i) => ({
+        id: `w${i}`, selector: 'widget-host2',
+        input: { widgetProperties: { type: w.type, uuid: `w${i}`, config: w.config } }
+      }))
+    }]
+  } as unknown as IConfig);
+const widgetConfigs = (config: IConfig): Record<string, unknown>[] =>
+  (config.dashboards[0].configuration ?? []).map(w =>
+    (w as unknown as { input: { widgetProperties: { config: Record<string, unknown> } } }).input.widgetProperties.config);
+
+describe('v19 -> v20: Wind Steer close-hauled options in SI', () => {
+  it('renames the close-hauled options and converts the angle to rad at full precision', () => {
+    const migrated = migrateOneAppVersion(
+      configWith(19, [{ type: 'widget-wind-steer', config: { laylineEnable: false, laylineAngle: 40 } }]), 19, recordingSink());
+
+    expect(migrated?.app?.configVersion).toBe(20);
+    const [windsteer] = widgetConfigs(migrated as IConfig);
+    expect(windsteer).toEqual({ closeHauledLineEnable: false, closeHauledLineAngle: 40 * Math.PI / 180, [SI_VERSION_KEY]: 20 });
+    // Frozen factor pinned by literal value.
+    expect(windsteer['closeHauledLineAngle']).toBe(0.6981317007977318);
+  });
+
+  it('leaves a Wind Steer without the close-hauled options to its defaults, but marks it', () => {
+    const migrated = migrateOneAppVersion(configWith(19, [{ type: 'widget-wind-steer', config: { updateInterval: 500 } }]), 19, recordingSink());
+    expect(widgetConfigs(migrated as IConfig)[0]).toEqual({ updateInterval: 500, [SI_VERSION_KEY]: 20 });
+  });
+
+  it("deletes racesteer's unread layline options and leaves other widgets alone", () => {
+    const migrated = migrateOneAppVersion(configWith(19, [
+      { type: 'widget-racesteer', config: { laylineEnable: true, laylineAngle: 40, windSectorEnable: true } },
+      { type: 'widget-numeric', config: { laylineAngle: 12 } }
+    ]), 19, recordingSink());
+    expect(widgetConfigs(migrated as IConfig)).toEqual([{ windSectorEnable: true }, { laylineAngle: 12 }]);
+  });
+
+  it('refuses a config that is not at v19', () => {
+    const sink = recordingSink();
+    expect(migrateOneAppVersion(configWith(18, []), 19, sink)).toBeNull();
+    expect(sink.errors).toHaveLength(1);
+  });
+});
+
+describe('applySiSteps (per-widget SI markers)', () => {
+  const unmarked = (): Record<string, unknown> => ({ laylineEnable: true, laylineAngle: 30 });
+
+  it('reruns of v19 -> v20 on marked Wind Steer configs change nothing', () => {
+    const first = migrateOneAppVersion(configWith(19, [{ type: 'widget-wind-steer', config: unmarked() }]), 19, recordingSink()) as IConfig;
+    const expected = structuredClone(widgetConfigs(first));
+    // A tab on an older build lowered the stamp but kept the migrated widgets.
+    first.app!.configVersion = 19;
+
+    const again = migrateOneAppVersion(first, 19, recordingSink()) as IConfig;
+    expect(widgetConfigs(again)).toEqual(expected);
+  });
+
+  it('converts unmarked Wind Steer configs written back under the current stamp', () => {
+    // An older build's dashboards-only save leaves the stamp at latest.
+    const config = configWith(LATEST_APP_CONFIG_VERSION, [{ type: 'widget-wind-steer', config: unmarked() }]);
+
+    expect(applySiSteps(config, recordingSink())).toBe(true);
+    expect(widgetConfigs(config)[0]).toEqual({ closeHauledLineEnable: true, closeHauledLineAngle: 30 * Math.PI / 180, [SI_VERSION_KEY]: 20 });
+  });
+
+  it('migrateConfig runs the SI steps on a current-version copy too, without touching the caller object', () => {
+    const original = configWith(LATEST_APP_CONFIG_VERSION, [{ type: 'widget-wind-steer', config: unmarked() }]);
+    const result = migrateConfig(original, recordingSink());
+
+    expect(result.migrated).toBe(true);
+    expect(widgetConfigs(result.config)[0][SI_VERSION_KEY]).toBe(20);
+    expect(widgetConfigs(original)[0]).toEqual(unmarked());
+  });
+
+  it('deletes a stale pre-SI key an older build merged back into a marked config, without reading it', () => {
+    const angle = 0.6;
+    const config = configWith(LATEST_APP_CONFIG_VERSION, [{
+      type: 'widget-wind-steer',
+      config: { closeHauledLineAngle: angle, laylineAngle: 45, laylineEnable: true, [SI_VERSION_KEY]: 20 }
+    }]);
+
+    expect(applySiSteps(config, recordingSink())).toBe(true);
+    expect(widgetConfigs(config)[0]).toEqual({ closeHauledLineAngle: angle, [SI_VERSION_KEY]: 20 });
+  });
+
+  it('reports no change for marked configs without stale keys', () => {
+    const config = configWith(LATEST_APP_CONFIG_VERSION, [{ type: 'widget-wind-steer', config: { closeHauledLineAngle: 0.6, [SI_VERSION_KEY]: 20 } }]);
+    expect(applySiSteps(config, recordingSink())).toBe(false);
   });
 });

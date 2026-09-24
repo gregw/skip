@@ -18,6 +18,9 @@ const DEFAULT_WIND_SECTOR_WINDOW_SECONDS = 5;
 // Single source of truth for the default config and the missing/invalid-value fallback.
 const DEFAULT_DATA_TIMEOUT_SECONDS = 5;
 
+// 45° in rad, as a literal: the dashboard-schema generator reads DEFAULT_CONFIG values statically.
+const DEFAULT_CLOSE_HAULED_LINE_ANGLE_RAD = 0.7853981633974483;
+
 // Overlay auto-hide thresholds in m/s. The current-set arrow shows from SHOW and hides only below
 // HIDE, so a drift estimate hovering near one limit cannot blink it; the COG arrow hides below SOG.
 const SET_ARROW_SHOW_MS = 0.1;
@@ -230,8 +233,8 @@ export class WidgetWindComponent implements OnDestroy {
     compassModeEnabled: true,
     windSectorEnable: true,
     windSectorWindowSeconds: DEFAULT_WIND_SECTOR_WINDOW_SECONDS,
-    laylineEnable: true,
-    laylineAngle: 45,
+    closeHauledLineEnable: true,
+    closeHauledLineAngle: DEFAULT_CLOSE_HAULED_LINE_ANGLE_RAD,
     waypointEnable: true,
     courseOverGroundEnable: true,
     driftEnable: true,
@@ -244,7 +247,13 @@ export class WidgetWindComponent implements OnDestroy {
     polarOverlayEnable: false,
     updateInterval: 1000,
     enableTimeout: false,
-    dataTimeout: DEFAULT_DATA_TIMEOUT_SECONDS
+    dataTimeout: DEFAULT_DATA_TIMEOUT_SECONDS,
+    siVersion: 20
+  };
+
+  /** Options stored in a unit their value alone does not show; published in the dashboard schema. */
+  public static readonly OPTION_UNITS: Record<string, string> = {
+    closeHauledLineAngle: 'rad'
   };
 
   public readonly runtime = inject(WidgetRuntimeDirective); // accessed in template
@@ -322,12 +331,6 @@ export class WidgetWindComponent implements OnDestroy {
   private overlayTwaFresh = signal(false);
   private overlayStw = signal(0);          // m/s
   private overlayStwFresh = signal(false);
-
-  /** The close-hauled angle in rad; the stored option is in degrees. */
-  protected closeHauledLineAngle = computed(() => {
-    const deg = this.runtime.options()?.laylineAngle;
-    return typeof deg === 'number' ? deg * DEG_TO_RAD : undefined;
-  });
 
   protected overlayMode = computed<PolarOverlayMode>(() => {
     const cfg = this.runtime.options();

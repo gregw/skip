@@ -387,10 +387,12 @@ export interface IWidgetSvcConfig {
   windSectorEnable?: boolean;
   /** Used by wind Widget: duration to track wind shift in the sector UI feature */
   windSectorWindowSeconds?: number;
-  /** Used by wind Widget: enable/disable layline UI feature */
-  laylineEnable?: boolean;
-  /** Used by wind Widget: upwind layline angle of the vessel applied to the UI feature */
-  laylineAngle?: number;
+  /** Used by wind Widget: show the close-hauled lines, the headings at the close-hauled angle either side of the true wind */
+  closeHauledLineEnable?: boolean;
+  /** Used by wind Widget: the close-hauled angle off the true wind, rad */
+  closeHauledLineAngle?: number;
+  /** The version of the last SI config step whose shape this widget config is in (config-migration.util SI_VERSION_KEY) */
+  siVersion?: number;
   /** Used by wind Widget: enable/disable Waypoint UI feature */
   waypointEnable?: boolean;
   /** Used by wind Widget: enable/disable COG UI feature */

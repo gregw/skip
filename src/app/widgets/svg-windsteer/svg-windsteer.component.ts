@@ -140,11 +140,11 @@ export class SvgWindsteerComponent implements OnDestroy {
     return this.polarOverlayMode() !== 'hidden' && r != null && Number.isFinite(r) ? this.CENTER - r : null;
   });
 
-  //laylines - Close-Hauled lines
-  private portLaylinePrev = 0;
-  private stbdLaylinePrev = 0;
-  private portLaylineAnimId: number | null = null;
-  private stbdLaylineAnimId: number | null = null;
+  // Close-hauled lines
+  private portCloseHauledLinePrev = 0;
+  private stbdCloseHauledLinePrev = 0;
+  private portCloseHauledLineAnimId: number | null = null;
+  private stbdCloseHauledLineAnimId: number | null = null;
   protected closeHauledLinePortPath = signal<string>("M 500,500 500,500");
   protected closeHauledLineStbdPath = signal<string>("M 500,500 500,500");
   //WindSectors
@@ -213,7 +213,7 @@ export class SvgWindsteerComponent implements OnDestroy {
           } else {
             animateRotation(this.rotatingDial().nativeElement, -this.compass.oldValue, -this.compass.newValue, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
           }
-          // Heading affects dial-local geometry for laylines and sectors; refresh without animation
+          // Heading affects dial-local geometry for close-hauled lines and sectors; refresh without animation
           this.updateCloseHauledLines(false);
           this.updateWindSectors(false);
         }
@@ -325,12 +325,12 @@ export class SvgWindsteerComponent implements OnDestroy {
             animateRotation(this.twaIndicator().nativeElement, this.twa.oldValue, this.twa.newValue, this.animationDuration(), undefined, this.animationFrameIds, undefined, this.ngZone);
           }
         }
-        // Laylines are centered on the true wind; recompute whenever TWA changes
+        // Close-hauled lines are centered on the true wind; recompute whenever TWA changes
         this.updateCloseHauledLines(!isFirstTwa);
       });
     });
 
-    // Recompute laylines when laylineAngle changes
+    // Recompute the close-hauled lines when their angle changes
     effect(() => {
       // read to establish dependency
       void this.closeHauledLineAngleDeg();
@@ -386,7 +386,7 @@ export class SvgWindsteerComponent implements OnDestroy {
       });
     });
 
-    // Ensure wind sectors update on min/mid/max or layline changes, and clear when disabled
+    // Ensure wind sectors update on min/mid/max or close-hauled angle changes, and clear when disabled
     effect(() => {
       const enabled = this.windSectorEnabled();
       // establish dependencies without unused vars warnings
@@ -421,34 +421,34 @@ export class SvgWindsteerComponent implements OnDestroy {
   private updateCloseHauledLines(animate = true): void {
     if (!this.closeHauledLineEnabled()) return;
 
-    // Close-hauled lines straddle the true wind: boat-relative TWA ± laylineAngle.
+    // Close-hauled lines straddle the true wind: boat-relative TWA ± the close-hauled angle.
     const base = Number(this.twa.newValue) || 0;
     const lay = Number(this.closeHauledLineAngleDeg()) || 0;
 
-    const portLaylineRotate = this.toDialLocal(this.addHeading(base, lay * -1));
-    this.animateLayline(this.portLaylinePrev, portLaylineRotate, true, animate);
-    this.portLaylinePrev = portLaylineRotate;
+    const portRotate = this.toDialLocal(this.addHeading(base, lay * -1));
+    this.animateCloseHauledLine(this.portCloseHauledLinePrev, portRotate, true, animate);
+    this.portCloseHauledLinePrev = portRotate;
 
-    const stbdLaylineRotate = this.toDialLocal(this.addHeading(base, lay));
-    this.animateLayline(this.stbdLaylinePrev, stbdLaylineRotate, false, animate);
-    this.stbdLaylinePrev = stbdLaylineRotate;
+    const stbdRotate = this.toDialLocal(this.addHeading(base, lay));
+    this.animateCloseHauledLine(this.stbdCloseHauledLinePrev, stbdRotate, false, animate);
+    this.stbdCloseHauledLinePrev = stbdRotate;
   }
 
-  private animateLayline(from: number, to: number, isPort: boolean, withAnim = true) {
-    // Cancel any previous animation for this layline
-    if (isPort && this.portLaylineAnimId) cancelAnimationFrame(this.portLaylineAnimId);
-    if (!isPort && this.stbdLaylineAnimId) cancelAnimationFrame(this.stbdLaylineAnimId);
+  private animateCloseHauledLine(from: number, to: number, isPort: boolean, withAnim = true) {
+    // Cancel any previous animation for this line
+    if (isPort && this.portCloseHauledLineAnimId) cancelAnimationFrame(this.portCloseHauledLineAnimId);
+    if (!isPort && this.stbdCloseHauledLineAnimId) cancelAnimationFrame(this.stbdCloseHauledLineAnimId);
 
     // Gate tiny animations
     if (this.angleDelta(from, to) < this.EPS_ANGLE) {
-      this.drawLayline(to, isPort);
-      if (isPort) this.portLaylineAnimId = null; else this.stbdLaylineAnimId = null;
+      this.drawCloseHauledLine(to, isPort);
+      if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null;
       return;
     }
 
   if (!withAnim) {
-      this.drawLayline(to, isPort);
-      if (isPort) this.portLaylineAnimId = null; else this.stbdLaylineAnimId = null;
+      this.drawCloseHauledLine(to, isPort);
+      if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null;
       return;
     }
 
@@ -456,11 +456,11 @@ export class SvgWindsteerComponent implements OnDestroy {
       from,
       to,
       this.animationDuration(),
-      angle => this.drawLayline(angle, isPort),
-      () => { if (isPort) this.portLaylineAnimId = null; else this.stbdLaylineAnimId = null; },
+      angle => this.drawCloseHauledLine(angle, isPort),
+      () => { if (isPort) this.portCloseHauledLineAnimId = null; else this.stbdCloseHauledLineAnimId = null; },
       this.ngZone
     );
-    if (isPort) this.portLaylineAnimId = id; else this.stbdLaylineAnimId = id;
+    if (isPort) this.portCloseHauledLineAnimId = id; else this.stbdCloseHauledLineAnimId = id;
   }
 
   /** Project a dial angle (degrees, 0 = up) onto the dial circle. Unrounded; callers round if needed. */
@@ -480,7 +480,7 @@ export class SvgWindsteerComponent implements OnDestroy {
     return `M ${coords.join(' L ')}${closed ? ' Z' : ''}`;
   }
 
-  private drawLayline(angleDeg: number, isPort: boolean) {
+  private drawCloseHauledLine(angleDeg: number, isPort: boolean) {
     const [px, py] = this.dialPoint(angleDeg);
     const x = Math.floor(px);
     const y = Math.floor(py);
@@ -597,11 +597,11 @@ export class SvgWindsteerComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    // Cancel layline animations
-    if (this.portLaylineAnimId) cancelAnimationFrame(this.portLaylineAnimId);
-    if (this.stbdLaylineAnimId) cancelAnimationFrame(this.stbdLaylineAnimId);
-    this.portLaylineAnimId = null;
-    this.stbdLaylineAnimId = null;
+    // Cancel close-hauled line animations
+    if (this.portCloseHauledLineAnimId) cancelAnimationFrame(this.portCloseHauledLineAnimId);
+    if (this.stbdCloseHauledLineAnimId) cancelAnimationFrame(this.stbdCloseHauledLineAnimId);
+    this.portCloseHauledLineAnimId = null;
+    this.stbdCloseHauledLineAnimId = null;
 
     // Cancel wind sector animations
     if (this.portSectorAnimId) cancelAnimationFrame(this.portSectorAnimId);

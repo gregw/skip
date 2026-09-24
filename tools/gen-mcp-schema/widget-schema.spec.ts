@@ -98,6 +98,13 @@ describe('extractWidgetSchemas', () => {
     expect(bySelector('widget-bms')?.pathSlots).toEqual([]);
   });
 
+  it('publishes the units of options a widget stores in SI (Wind Steer close-hauled angle in rad)', () => {
+    const windsteer = bySelector('widget-wind-steer');
+    expect(windsteer?.optionUnits).toEqual({ closeHauledLineAngle: 'rad' });
+    expect(windsteer?.defaultConfig['closeHauledLineAngle']).toBeCloseTo(Math.PI / 4, 15);
+    expect(bySelector('widget-numeric')?.optionUnits).toBeUndefined();
+  });
+
   it('keeps a widget special config object verbatim (bms)', () => {
     const config = bySelector('widget-bms')?.defaultConfig as { bms?: unknown };
     expect(config.bms).toMatchObject({ trackedDevices: [], groups: [], banks: [] });

@@ -3,6 +3,7 @@ import { AbstractControl, UntypedFormGroup, UntypedFormControl, FormControl, For
 import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { filter, take } from 'rxjs';
+import { cloneDeep, get, set } from 'lodash-es';
 
 import { MatButtonModule } from '@angular/material/button';
 import { MatDividerModule } from '@angular/material/divider';
@@ -31,6 +32,25 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { ActivePolarService } from '../../core/services/active-polar.service';
 import { DataService } from '../../core/services/data.service';
 import { POLAR_OVERLAY_PATH_KEYS } from '../../core/utils/polar-overlay.util';
+import { UnitsService } from '../../core/services/units.service';
+
+/** An option stored in SI and shown in the form in a presentation unit. */
+interface SiOption {
+  /** Where the option sits in the widget config. */
+  path: readonly string[];
+  /** The measure the form shows it in. */
+  unit: string;
+}
+
+/** An SI option as the form was built with it: the stored value and what the form showed for it. */
+interface SiField extends SiOption {
+  si: number;
+  shown: number;
+}
+
+// Significant digits of a displayed SI option, enough to drop float noise from the conversion
+// (120 °C through K and back shows 120, not 119.99999999999997).
+const SI_OPTION_DISPLAY_DIGITS = 10;
 
 /** Typed reactive-form control map for an array-mode {@link IWidgetPath}: one control per field. */
 type IWidgetPathControls = {
@@ -52,6 +72,10 @@ export class RootModalWidgetConfigComponent implements OnInit {
   private static readonly KEY_PATHS = 'paths';
   private static readonly KEY_AIS = 'ais';
   private static readonly KEY_CONVERT_UNIT_TO = 'convertUnitTo';
+  /** Options stored in SI; the form shows and accepts them in the listed unit. */
+  private static readonly SI_OPTIONS: readonly SiOption[] = [
+    { path: ['closeHauledLineAngle'], unit: 'deg' }
+  ];
   private dialogRef = inject<MatDialogRef<RootModalWidgetConfigComponent>>(MatDialogRef);
   private fb = inject(UntypedFormBuilder);
   private app = inject(AppService);
@@ -71,6 +95,8 @@ export class RootModalWidgetConfigComponent implements OnInit {
 
   private readonly activePolar = inject(ActivePolarService);
   private readonly data = inject(DataService);
+  private readonly units = inject(UnitsService);
+  private siFields: SiField[] = [];
   /** The Wind Steer polar overlay's SI input paths, and those the server has sent at least once. */
   private polarOverlayPaths: string[] = [];
   private readonly receivedPolarOverlayPaths = signal<ReadonlySet<string>>(new Set());
@@ -97,8 +123,9 @@ export class RootModalWidgetConfigComponent implements OnInit {
       return;
     }
     // widgetName is a dialog-title hint carried on the data payload, not a persisted config field.
-    const formConfig = { ...this.widgetConfig };
+    const formConfig = cloneDeep(this.widgetConfig);
     delete formConfig.widgetName;
+    this.showSiOptionsInPresentationUnits(formConfig);
     this.formMaster = this.generateFormGroups(formConfig);
     this.setupWindsteerControlState();
     if (this.widgetConfig.polarOverlayEnable !== undefined) this.watchPolarOverlay();
@@ -463,8 +490,48 @@ export class RootModalWidgetConfigComponent implements OnInit {
 
   submitConfig() {
     const nextConfig = this.formMaster.getRawValue() as IWidgetSvcConfig;
+    this.storeSiOptionsInSi(nextConfig);
     this.normalizeElectricalTrackedDevices(nextConfig);
     this.dialogRef.close(nextConfig);
+  }
+
+  /** Replaces each SI option in the form's copy of the config with its value in the form's unit. */
+  private showSiOptionsInPresentationUnits(formConfig: object): void {
+    this.siFields = [];
+    for (const option of RootModalWidgetConfigComponent.SI_OPTIONS) {
+      const si: unknown = get(formConfig, option.path);
+      if (typeof si !== 'number' || !Number.isFinite(si)) continue;
+      const converted = this.units.convertToUnit(option.unit, si);
+      if (converted == null || !Number.isFinite(converted)) continue;
+      const shown = Number(converted.toPrecision(SI_OPTION_DISPLAY_DIGITS));
+      set(formConfig, option.path, shown);
+      this.siFields.push({ ...option, si, shown });
+    }
+  }
+
+  /**
+   * Converts each SI option back from the form's unit. An option whose shown value is unchanged
+   * keeps its stored SI value exactly, so opening and saving without edits changes nothing.
+   */
+  private storeSiOptionsInSi(config: IWidgetSvcConfig): void {
+    for (const field of this.siFields) {
+      const value: unknown = get(config, field.path);
+      if (value === field.shown) {
+        set(config, field.path, field.si);
+      } else if (typeof value === 'number' && Number.isFinite(value)) {
+        set(config, field.path, this.fromPresentation(field.unit, value));
+      }
+    }
+  }
+
+  /**
+   * The SI value of a number shown in `unit`. The conversions are affine, so two forward
+   * conversions recover the inverse without a table of its own.
+   */
+  private fromPresentation(unit: string, value: number): number {
+    const f0 = this.units.convertToUnit(unit, 0) ?? 0;
+    const f1 = this.units.convertToUnit(unit, 1) ?? 1;
+    return (value - f0) / (f1 - f0);
   }
 
   private normalizeElectricalTrackedDevices(cfg: IWidgetSvcConfig): void {

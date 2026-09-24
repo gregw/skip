@@ -579,7 +579,7 @@
   },
   "meta": {
     "configFileVersion": 11,
-    "configVersion": 19,
+    "configVersion": 20,
     "schemaVersion": 1,
     "skipVersion": "1.5.0"
   },
@@ -2199,8 +2199,6 @@
         "driftEnable": true,
         "enableTimeout": false,
         "filterSelfPaths": true,
-        "laylineAngle": 40,
-        "laylineEnable": true,
         "paths": {
           "VMG": {
             "convertUnitTo": "knots",
@@ -2984,6 +2982,8 @@
       "componentClassName": "WidgetWindComponent",
       "defaultConfig": {
         "awsEnable": true,
+        "closeHauledLineAngle": 0.7853981633974483,
+        "closeHauledLineEnable": true,
         "compassModeEnabled": true,
         "courseOverGroundEnable": true,
         "dataTimeout": 5,
@@ -2991,8 +2991,6 @@
         "enableTimeout": false,
         "filterSelfPaths": true,
         "invertRudder": false,
-        "laylineAngle": 45,
-        "laylineEnable": true,
         "paths": {
           "appWindAngle": {
             "convertUnitTo": "deg",
@@ -3198,6 +3196,7 @@
         "polarOverlayEnable": false,
         "rudderEnable": true,
         "sailSetupEnable": false,
+        "siVersion": 20,
         "supportAutomaticHistoricalSeries": false,
         "twaEnable": true,
         "twsEnable": true,
@@ -3213,6 +3212,9 @@
       "minHeight": 2,
       "minWidth": 1,
       "name": "Windsteer",
+      "optionUnits": {
+        "closeHauledLineAngle": "rad"
+      },
       "pathSlots": [
         {
           "defaultConvertUnitTo": "deg",

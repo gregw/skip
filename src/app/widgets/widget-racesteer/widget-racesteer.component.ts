@@ -46,8 +46,6 @@ export class WidgetRacesteerComponent implements OnDestroy {
     },
     windSectorEnable: true,
     windSectorWindowSeconds: 5,
-    laylineEnable: true,
-    laylineAngle: 40,
     waypointEnable: true,
     courseOverGroundEnable: true,
     driftEnable: true,

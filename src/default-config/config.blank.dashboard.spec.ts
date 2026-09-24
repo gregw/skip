@@ -65,6 +65,19 @@ describe('DefaultDashboard seed', () => {
   // drifted (angleTrueGround / speedOverGround) undetected before Effort B corrected it — guard every
   // seeded slot against the default so it can't drift again. pathOptions is base-sourced (supplied by
   // the runtime merge), so it is deliberately excluded here.
+  it('seeds widget-wind-steer with the SI close-hauled options and marker of its DEFAULT_CONFIG', () => {
+    const seedWidgets = seededWidgetsOfType('widget-wind-steer');
+    expect(seedWidgets.length).toBeGreaterThan(0);
+    const defaults = WidgetWindComponent.DEFAULT_CONFIG;
+    for (const widget of seedWidgets) {
+      const cfg = (widget.input?.widgetProperties?.config ?? {}) as Record<string, unknown>;
+      expect(cfg['closeHauledLineEnable']).toBe(defaults.closeHauledLineEnable);
+      expect(cfg['closeHauledLineAngle']).toBe(defaults.closeHauledLineAngle);
+      expect(cfg['siVersion']).toBe(defaults.siVersion);
+      expect('laylineAngle' in cfg).toBe(false);
+    }
+  });
+
   it('seeds widget-wind-steer with path + editability matching its DEFAULT_CONFIG', () => {
     const seedWidgets = seededWidgetsOfType('widget-wind-steer');
     expect(seedWidgets.length).toBeGreaterThan(0);

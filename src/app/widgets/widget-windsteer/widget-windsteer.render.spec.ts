@@ -146,8 +146,8 @@ describe('WidgetWindComponent rendering from SI inputs', () => {
       cog: rotation('cogIndicator'),
       wpt: rotation('wptIndicator'),
       set: rotation('setIndicator'),
-      port: attr('#PortLayline', 'd'),
-      stbd: attr('#StbdLayline', 'd')
+      port: attr('#PortCloseHauledLine', 'd'),
+      stbd: attr('#StbdCloseHauledLine', 'd')
     }).toEqual({
       dial: 'rotate(10 500 500)',
       twa: 'rotate(40 500 500)',

@@ -114,7 +114,7 @@ describe('SvgWindsteerComponent', () => {
     });
 
     // Geometry helpers: recover the dial-local angle (degrees, 0 = up, clockwise) from a
-    // drawn SVG path. drawLayline/computeSectorPath place points at (R*sinθ+C, -R*cosθ+C).
+    // drawn SVG path. drawCloseHauledLine/computeSectorPath place points at (R*sinθ+C, -R*cosθ+C).
     const CENTER = 500;
     const norm = (a: number): number => ((a % 360) + 360) % 360;
     const angleOf = (x: number, y: number): number => norm((Math.atan2(x - CENTER, CENTER - y) * 180) / Math.PI);
@@ -145,10 +145,10 @@ describe('SvgWindsteerComponent', () => {
         expect(angles[1]).toBeCloseTo(70, 0);
     });
 
-    it('hides laylines when true wind is unavailable', () => {
+    it('hides the close-hauled lines when true wind is unavailable', () => {
         setRequiredInputs({ closeHauledLineEnabled: true, closeHauledLineAngle: 30, trueWindFresh: false });
         fixture.detectChanges();
-        const layer = fixture.nativeElement.querySelector('#LayerLayline') as SVGGElement;
+        const layer = fixture.nativeElement.querySelector('#LayerCloseHauledLines') as SVGGElement;
         expect(layer.style.display).toBe('none');
 
         fixture.componentRef.setInput('trueWindFresh', true);
@@ -197,7 +197,7 @@ describe('SvgWindsteerComponent', () => {
         expect(sectorMin).toBeCloseTo(70, 0);
     });
 
-    it('centers laylines on the true wind in simple mode', () => {
+    it('centers the close-hauled lines on the true wind in simple mode', () => {
         setRequiredInputs({
             compassModeEnabled: false,
             compassHeading: 30,
