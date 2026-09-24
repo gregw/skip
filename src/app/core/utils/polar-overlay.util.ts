@@ -109,6 +109,20 @@ export function vmcEdgeRuns(points: readonly OverlayPoint[]): OverlayPoint[][] {
   return runs;
 }
 
+/**
+ * The overlay part way (t in [0, 1]) from one curve to the next, sample by sample: the radius
+ * linearly and the angle along the shorter arc. Curves with different sample counts don't pair
+ * up, so the target is returned as is.
+ */
+export function interpolateOverlay(from: readonly OverlayPoint[], to: OverlayPoint[], t: number): OverlayPoint[] {
+  if (t >= 1 || from.length !== to.length) return to;
+  return to.map((target, index) => {
+    const source = from[index];
+    const turn = normalizeRadians(target.angle - source.angle + Math.PI) - Math.PI;
+    return { angle: source.angle + turn * t, r: source.r + (target.r - source.r) * t };
+  });
+}
+
 /** Radius of the VMC dot on the bow axis from STW · cos(HDG − BTW); null when that is zero or less. */
 export function vmcDotRadius(stw: number, hdg: number, btw: number, scale: OverlayScale): number | null {
   const vmc = stw * Math.cos(hdg - btw);

@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvgWindsteerComponent } from './svg-windsteer.component';
 import { OverlayPoint } from '../../core/utils/polar-overlay.util';
 
@@ -742,6 +742,94 @@ describe('SvgWindsteerComponent', () => {
             fixture.componentRef.setInput('overlayDotRadius', 200);
             fixture.detectChanges();
             expect(dot().getAttribute('cy')).toBe('300');
+        });
+
+        describe('easing between updates', () => {
+            // One 1000 ms tween (the default update interval), stepped by hand.
+            const frameQueue = () => {
+                const pending = new Map<number, FrameRequestCallback>();
+                let nextId = 1;
+                vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { pending.set(nextId, cb); return nextId++; });
+                vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { pending.delete(id); });
+                vi.spyOn(performance, 'now').mockReturnValue(0);
+                return {
+                    run(now: number) {
+                        const callbacks = [...pending.values()];
+                        pending.clear();
+                        callbacks.forEach(cb => cb(now));
+                        fixture.detectChanges();
+                    },
+                    get size() { return pending.size; }
+                };
+            };
+            const LOBE_A: OverlayPoint[] = [{ angle: 0, r: 100 }, { angle: Math.PI / 2, r: 0 }, { angle: Math.PI, r: 0 }, { angle: -Math.PI / 2, r: 100 }];
+            const LOBE_B: OverlayPoint[] = [{ angle: 0, r: 200 }, { angle: Math.PI / 2, r: 0 }, { angle: Math.PI, r: 0 }, { angle: -Math.PI / 2, r: 200 }];
+
+            afterEach(() => vi.restoreAllMocks());
+
+            it('eases the dot to a new radius over the update interval', () => {
+                const frames = frameQueue();
+                setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, overlayDotRadius: 150 });
+                fixture.detectChanges();
+                expect(dot().getAttribute('cy')).toBe('350');
+
+                setInput('overlayDotRadius', 250);
+                fixture.detectChanges();
+                frames.run(250);
+                expect(dot().getAttribute('cy')).toBe('325');
+                frames.run(1000);
+                expect(dot().getAttribute('cy')).toBe('250');
+                expect(frames.size).toBe(0);
+            });
+
+            it('places the dot without easing when it reappears', () => {
+                frameQueue();
+                setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, overlayDotRadius: 150 });
+                fixture.detectChanges();
+                setInput('overlayDotRadius', null);
+                fixture.detectChanges();
+                setInput('overlayDotRadius', 250);
+                fixture.detectChanges();
+                expect(dot().getAttribute('cy')).toBe('250');
+            });
+
+            it('eases the VMC lobe to a new curve, fill and edge together', () => {
+                const frames = frameQueue();
+                setRequiredInputs({ polarOverlayMode: 'vmc', vmcCurve: LOBE_A });
+                fixture.detectChanges();
+                expect(vmcEdge().getAttribute('d')).toBe('M 400.0,500.0 L 500.0,400.0');
+
+                setInput('vmcCurve', LOBE_B);
+                fixture.detectChanges();
+                frames.run(500);
+                expect(vmcEdge().getAttribute('d')).toBe('M 350.0,500.0 L 500.0,350.0');
+                expect(vmcFill().getAttribute('d')).toContain('500.0,350.0');
+                frames.run(1000);
+                expect(vmcEdge().getAttribute('d')).toBe('M 300.0,500.0 L 500.0,300.0');
+            });
+
+            it('draws the lobe without easing when the overlay switches to VMC mode', () => {
+                frameQueue();
+                setRequiredInputs({ polarOverlayMode: 'polar', polarCurve: CURVE, vmcCurve: LOBE_A });
+                fixture.detectChanges();
+                setInput('polarOverlayMode', 'vmc');
+                setInput('vmcCurve', LOBE_B);
+                fixture.detectChanges();
+                expect(vmcEdge().getAttribute('d')).toBe('M 300.0,500.0 L 500.0,300.0');
+            });
+
+            it('cancels a running overlay tween on destroy', () => {
+                const frames = frameQueue();
+                setRequiredInputs({ polarOverlayMode: 'vmc', vmcCurve: LOBE_A, overlayDotRadius: 150 });
+                fixture.detectChanges();
+                setInput('vmcCurve', LOBE_B);
+                setInput('overlayDotRadius', 250);
+                fixture.detectChanges();
+                expect(frames.size).toBeGreaterThan(0);
+
+                fixture.destroy();
+                expect(frames.size).toBe(0);
+            });
         });
 
         it('hides the dot when it has no radius', () => {

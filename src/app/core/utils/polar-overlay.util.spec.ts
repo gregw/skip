@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Polar, toCanonicalPolarTable } from './polar-engine.util';
 import {
   OverlayPoint,
+  interpolateOverlay,
   OverlayScale,
   POLAR_CURVE_TWA_STEP,
   VMC_HEADING_STEP,
@@ -366,6 +367,28 @@ describe('polar-overlay.util', () => {
       const runs = vmcEdgeRuns(vmcCurve(polarSpeedProfile(synthetic, 6, 1), 0, 0, scaleFor(synthetic)));
       expect(runs.length).toBe(2);
       expect(runs.flat().every(point => point.r > 0)).toBe(true);
+    });
+  });
+
+  describe('interpolateOverlay', () => {
+    it('moves each sample part way in radius and along the shorter arc in angle', () => {
+      const from: OverlayPoint[] = [{ angle: 350 * DEG, r: 100 }, { angle: 90 * DEG, r: 0 }];
+      const to: OverlayPoint[] = [{ angle: 10 * DEG, r: 200 }, { angle: 80 * DEG, r: 40 }];
+      const [first, second] = interpolateOverlay(from, to, 0.25);
+      expect(angleDiff(first.angle, 355 * DEG)).toBeCloseTo(0, 9);
+      expect(first.r).toBeCloseTo(125, 9);
+      expect(second.angle).toBeCloseTo(87.5 * DEG, 9);
+      expect(second.r).toBeCloseTo(10, 9);
+    });
+
+    it('lands exactly on the target at the end', () => {
+      const to: OverlayPoint[] = [{ angle: 1, r: 50 }];
+      expect(interpolateOverlay([{ angle: 2, r: 10 }], to, 1)).toBe(to);
+    });
+
+    it('takes the target when the sample counts differ', () => {
+      const to: OverlayPoint[] = [{ angle: 1, r: 50 }, { angle: 2, r: 60 }];
+      expect(interpolateOverlay([{ angle: 2, r: 10 }], to, 0.5)).toBe(to);
     });
   });
 
