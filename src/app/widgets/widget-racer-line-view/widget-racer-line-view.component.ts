@@ -397,12 +397,7 @@ export class WidgetRacerLineViewComponent {
   protected selectLine(name: string): void {
     this.signalk.putRequest('navigation.racing.setStartLineName',
       { startLineName: name === 'Default' ? null : name }, this.id());
-    // Follow the choice rather than waiting for the plugin to echo it back, so the
-    // control turns from a button into a label the moment it is pressed. The stream
-    // overwrites both the instant the plugin confirms, so a request that fails corrects
-    // itself rather than leaving the widget claiming a line it never got.
     this.browsed.set(name);
-    this.startLineName.set(name === 'Default' ? null : name);
   }
 
   constructor() {
