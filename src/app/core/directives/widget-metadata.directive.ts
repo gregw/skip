@@ -2,7 +2,7 @@ import { Directive, DestroyRef, inject, input, signal, computed } from '@angular
 import { Subject, takeUntil, Subscription } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DataService } from '../services/data.service';
-import { ISkMetadata, ISkPossibleValue, ISkZone } from '../interfaces/signalk-interfaces';
+import { ISkDisplayScale, ISkMetadata, ISkPossibleValue, ISkZone } from '../interfaces/signalk-interfaces';
 import { IWidget, IWidgetSvcConfig } from '../interfaces/widgets-interface';
 
 @Directive({
@@ -78,6 +78,12 @@ export class WidgetMetadataDirective {
     const meta = this._meta();
     return meta?.zones || [];
   });
+
+  /**
+   * The observed path's `meta.displayScale`, in SI; undefined when the path has no metadata or its
+   * metadata sets no scale. Widgets fall back to it for scale bounds the user has not set.
+   */
+  public displayScale = computed<ISkDisplayScale | undefined>(() => this._meta()?.displayScale);
 
   /**
    * Reactive signal containing `meta.possibleValues` for the observed path.
