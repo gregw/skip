@@ -1,7 +1,7 @@
 import type { AbstractControl, ValidationErrors, ValidatorFn } from '@angular/forms';
 import type { ISkPathData } from '../interfaces/app-interfaces';
 import type { ISkMetadata } from '../interfaces/signalk-interfaces';
-import { resolvePointer, splitPointerPath } from './pointer-path.util';
+import { fieldValueType, resolvePointer, splitPointerPath } from './pointer-path.util';
 
 /**
  * Validator for a widget's Signal K path control.
@@ -134,7 +134,7 @@ function pointerSlotWarning(
   }
 
   const value = resolvePointer(pathObject.pathValue, split.pointer);
-  const declaredType = fieldMeta.type === 'integer' ? 'number' : fieldMeta.type;
+  const declaredType = fieldValueType(fieldMeta.type);
   const fieldType = declaredType ?? (value === null ? undefined : typeof value);
   if (fieldType !== undefined && fieldType !== requirements.pathType) {
     return typeMismatch(fieldType, requirements.pathType);

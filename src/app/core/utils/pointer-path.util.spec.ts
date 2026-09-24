@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePointer, resolvePointer, splitPointerPath } from './pointer-path.util';
+import { fieldValueType, parsePointer, resolvePointer, splitPointerPath } from './pointer-path.util';
 
 const pointerOf = (path: string) => {
   const parsed = splitPointerPath(path);
@@ -116,5 +116,15 @@ describe('resolvePointer', () => {
     { label: 'undefined', value: undefined }
   ])('resolves a pointer into $label to null', ({ value }) => {
     expect(resolvePointer(value, pointerOf('self.navigation.position#/latitude'))).toBeNull();
+  });
+});
+
+describe('fieldValueType', () => {
+  it('reads a JSON Schema integer as a number', () => {
+    expect(fieldValueType('integer')).toBe('number');
+  });
+
+  it.each(['number', 'string', 'boolean', 'object', undefined])('keeps %s as is', type => {
+    expect(fieldValueType(type)).toBe(type);
   });
 });

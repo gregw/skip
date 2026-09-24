@@ -9,7 +9,7 @@ import { cloneDeep, merge } from 'lodash-es';
 import type { TDurationFormat } from './units.service';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { formatJsonPointer, type Path } from '@jsonjoy.com/json-pointer';
-import { splitPointerPath } from '../utils/pointer-path.util';
+import { fieldValueType, splitPointerPath } from '../utils/pointer-path.util';
 
 const SELFROOTDEF = "self";
 
@@ -114,7 +114,7 @@ const collectFieldEntries = (
       collectFieldEntries(basePath, property.properties, pointer, valueType, entries);
       continue;
     }
-    const type = property.type === 'integer' ? 'number' : property.type;
+    const type = fieldValueType(property.type);
     if (type === valueType && type !== 'array' && type !== 'object') {
       entries.push({ path: `${basePath}#${formatJsonPointer(pointer)}`, meta: propertyAsMeta(property) });
     }

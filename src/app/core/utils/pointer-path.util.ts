@@ -49,3 +49,8 @@ export function parsePointer(pointer: string): Path | null {
 export function resolvePointer(value: unknown, pointer: Path): unknown {
   return get(value, pointer) ?? null;
 }
+
+/** The value type of a field whose metadata declares JSON Schema `type`: 'integer' is a 'number'. */
+export function fieldValueType(type: string | undefined): string | undefined {
+  return type === 'integer' ? 'number' : type;
+}
