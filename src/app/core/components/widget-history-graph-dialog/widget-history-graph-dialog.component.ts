@@ -366,7 +366,7 @@ export class WidgetHistoryGraphDialogComponent implements OnInit, AfterViewInit,
     }
 
     // An object value has no mean, so a field of one is graphed from each bucket's last sample.
-    const aggregate = target.pointer ? 'last' : 'avg';
+    const aggregate = target.pointer ? 'last' : 'average';
     return [{
       paths: `${target.historyPath}:${aggregate}`,
       context: this.resolveHistoryContext(rawPath, context),

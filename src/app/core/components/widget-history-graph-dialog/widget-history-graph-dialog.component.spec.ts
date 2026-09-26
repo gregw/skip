@@ -484,19 +484,19 @@ describe('WidgetHistoryGraphDialogComponent', () => {
     expect(panelPowerIdx).toBeLessThan(currentIdx);
 
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.solar.charger-1.current:avg'
+      paths: 'electrical.solar.charger-1.current:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.solar.charger-1.panelPower:avg'
+      paths: 'electrical.solar.charger-1.panelPower:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.solar.charger-2.current:avg'
+      paths: 'electrical.solar.charger-2.current:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.solar.charger-2.panelPower:avg'
+      paths: 'electrical.solar.charger-2.panelPower:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.solar.*:avg'
+      paths: 'electrical.solar.*:average'
     }));
   });
 
@@ -536,19 +536,19 @@ describe('WidgetHistoryGraphDialogComponent', () => {
     await component.loadHistoryDatasets();
 
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.batteries.bank.1.current:avg'
+      paths: 'electrical.batteries.bank.1.current:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.batteries.bank.1.capacity.stateOfCharge:avg'
+      paths: 'electrical.batteries.bank.1.capacity.stateOfCharge:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.batteries.bank.2.current:avg'
+      paths: 'electrical.batteries.bank.2.current:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.batteries.bank.2.capacity.stateOfCharge:avg'
+      paths: 'electrical.batteries.bank.2.capacity.stateOfCharge:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.batteries.bank.3.current:avg'
+      paths: 'electrical.batteries.bank.3.current:average'
     }));
   });
 
@@ -593,16 +593,16 @@ describe('WidgetHistoryGraphDialogComponent', () => {
     await component.loadHistoryDatasets();
 
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.chargers.main.voltage:avg'
+      paths: 'electrical.chargers.main.voltage:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.chargers.main.current:avg'
+      paths: 'electrical.chargers.main.current:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.chargers.main.temperature:avg'
+      paths: 'electrical.chargers.main.temperature:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.chargers.aux.voltage:avg'
+      paths: 'electrical.chargers.aux.voltage:average'
     }));
   });
 
@@ -660,22 +660,22 @@ describe('WidgetHistoryGraphDialogComponent', () => {
     await component.loadHistoryDatasets();
 
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.inverters.inv-1.voltage:avg'
+      paths: 'electrical.inverters.inv-1.voltage:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.inverters.inv-1.current:avg'
+      paths: 'electrical.inverters.inv-1.current:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.alternators.alt-1.voltage:avg'
+      paths: 'electrical.alternators.alt-1.voltage:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.alternators.alt-1.current:avg'
+      paths: 'electrical.alternators.alt-1.current:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.inverters.inv-1.frequency:avg'
+      paths: 'electrical.inverters.inv-1.frequency:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.alternators.alt-1.frequency:avg'
+      paths: 'electrical.alternators.alt-1.frequency:average'
     }));
   });
 
@@ -723,16 +723,16 @@ describe('WidgetHistoryGraphDialogComponent', () => {
     await component.loadHistoryDatasets();
 
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.ac.shore.line1.voltage:avg'
+      paths: 'electrical.ac.shore.line1.voltage:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.ac.shore.line1.current:avg'
+      paths: 'electrical.ac.shore.line1.current:average'
     }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.ac.shore.line1.frequency:avg'
+      paths: 'electrical.ac.shore.line1.frequency:average'
     }));
     expect(historyApiClientMock.getValues).not.toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.ac.generator.line1.voltage:avg'
+      paths: 'electrical.ac.generator.line1.voltage:average'
     }));
   });
 
@@ -817,7 +817,7 @@ describe('WidgetHistoryGraphDialogComponent', () => {
     expect(historyApiClientMock.getPaths).toHaveBeenCalledWith(expect.objectContaining({ duration: 'PT86400S' }));
     expect(historyApiClientMock.getPaths).not.toHaveBeenCalledWith(expect.objectContaining({ duration: 'PT1H' }));
     expect(historyApiClientMock.getValues).toHaveBeenCalledWith(expect.objectContaining({
-      paths: 'electrical.solar.charger-1.panelPower:avg'
+      paths: 'electrical.solar.charger-1.panelPower:average'
     }));
   });
 
@@ -1107,11 +1107,11 @@ describe('WidgetHistoryGraphDialogComponent', () => {
       return (component as unknown as { pendingDatasets: { label: string; data: { y: number | null }[] }[] }).pendingDatasets;
     }
 
-    it('queries the base path with :last for a pointer series and keeps :avg for a plain one', async () => {
+    it('queries the base path with :last for a pointer series and :average for a plain one', async () => {
       await loadDatasets(['self.navigation.attitude#/roll', 'self.navigation.speedThroughWater']);
 
       const requested = historyApiClientMock.getValues.mock.calls.map(([query]) => query.paths);
-      expect(requested).toEqual(['navigation.attitude:last', 'navigation.speedThroughWater:avg']);
+      expect(requested).toEqual(['navigation.attitude:last', 'navigation.speedThroughWater:average']);
     });
 
     it('graphs the field from each object row, as two series labelled by their full paths', async () => {
