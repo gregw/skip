@@ -224,7 +224,7 @@ export class WidgetWindComponent implements OnDestroy {
         path: 'self.steering.rudderAngle',
         source: 'default',
         pathType: 'number',
-        isPathConfigurable: true,
+        isPathConfigurable: false,
         pathRequired: false,
         showPathSkUnitsFilter: false,
         pathSkUnitsFilter: 'rad',

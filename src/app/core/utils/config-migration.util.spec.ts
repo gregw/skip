@@ -741,3 +741,38 @@ describe('v23 -> v24: the heel gauge reads any angle path', () => {
     expect(angleSlot(widgetConfigs(twice)[0])).toEqual(expected);
   });
 });
+
+describe('v24 -> v25: the wind steer rudder angle path is fixed', () => {
+  // The rudder slot as the wind steer shipped it: a free path picker on the standard path.
+  const openSlot = (): Record<string, unknown> => ({
+    description: 'Rudder Angle', path: 'self.steering.rudderAngle', source: 'default', pathType: 'number',
+    isPathConfigurable: true, pathRequired: false, showPathSkUnitsFilter: false, pathSkUnitsFilter: 'rad',
+    convertUnitTo: 'deg', showConvertUnitTo: false
+  });
+  const rudderSlot = (config: Record<string, unknown>) => (config['paths'] as Record<string, Record<string, unknown>>)['rudderAngle'];
+  const migrate = (widgets: { type: string; config: Record<string, unknown> }[]) =>
+    migrateOneAppVersion(configWith(24, widgets), 24, recordingSink()) as IConfig;
+
+  it('fixes the wind steer rudder slot, keeping its source, and stamps v25', () => {
+    const migrated = migrate([{ type: 'widget-wind-steer', config: { paths: { rudderAngle: { ...openSlot(), source: 'n2k.1' } } } }]);
+    expect(migrated.app?.configVersion).toBe(25);
+    expect(rudderSlot(widgetConfigs(migrated)[0])).toEqual({ ...openSlot(), source: 'n2k.1', isPathConfigurable: false });
+  });
+
+  it('resets a custom rudder path and its source to the standard path', () => {
+    const migrated = migrate([{ type: 'widget-wind-steer', config: { paths: { rudderAngle: { ...openSlot(), path: 'self.steering.custom', source: 'n2k.1' } } } }]);
+    expect(rudderSlot(widgetConfigs(migrated)[0])).toEqual({ ...openSlot(), isPathConfigurable: false });
+  });
+
+  it('leaves the autopilot rudder slot alone', () => {
+    const migrated = migrate([{ type: 'widget-autopilot', config: { paths: { rudderAngle: openSlot() } } }]);
+    expect(widgetConfigs(migrated)[0]).toEqual({ paths: { rudderAngle: openSlot() } });
+  });
+
+  it('is idempotent', () => {
+    const once = migrate([{ type: 'widget-wind-steer', config: { paths: { rudderAngle: openSlot() } } }]);
+    const expected = { ...rudderSlot(widgetConfigs(once)[0]) };
+    const twice = migrateOneAppVersion({ ...once, app: { ...once.app, configVersion: 24 } } as IConfig, 24, recordingSink()) as IConfig;
+    expect(rudderSlot(widgetConfigs(twice)[0])).toEqual(expected);
+  });
+});
