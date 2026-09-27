@@ -204,7 +204,7 @@ export class HistoryApiClientService {
    *
    * @param {IHistoryValuesQueryParams} params - Query parameters for the history request.
    *   - paths (required): comma-separated Signal K paths with optional aggregation suffixes
-   *     (e.g., 'navigation.speedOverGround:sma:5,navigation.speedThroughWater:avg')
+   *     (e.g., 'navigation.speedOverGround:sma:5,navigation.speedThroughWater:average')
    *   - from, to, duration: define the time range
    *   - resolution: optional downsampling window
    *   - context: optional Signal K context (defaults to 'vessels.self')
@@ -219,7 +219,7 @@ export class HistoryApiClientService {
    *
    * @example
    *   const response = await historyService.getValues({
-   *     paths: 'navigation.speedThroughWater:avg,navigation.speedThroughWater:min',
+   *     paths: 'navigation.speedThroughWater:average,navigation.speedThroughWater:min',
    *     from: new Date(Date.now() - 3600000).toISOString(),
    *     to: new Date().toISOString(),
    *     resolution: 1
