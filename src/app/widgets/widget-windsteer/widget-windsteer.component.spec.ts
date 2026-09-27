@@ -496,11 +496,11 @@ describe('WidgetWindComponent rudder angle (#435)', () => {
     TestBed.tick();
   };
 
-  it('registers the rudder stream on a configurable, degree-converted path', () => {
+  it('registers the rudder stream on the fixed standard path, degree-converted', () => {
     build();
     expect(callbacks.has('rudderAngle')).toBe(true);
     const path = WidgetWindComponent.DEFAULT_CONFIG.paths?.['rudderAngle'];
-    expect(path?.isPathConfigurable).toBe(true);
+    expect(path?.isPathConfigurable).toBe(false);
     expect(path?.convertUnitTo).toBe('deg');
     expect(path?.path).toBe('self.steering.rudderAngle');
   });

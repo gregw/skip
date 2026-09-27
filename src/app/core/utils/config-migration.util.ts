@@ -33,6 +33,7 @@ export const V21_MIGRATION_OUTPUT_VERSION = 21;
 export const V22_MIGRATION_OUTPUT_VERSION = 22;
 export const V23_MIGRATION_OUTPUT_VERSION = 23;
 export const V24_MIGRATION_OUTPUT_VERSION = 24;
+export const V25_MIGRATION_OUTPUT_VERSION = 25;
 
 /**
  * The per-widget SI marker: the version of the last SI step whose shape a widget config is in.
@@ -381,6 +382,8 @@ const SUBFIELD_WIDGET_TYPES = new Set(['widget-position', 'widget-heel-gauge', '
 const V23_ANGLE_GROUP_MEASURES = new Set(['rad', 'deg', 'grad']);
 const V23_POSITION_DEGREES = 'pdeg';
 
+const V25_RUDDER_ANGLE_PATH = 'self.steering.rudderAngle';
+
 /**
  * Where a migration step reports what it changed. The persistent upgrade shows these in its
  * progress overlay; an in-memory migration logs them.
@@ -560,6 +563,7 @@ export function migrateOneAppVersion(config: IConfig, fromVersion: number, sink:
     case 21: return upgradeConfigV21toV22(config, sink);
     case 22: return upgradeConfigV22toV23(config, sink);
     case 23: return upgradeConfigV23toV24(config, sink);
+    case 24: return upgradeConfigV24toV25(config, sink);
     default: return null;
   }
 }
@@ -1219,6 +1223,51 @@ function upgradeConfigV23toV24(config: IConfig, sink: MigrationMessageSink): ICo
     return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
   } catch (error) {
     sink.error(`[Upgrade Service] Error upgrading v23->v24: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * v24 -> v25: the wind steer's rudder angle slot, shipped as a free path picker, becomes fixed on
+ * the standard `self.steering.rudderAngle` path, leaving only its Data Source editable. A custom path
+ * is reset to the standard one together with its source, which may name a source that never fills
+ * the standard path; an already standard path keeps its source.
+ */
+function upgradeConfigV24toV25(config: IConfig, sink: MigrationMessageSink): IConfig | null {
+  try {
+    const appConfig = config.app;
+    if (!appConfig || appConfig.configVersion !== 24) {
+      sink.error(`[Upgrade Service] Config version ${appConfig?.configVersion} is not an upgradable v24 config. Skipping...`);
+      return null;
+    }
+
+    let fixed = 0;
+    if (Array.isArray(config.dashboards)) {
+      for (const dash of config.dashboards) {
+        if (!dash || !Array.isArray(dash.configuration)) continue;
+        for (const widget of dash.configuration) {
+          const wp = (widget as { input?: { widgetProperties?: { type?: unknown; config?: WidgetConfigRecord } } })?.input?.widgetProperties;
+          if (wp?.type !== 'widget-wind-steer') continue;
+          const paths = wp.config?.['paths'] as Record<string, WidgetConfigRecord> | undefined;
+          const slot = paths?.['rudderAngle'];
+          if (!slot || typeof slot !== 'object') continue;
+          if (slot['path'] !== V25_RUDDER_ANGLE_PATH) {
+            slot['path'] = V25_RUDDER_ANGLE_PATH;
+            slot['source'] = 'default';
+          }
+          if (slot['isPathConfigurable'] !== false) fixed++;
+          slot['isPathConfigurable'] = false;
+        }
+      }
+    }
+    if (fixed) {
+      sink.info(`[Upgrade] Fixed ${fixed} wind steer rudder angle path(s) to ${V25_RUDDER_ANGLE_PATH}.`);
+    }
+
+    appConfig.configVersion = V25_MIGRATION_OUTPUT_VERSION;
+    return { app: appConfig, theme: config.theme, dashboards: config.dashboards };
+  } catch (error) {
+    sink.error(`[Upgrade Service] Error upgrading v24->v25: ${(error as Error).message}`);
     return null;
   }
 }

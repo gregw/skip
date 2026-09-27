@@ -816,6 +816,11 @@ describe('AppComponent — embed read-only invariants (#216 E6)', () => {
     expect(runUpgradeSpy).toHaveBeenCalledWith(22);
   });
 
+  it('runs the config migration in the full app for an upgradeable v24 config (the rudder angle path gate)', async () => {
+    const { runUpgradeSpy } = await render({ embed: false, configUpgrade: true, configVersion: 24 });
+    expect(runUpgradeSpy).toHaveBeenCalledWith(24);
+  });
+
   it('runs the config migration in the full app for an upgradeable v23 config (the heel-gauge path gate)', async () => {
     const { runUpgradeSpy } = await render({ embed: false, configUpgrade: true, configVersion: 23 });
     expect(runUpgradeSpy).toHaveBeenCalledWith(23);

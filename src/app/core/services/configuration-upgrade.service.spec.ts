@@ -1115,6 +1115,30 @@ describe('ConfigurationUpgradeService', () => {
         expect(mockStorage.setConfig).not.toHaveBeenCalled();
     });
 
+    it('v24 upgrade fixes a stored wind steer rudder angle path and stamps v25', async () => {
+        mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
+        mockStorage.getConfig.mockResolvedValue({
+            app: { configVersion: 24 },
+            theme: { themeName: '' },
+            dashboards: [{ id: 'd0', configuration: [
+                { input: { widgetProperties: { type: 'widget-wind-steer', config: {
+                    paths: { rudderAngle: { path: 'self.steering.rudderAngle', source: 'n2k.1', isPathConfigurable: true } }
+                } } } }
+            ] }]
+        });
+
+        await service.runUpgrade(24);
+
+        expect(mockStorage.setConfig).toHaveBeenCalledTimes(1);
+        const written = mockStorage.setConfig.mock.calls[0][2];
+        expect(written.app.configVersion).toBe(25);
+        expect(written.dashboards[0].configuration[0].input.widgetProperties.config.paths.rudderAngle).toEqual({
+            path: 'self.steering.rudderAngle', source: 'n2k.1', isPathConfigurable: false
+        });
+        expect(service.messages()).toContain('[Upgrade] Fixed 1 wind steer rudder angle path(s) to self.steering.rudderAngle.');
+        expect(service.error()).toBeNull();
+    });
+
     it('v23 upgrade makes a stored heel gauge path a configurable roll pointer path and stamps v24', async () => {
         mockStorage.listConfigs.mockResolvedValueOnce([{ scope: 'user', name: 'default' }]);
         mockStorage.getConfig.mockResolvedValue({
